@@ -314,6 +314,8 @@ export default function OrdersPage() {
 
   // Next actions map (UI stages) - COMPLETE MAP
   const nextActions: Record<string, string[]> = {
+    // NEW: allow approving when still pending payment
+    pending_payment: ["approved"],
     reserved: ["approved", "pending_balance_payment"],
     approved: ["in_production"],
     in_production: ["quality_check", "packaging"],
