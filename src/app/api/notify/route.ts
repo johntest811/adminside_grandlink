@@ -19,7 +19,7 @@ if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
 const USER_WEBSITE_URL =
   process.env.NEXT_PUBLIC_USER_WEBSITE_URL ||
   process.env.NEXT_PUBLIC_BASE_URL ||
-  "http://localhost:3000";
+  "https://grandlnik-website.vercel.app";
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic'; // avoid caching for webhooks/notifications
