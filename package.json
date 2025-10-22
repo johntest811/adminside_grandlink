@@ -1,0 +1,52 @@
+{
+  "name": "adminside_grandlink",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@fullcalendar/daygrid": "^6.1.19",
+    "@fullcalendar/interaction": "^6.1.19",
+    "@fullcalendar/list": "^6.1.19",
+    "@fullcalendar/react": "^6.1.19",
+    "@fullcalendar/timegrid": "^6.1.19",
+    "@radix-ui/react-slot": "^1.2.3",
+    "@supabase/supabase-js": "^2.56.0",
+    "@tiptap/react": "^3.4.4",
+    "@tiptap/starter-kit": "^3.4.4",
+    "@types/nodemailer": "^7.0.2",
+    "bcryptjs": "^3.0.2",
+    "chart.js": "^4.5.1",
+    "class-variance-authority": "^0.7.1",
+    "jspdf": "^3.0.3",
+    "jspdf-autotable": "^5.0.2",
+    "lucide-react": "^0.544.0",
+    "next": "^15.4.4",
+    "nodemailer": "^7.0.9",
+    "react": "^18.2.0",
+    "react-chartjs-2": "^5.3.0",
+    "react-dom": "^18.2.0",
+    "react-icons": "^5.5.0",
+    "react-quill": "^2.0.0",
+    "three": "^0.180.0",
+    "three-stdlib": "^2.36.0",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/three": "^0.180.0",
+    "@types/uuid": "^10.0.0",
+    "eslint": "^9",
+    "eslint-config-next": "15.4.4",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
