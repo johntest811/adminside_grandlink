@@ -201,6 +201,22 @@ export async function POST(request: NextRequest) {
         emailsSent,
         message: `Notified ${notificationsSent} users (${emailsSent} emails sent)` 
       });
+    } else if (type === "order_placed") {
+      const items = payload?.items || [];
+      const total = payload?.total;
+      const msg = `New order placed with ${items.length} item(s). Total: ₱${Number(total || 0).toLocaleString()}`;
+      // Store admin notification
+      const { error: nerr } = await supabaseAdmin.from("notifications").insert({
+        title: "New Order",
+        message: msg,
+        type: "order",
+        priority: "high",
+        recipient_role: "Admin",
+        is_read: false,
+        created_at: new Date().toISOString()
+      });
+      if (nerr) console.warn("admin notify insert error:", nerr.message);
+      return NextResponse.json({ success: true, message: "Admin notified" });
     }
 
     return NextResponse.json({ success: false, error: "Invalid notification type" }, { status: 400 });
