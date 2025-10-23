@@ -23,7 +23,19 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ product }, { status: 200 });
+    // Ensure clients always receive an images[] array for unlimited-images UX
+    const computedImages = Array.isArray((product as any).images)
+      ? (product as any).images
+      : [
+          (product as any).image1,
+          (product as any).image2,
+          (product as any).image3,
+          (product as any).image4,
+          (product as any).image5,
+        ].filter(Boolean);
+
+    const productOut = { ...product, images: computedImages };
+    return NextResponse.json({ product: productOut }, { status: 200 });
   } catch (err: any) {
     console.error("GET /api/products/[id] error", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -34,7 +46,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const body = await req.json();
+  const body = await req.json();
     
     console.log("📝 Updating product:", id);
 
@@ -56,13 +68,48 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       .eq("id", id)
       .single();
 
-    // Update the product
-    const { data: updatedProduct, error: updateError } = await supabaseAdmin
-      .from("products")
-      .update(body)
-      .eq("id", id)
-      .select()
-      .single();
+    // Prepare update data with backward compatibility (sync legacy image1..5)
+    const updateData: any = { ...body };
+    if (Array.isArray(body?.images)) {
+      const imgs: string[] = body.images;
+      updateData.image1 = imgs[0] || null;
+      updateData.image2 = imgs[1] || null;
+      updateData.image3 = imgs[2] || null;
+      updateData.image4 = imgs[3] || null;
+      updateData.image5 = imgs[4] || null;
+    }
+
+    // Update the product (attempt with images[] if column exists)
+    let updatedProduct: any = null;
+    let updateError: any = null;
+    {
+      const { data, error } = await supabaseAdmin
+        .from("products")
+        .update(updateData)
+        .eq("id", id)
+        .select()
+        .single();
+      updatedProduct = data;
+      updateError = error;
+    }
+
+    // Fallback if "images" column doesn't exist
+    if (updateError && String(updateError.message || '').toLowerCase().includes('images')) {
+      try {
+        const fallbackData = { ...updateData };
+        delete fallbackData.images;
+        const { data, error } = await supabaseAdmin
+          .from("products")
+          .update(fallbackData)
+          .eq("id", id)
+          .select()
+          .single();
+        updatedProduct = data;
+        updateError = error;
+      } catch (e) {
+        // keep original error
+      }
+    }
 
     if (updateError) {
       console.error("Product update error:", updateError);
@@ -129,7 +176,19 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       }
     }
 
-    return NextResponse.json({ product: updatedProduct }, { status: 200 });
+    // Ensure response includes images[] even if DB lacks the column
+    const computedImages = Array.isArray((updatedProduct as any)?.images)
+      ? (updatedProduct as any).images
+      : [
+          (updatedProduct as any).image1,
+          (updatedProduct as any).image2,
+          (updatedProduct as any).image3,
+          (updatedProduct as any).image4,
+          (updatedProduct as any).image5,
+        ].filter(Boolean);
+
+    const productOut = { ...updatedProduct, images: computedImages };
+    return NextResponse.json({ product: productOut }, { status: 200 });
   } catch (err: any) {
     console.error("PUT /api/products/[id] error", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -161,6 +220,41 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
     if (!product) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
+    }
+
+    // Attempt to remove any associated storage objects (best-effort)
+    try {
+      const urls: string[] = [];
+      const addUrl = (u?: string | null) => { if (u && typeof u === 'string') urls.push(u); };
+      addUrl((product as any)?.image1);
+      addUrl((product as any)?.image2);
+      addUrl((product as any)?.image3);
+      addUrl((product as any)?.image4);
+      addUrl((product as any)?.image5);
+      if (Array.isArray((product as any)?.images)) {
+        for (const u of (product as any).images) addUrl(u);
+      }
+      addUrl((product as any)?.fbx_url);
+      if (Array.isArray((product as any)?.fbx_urls)) {
+        for (const u of (product as any).fbx_urls) addUrl(u);
+      }
+
+      const toObjectPath = (url: string): string | null => {
+        const marker = "/storage/v1/object/public/products/";
+        const idx = url.indexOf(marker);
+        if (idx === -1) return null;
+        return url.slice(idx + marker.length);
+      };
+
+      const paths = urls.map(toObjectPath).filter((p): p is string => !!p);
+      if (paths.length) {
+        const { error: removeErr } = await supabaseAdmin.storage.from("products").remove(paths);
+        if (removeErr) {
+          console.warn("⚠️ Failed removing product files from storage:", removeErr.message);
+        }
+      }
+    } catch (storageErr) {
+      console.warn("⚠️ Storage cleanup error (non-fatal):", storageErr);
     }
 
     // Delete the product
