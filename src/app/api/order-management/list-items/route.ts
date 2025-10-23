@@ -16,6 +16,7 @@ export async function GET() {
              customer_email,customer_phone,delivery_address,payment_method,
              order_status,order_progress`)
     .in("item_type", ["reservation", "order"])
+    .neq("status", "completed") // exclude completed on this page
     .order("created_at", { ascending: false });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
