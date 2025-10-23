@@ -88,7 +88,7 @@ export default function UpdateProductsPage() {
       setLoading(true);
       const { data, error } = await supabase
         .from("products")
-        .select("id, name, price, category, type, inventory, image1, created_at")
+        .select("id, name, price, category, type, inventory, image1, images, created_at")
         .order("created_at", { ascending: false });
 
       if (error) {
@@ -204,14 +204,19 @@ export default function UpdateProductsPage() {
     try {
       // Get full product details before deletion for comprehensive logging
       const productToDelete = products.find(p => p.id === productId);
-      
-      const { error } = await supabase
-        .from("products")
-        .delete()
-        .eq("id", productId);
 
-      if (error) {
-        throw error;
+      // Use secure server-side API to permanently delete (bypasses RLS)
+      const res = await fetch(`/api/products/${productId}`, {
+        method: "DELETE",
+        headers: {
+          // API expects JSON-serialized admin in Authorization header for audit logs
+          Authorization: JSON.stringify({ id: currentAdmin.id, username: currentAdmin.username })
+        }
+      });
+
+      if (!res.ok) {
+        const { error: apiError } = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(apiError || `Failed to delete product (${res.status})`);
       }
 
       // Remove from local state
@@ -445,9 +450,9 @@ export default function UpdateProductsPage() {
             <div key={product.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
               {/* Product Image */}
               <div className="h-48 bg-gray-200 relative">
-                {product.image1 ? (
+                {product.image1 || (product as any).images?.[0] ? (
                   <img
-                    src={product.image1}
+                    src={product.image1 || (product as any).images?.[0]}
                     alt={product.name}
                     className="w-full h-full object-cover"
                     onError={(e) => {
@@ -464,7 +469,7 @@ export default function UpdateProductsPage() {
                           metadata: {
                             productName: product.name,
                             productId: product.id,
-                            imageUrl: product.image1,
+                            imageUrl: product.image1 || (product as any).images?.[0],
                             adminAccount: currentAdmin.username
                           }
                         });
