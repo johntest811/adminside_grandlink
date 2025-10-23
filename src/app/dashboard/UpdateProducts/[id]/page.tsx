@@ -12,6 +12,7 @@ type Product = {
   price: number;
   category: string;
   type?: string;
+  images?: string[]; // unlimited images
   image1?: string;
   image2?: string;
   image3?: string;
@@ -41,6 +42,36 @@ export default function EditProductPage() {
   const [show3DViewer, setShow3DViewer] = useState(false);
   const [currentFbxIndex, setCurrentFbxIndex] = useState(0);
   const [uploadingFbx, setUploadingFbx] = useState(false);
+  const [uploadingImages, setUploadingImages] = useState(false);
+
+  // Persist only images (and keep legacy fields in sync server-side)
+  const persistImages = async (imgs: string[]) => {
+    try {
+      const res = await fetch(`/api/products/${productId}` , {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          // Pass admin as JSON for activity logs on server
+          Authorization: JSON.stringify(currentAdmin || {})
+        },
+        body: JSON.stringify({ images: imgs }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error || `Failed to persist images (${res.status})`);
+      }
+      const j = await res.json().catch(() => null);
+      // Update originalProduct snapshot to reflect persisted images
+      if (j?.product) {
+        setOriginalProduct((prev) => ({ ...(prev || {} as any), ...j.product } as Product));
+        setProduct((prev) => ({ ...(prev || {} as any), ...j.product } as Product));
+      }
+    } catch (err) {
+      console.error('persistImages error:', err);
+      // Keep UI state, but inform user
+      setMessage(`Warning: images saved locally but failed to persist: ${String((err as any)?.message || err)}`);
+    }
+  };
 
   useEffect(() => {
     // Load current admin
@@ -450,6 +481,144 @@ export default function EditProductPage() {
           }
         });
       }
+    }
+  };
+
+  // Images management (unlimited)
+  const syncLegacyImages = async (imgs: string[]) => {
+    // Keep legacy fields in sync for backward compatibility
+    await handleChange('image1', imgs[0] || null);
+    await handleChange('image2', imgs[1] || null);
+    await handleChange('image3', imgs[2] || null);
+    await handleChange('image4', imgs[3] || null);
+    await handleChange('image5', imgs[4] || null);
+  };
+
+  const getCurrentImages = (): string[] => {
+    if (product?.images && Array.isArray(product.images)) return product.images;
+    // Build array from legacy fields as fallback
+    const legacy = [product?.image1, product?.image2, product?.image3, product?.image4, product?.image5]
+      .filter(Boolean) as string[];
+    return legacy;
+  };
+
+  const handleImagesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length || !currentAdmin || !product) return;
+
+    setUploadingImages(true);
+    setMessage("Uploading images...");
+
+    try {
+      const uploadedUrls: string[] = [];
+      for (const file of files) {
+        const url = await uploadFile(file, 'images', productId);
+        uploadedUrls.push(url);
+
+        // Log individual image upload
+        await logActivity({
+          admin_id: currentAdmin.id,
+          admin_name: currentAdmin.username,
+          action: 'upload',
+          entity_type: 'product_image',
+          entity_id: product.id,
+          page: 'UpdateProducts',
+          details: `Uploaded product image: ${file.name} for "${product.name}"`,
+          metadata: {
+            fileName: file.name,
+            fileSize: file.size,
+            productName: product.name,
+            productId: product.id,
+            adminAccount: currentAdmin.username,
+            timestamp: new Date().toISOString()
+          }
+        });
+      }
+
+      const current = getCurrentImages();
+      const next = [...current, ...uploadedUrls];
+
+  await handleChange('images', next);
+  await syncLegacyImages(next);
+  // Persist immediately so images don't disappear on re-fetch
+  await persistImages(next);
+
+      setMessage(`${files.length} image(s) uploaded successfully!`);
+      setTimeout(() => setMessage(""), 3000);
+    } catch (error) {
+      console.error('Images upload error:', error);
+      setMessage('Error uploading images');
+    } finally {
+      setUploadingImages(false);
+    }
+  };
+
+  const handleRemoveImage = async (url: string, index: number) => {
+    if (!currentAdmin || !product) return;
+    const current = getCurrentImages();
+    const next = current.filter((u) => u !== url);
+    await handleChange('images', next);
+    await syncLegacyImages(next);
+    await persistImages(next);
+
+    await logActivity({
+      admin_id: currentAdmin.id,
+      admin_name: currentAdmin.username,
+      action: 'delete',
+      entity_type: 'product_image',
+      entity_id: product.id,
+      page: 'UpdateProducts',
+      details: `Removed product image (${index + 1}) from "${product.name}"`,
+      metadata: {
+        removedUrl: url,
+        imageIndex: index + 1,
+        remaining: next.length,
+        productName: product.name,
+        productId: product.id,
+        adminAccount: currentAdmin.username,
+        timestamp: new Date().toISOString()
+      }
+    });
+  };
+
+  const handleReplaceImage = async (idx: number, file: File) => {
+    if (!currentAdmin || !product) return;
+    setUploadingImages(true);
+    setMessage('Replacing image...');
+    try {
+      const url = await uploadFile(file, 'images', productId);
+        const current = getCurrentImages();
+        const next = current.slice();
+      next[idx] = url;
+      await handleChange('images', next);
+      await syncLegacyImages(next);
+      await persistImages(next);
+
+      await logActivity({
+        admin_id: currentAdmin.id,
+        admin_name: currentAdmin.username,
+        action: 'update',
+        entity_type: 'product_image',
+        entity_id: product.id,
+        page: 'UpdateProducts',
+        details: `Replaced product image ${idx + 1} for "${product.name}" with ${file.name}`,
+        metadata: {
+          fileName: file.name,
+          imageIndex: idx + 1,
+          productName: product.name,
+          productId: product.id,
+          adminAccount: currentAdmin.username,
+          timestamp: new Date().toISOString()
+        }
+      });
+
+      setMessage('Image replaced successfully');
+      setTimeout(() => setMessage(''), 2500);
+    } catch (error) {
+      console.error('Replace image error:', error);
+      setMessage('Error replacing image');
+    } finally {
+      setUploadingImages(false);
     }
   };
 
@@ -933,47 +1102,74 @@ export default function EditProductPage() {
           )}
         </div>
 
-        {/* File Uploads */}
+        {/* Images Management (unlimited) */}
         <div className="border-b border-gray-200 pb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Product Images</h2>
-          
-          {/* Legacy FBX File Upload (for backward compatibility) */}
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">
+            Images Management ({getCurrentImages().length} files)
+          </h2>
+
           <div className="mb-4">
-            <label className="block font-medium mb-1 text-black">Single 3D Model (FBX File) - Legacy</label>
+            <label className="block font-medium mb-1 text-black">Upload Images</label>
             <input
               type="file"
-              accept=".fbx"
-              onChange={e => handleFileUpload(e, "fbx_url")}
-              className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500"
+              accept="image/*"
+              multiple
+              onChange={handleImagesUpload}
+              disabled={uploadingImages}
+              className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
             />
             <div className="text-sm text-gray-500 mt-1">
-              This is for backward compatibility. Use "3D Models Management" section above for multiple files.
+              You can upload any number of images. They will be added to this product.
             </div>
-            {product.fbx_url && (
-              <a href={product.fbx_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline text-sm mt-2 block">
-                View current legacy FBX file
-              </a>
-            )}
           </div>
 
-          {/* Image Uploads */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[1,2,3,4,5].map(i => (
-              <div key={i} className="border border-gray-200 rounded-lg p-4">
-                <label className="block font-medium mb-2 text-black">{`Image ${i}`}</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={e => handleFileUpload(e, `image${i}` as keyof Product)}
-                  className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500 mb-2"
-                />
-                {product[`image${i}` as keyof Product] && (
-                  <img
-                    src={product[`image${i}` as keyof Product] as string}
-                    alt={`Image ${i}`}
-                    className="w-full h-32 object-cover rounded border"
-                  />
-                )}
+          {uploadingImages && (
+            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-800">
+              <div className="flex items-center">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                Uploading images...
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {getCurrentImages().map((url, index) => (
+              <div key={index} className="flex items-center justify-between p-3 bg-gray-100 rounded-lg border">
+                <div className="flex items-center gap-3 flex-1">
+                  <img src={url} alt={`Image ${index + 1}`} className="w-20 h-20 object-cover rounded border" />
+                  <div className="flex-1">
+                    <div className="font-medium text-sm">Image {index + 1}</div>
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 underline text-xs break-all"
+                    >
+                      {url.split('/').pop() || url}
+                    </a>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2 ml-4">
+                  <label className="px-3 py-1 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 transition-colors cursor-pointer">
+                    Replace
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) handleReplaceImage(index, f);
+                      }}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveImage(url, index)}
+                    className="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition-colors"
+                  >
+                    Remove
+                  </button>
+                </div>
               </div>
             ))}
           </div>
