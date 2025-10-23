@@ -16,6 +16,7 @@ if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
   });
 }
 
+// USER_WEBSITE_URL resolves (prefer explicit NEXT_PUBLIC_USER_WEBSITE_URL)
 const USER_WEBSITE_URL =
   process.env.NEXT_PUBLIC_USER_WEBSITE_URL ||
   process.env.NEXT_PUBLIC_BASE_URL ||
