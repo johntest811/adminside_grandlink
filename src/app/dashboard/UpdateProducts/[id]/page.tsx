@@ -1,9 +1,13 @@
 "use client";
-import { useState, useEffect } from "react";
+
+import { useState, useEffect, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
-import { logActivity } from "../../../lib/activity";
-import { notifyProductUpdated, notifyProductFileUploaded } from "../../../lib/notifications";
+import { logActivity } from "@/app/lib/activity";
+import { notifyProductUpdated, notifyProductFileUploaded } from "@/app/lib/notifications";
+import * as THREE from "three";
+import { FBXLoader } from "three-stdlib";
+import { OrbitControls } from "three-stdlib";
 
 type Product = {
   id: string;
@@ -44,7 +48,7 @@ export default function EditProductPage() {
   const [uploadingFbx, setUploadingFbx] = useState(false);
   const [uploadingImages, setUploadingImages] = useState(false);
 
-  // Persist only images (and keep legacy fields in sync server-side)
+  // Persist images (already exists)
   const persistImages = async (imgs: string[]) => {
     try {
       const res = await fetch(`/api/products/${productId}` , {
@@ -61,15 +65,48 @@ export default function EditProductPage() {
         throw new Error(j?.error || `Failed to persist images (${res.status})`);
       }
       const j = await res.json().catch(() => null);
-      // Update originalProduct snapshot to reflect persisted images
       if (j?.product) {
         setOriginalProduct((prev) => ({ ...(prev || {} as any), ...j.product } as Product));
         setProduct((prev) => ({ ...(prev || {} as any), ...j.product } as Product));
       }
     } catch (err) {
       console.error('persistImages error:', err);
-      // Keep UI state, but inform user
       setMessage(`Warning: images saved locally but failed to persist: ${String((err as any)?.message || err)}`);
+    }
+  };
+
+  // Persist FBX URLs (keeps legacy fbx_url in sync)
+  const persistFbx = async (fbxUrls: string[] | null) => {
+    try {
+      const payload: any = { fbx_urls: fbxUrls || [] };
+      payload.fbx_url = (fbxUrls && fbxUrls.length > 0) ? fbxUrls[0] : null;
+
+      const res = await fetch(`/api/products/${productId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: JSON.stringify(currentAdmin || {})
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error || `Failed to persist FBX (${res.status})`);
+      }
+
+      // Always reload product after update to sync state
+      const reload = await fetch(`/api/products/${productId}`);
+      if (reload.ok) {
+        const result = await reload.json();
+        if (result?.product) {
+          setOriginalProduct(result.product);
+          setProduct(result.product);
+        }
+      }
+    } catch (err) {
+      console.error('persistFbx error:', err);
+      setMessage(`Warning: FBX update saved locally but failed to persist: ${String((err as any)?.message || err)}`);
     }
   };
 
@@ -669,16 +706,16 @@ export default function EditProductPage() {
         }
       }
       
-      // Update product state with new FBX URLs
-      const currentFbxUrls = product.fbx_urls || [];
+      // Merge with current FBX list (handle legacy fbx_url)
+      const currentFbxUrls = getCurrentFbxUrls();
       const newFbxUrls = [...currentFbxUrls, ...uploadedUrls];
-      
+
+      // Update UI state immediately
       await handleChange('fbx_urls', newFbxUrls);
-      
-      // Also update the legacy fbx_url field for backward compatibility
-      if (newFbxUrls.length > 0 && !product.fbx_url) {
-        await handleChange('fbx_url', newFbxUrls[0]);
-      }
+      await handleChange('fbx_url', newFbxUrls.length > 0 ? newFbxUrls[0] : null);
+
+      // Persist immediately so files don't disappear on refresh
+      await persistFbx(newFbxUrls);
       
       setMessage(`${files.length} FBX file(s) uploaded successfully!`);
       setTimeout(() => setMessage(""), 3000);
@@ -716,17 +753,15 @@ export default function EditProductPage() {
   const handleRemoveFbx = async (url: string, index: number) => {
     if (!currentAdmin || !product) return;
     
-    const currentFbxUrls = product.fbx_urls || [];
+    const currentFbxUrls = getCurrentFbxUrls();
     const newFbxUrls = currentFbxUrls.filter((u) => u !== url);
-    
+
+    // Update UI state
     await handleChange('fbx_urls', newFbxUrls);
-    
-    // Update legacy fbx_url field
-    if (newFbxUrls.length > 0) {
-      await handleChange('fbx_url', newFbxUrls[0]);
-    } else {
-      await handleChange('fbx_url', null);
-    }
+    await handleChange('fbx_url', newFbxUrls.length > 0 ? newFbxUrls[0] : null);
+
+    // Persist and reload product to sync state
+    await persistFbx(newFbxUrls);
     
     await logActivity({
       admin_id: currentAdmin.id,
@@ -794,7 +829,7 @@ export default function EditProductPage() {
       
       {/* 3D Viewer Modal */}
       {show3DViewer && currentFbxUrls.length > 0 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.8)" }}>
           <div className="bg-white rounded-lg p-6 shadow-lg relative max-w-4xl w-full mx-4">
             <button
               onClick={() => setShow3DViewer(false)}
@@ -808,51 +843,31 @@ export default function EditProductPage() {
               <div className="text-sm text-gray-600 mb-2">
                 Viewing FBX {currentFbxIndex + 1} of {currentFbxUrls.length}
               </div>
-              
-              {/* FBX Navigation */}
+
               {currentFbxUrls.length > 1 && (
-                <div className="flex justify-center items-center gap-4 mb-4">
+                <div className="flex gap-2 mb-2">
                   <button
-                    onClick={() => setCurrentFbxIndex(Math.max(0, currentFbxIndex - 1))}
-                    disabled={currentFbxIndex === 0}
-                    className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50"
+                    onClick={() => setCurrentFbxIndex((i) => (i > 0 ? i - 1 : currentFbxUrls.length - 1))}
+                    className="px-3 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
                   >
-                    ← Previous
+                    Previous
                   </button>
-                  
-                  <div className="flex space-x-1">
-                    {currentFbxUrls.map((_, index) => (
-                      <button
-                        key={index}
-                        onClick={() => setCurrentFbxIndex(index)}
-                        className={`w-8 h-8 rounded-full text-xs font-bold ${
-                          index === currentFbxIndex 
-                            ? 'bg-blue-600 text-white' 
-                            : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
-                        }`}
-                      >
-                        {index + 1}
-                      </button>
-                    ))}
-                  </div>
-                  
                   <button
-                    onClick={() => setCurrentFbxIndex(Math.min(currentFbxUrls.length - 1, currentFbxIndex + 1))}
-                    disabled={currentFbxIndex === currentFbxUrls.length - 1}
-                    className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50"
+                    onClick={() => setCurrentFbxIndex((i) => (i < currentFbxUrls.length - 1 ? i + 1 : 0))}
+                    className="px-3 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
                   >
-                    Next →
+                    Next
                   </button>
                 </div>
               )}
+
+              <div className="text-xs text-gray-500 mb-2">
+                Use mouse to rotate, zoom, and pan. Background is transparent for clean previews.
+              </div>
             </div>
-            
-            <div className="flex-1 w-full flex items-center justify-center overflow-hidden">
-              <iframe
-                src={currentFbxUrls[currentFbxIndex]}
-                className="w-full h-96 border rounded"
-                title={`3D Model ${currentFbxIndex + 1}`}
-              />
+
+            <div className="h-96 w-full">
+              <FBXViewer fbxUrl={currentFbxUrls[currentFbxIndex]} />
             </div>
           </div>
         </div>
@@ -1244,4 +1259,250 @@ async function uploadFile(file: File, field: string, productId: string): Promise
     .getPublicUrl(data.path);
 
   return urlData.publicUrl;
+}
+
+// FBX Viewer Component (adapted from products page for consistency)
+function FBXViewer({ fbxUrl }: { fbxUrl: string }) {
+  const mountRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!mountRef.current || !fbxUrl) return;
+
+    let loader: any;
+    let model: THREE.Group | undefined;
+    let controls: any;
+    let renderer: THREE.WebGLRenderer;
+    let scene: THREE.Scene;
+    let camera: THREE.PerspectiveCamera;
+    let animationId: number;
+    let onResizeHandler: (() => void) | null = null;
+
+    async function loadFBX() {
+      loader = new FBXLoader();
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x87ceeb);
+
+      camera = new THREE.PerspectiveCamera(50, 800 / 600, 0.1, 2000);
+      camera.position.set(0, 50, 100);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setSize(800, 600);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.2;
+
+      // Runtime-safe color management for Vercel compatibility
+      const setOutputCS = (r: any) => {
+        const anyTHREE: any = THREE;
+        if ("outputColorSpace" in r && anyTHREE.SRGBColorSpace !== undefined) {
+          r.outputColorSpace = anyTHREE.SRGBColorSpace;
+        } else if ("outputEncoding" in r && anyTHREE.sRGBEncoding !== undefined) {
+          r.outputEncoding = anyTHREE.sRGBEncoding;
+        }
+      };
+      setOutputCS(renderer);
+
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+      scene.add(ambientLight);
+
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+      directionalLight.position.set(10, 10, 5);
+      directionalLight.castShadow = true;
+      scene.add(directionalLight);
+
+      const rimLight1 = new THREE.DirectionalLight(0x88ccff, 0.5);
+      rimLight1.position.set(-10, 5, -5);
+      scene.add(rimLight1);
+
+      const rimLight2 = new THREE.DirectionalLight(0xffaa88, 0.3);
+      rimLight2.position.set(5, -5, 10);
+      scene.add(rimLight2);
+
+      const pointLight = new THREE.PointLight(0xffffff, 0.8, 100);
+      pointLight.position.set(0, 20, 20);
+      scene.add(pointLight);
+
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+      controls.enableZoom = true;
+      controls.enablePan = true;
+      controls.autoRotate = false;
+      controls.minDistance = 10;
+      controls.maxDistance = 500;
+
+      loader.load(
+        fbxUrl,
+        (object: THREE.Group) => {
+          model = object;
+
+          object.traverse((child: any) => {
+            if (child.isMesh) {
+              const material = child.material;
+              if (Array.isArray(material)) {
+                material.forEach((mat, index) => {
+                  child.material[index] = processGlassMaterial(mat);
+                });
+              } else {
+                child.material = processGlassMaterial(material);
+              }
+              child.castShadow = true;
+              child.receiveShadow = true;
+            }
+          });
+
+          const box = new THREE.Box3().setFromObject(object);
+          const size = box.getSize(new THREE.Vector3());
+          const center = box.getCenter(new THREE.Vector3());
+
+          object.position.sub(center);
+
+          const maxSize = Math.max(size.x, size.y, size.z);
+          if (maxSize > 0) {
+            const scale = 80 / maxSize;
+            object.scale.setScalar(scale);
+          }
+
+          const distance = Math.max(size.x, size.y, size.z) * 1.5;
+          camera.position.set(distance, distance * 0.5, distance);
+          camera.lookAt(0, 0, 0);
+
+          controls.target.set(0, 0, 0);
+          controls.update();
+
+          scene.add(model);
+        },
+        undefined,
+        (error: unknown) => {
+          console.error('Error loading FBX:', error);
+        }
+      );
+
+      const mount = mountRef.current;
+      if (mount) {
+        mount.innerHTML = '';
+        mount.appendChild(renderer.domElement);
+      }
+
+      // Handle resize
+      function onResize() {
+        const w = mount?.clientWidth || 800;
+        const h = mount?.clientHeight || 600;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+      }
+      onResizeHandler = onResize;
+      window.addEventListener('resize', onResizeHandler);
+
+      function animate() {
+        animationId = requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+      }
+      animate();
+    }
+
+    function processGlassMaterial(material: any): THREE.Material {
+      if (!material) return material;
+
+      const materialName = (material.name || '').toLowerCase();
+      const isGlass = materialName.includes('glass') ||
+                      materialName.includes('transparent') ||
+                      materialName.includes('window') ||
+                      materialName.includes('crystal') ||
+                      material.transparent === true ||
+                      (material.opacity !== undefined && material.opacity < 0.9);
+
+      if (isGlass) {
+        const glassMaterial = new THREE.MeshPhysicalMaterial({
+          color: material.color || new THREE.Color(0xffffff),
+          transmission: 0.95,
+          opacity: 0.1,
+          metalness: 0.0,
+          roughness: 0.05,
+          ior: 1.52,
+          thickness: 0.5,
+          transparent: true,
+          side: THREE.DoubleSide,
+          clearcoat: 1.0,
+          clearcoatRoughness: 0.0,
+          reflectivity: 0.9,
+          envMapIntensity: 1.0,
+        });
+
+        if (material.map) glassMaterial.map = material.map;
+        if (material.normalMap) glassMaterial.normalMap = material.normalMap;
+        if (material.roughnessMap) glassMaterial.roughnessMap = material.roughnessMap;
+
+        return glassMaterial;
+      } else {
+        if (material.type === 'MeshBasicMaterial') {
+          const newMaterial = new THREE.MeshStandardMaterial({
+            color: material.color,
+            map: material.map,
+            transparent: material.transparent,
+            opacity: material.opacity,
+            roughness: 0.7,
+            metalness: 0.1,
+          });
+          return newMaterial;
+        } else {
+          material.roughness = material.roughness || 0.7;
+          material.metalness = material.metalness || 0.1;
+        }
+      }
+
+      material.needsUpdate = true;
+      return material;
+    }
+
+    loadFBX();
+
+    return () => {
+      const mount = mountRef.current;
+      if (mount) mount.innerHTML = '';
+
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+      }
+
+      if (onResizeHandler) {
+        window.removeEventListener('resize', onResizeHandler);
+      }
+      if (renderer) {
+        renderer.dispose();
+        renderer.forceContextLoss();
+      }
+      if (controls) controls.dispose();
+      if (model) {
+        scene.remove(model);
+        model.traverse((child: any) => {
+          if (child.isMesh) {
+            child.geometry?.dispose();
+            if (Array.isArray(child.material)) {
+              child.material.forEach((mat: any) => mat.dispose());
+            } else {
+              child.material?.dispose();
+            }
+          }
+        });
+      }
+    };
+  }, [fbxUrl]);
+
+  return (
+    <div
+      ref={mountRef}
+      style={{
+        width: '100%',
+        height: '100%',
+        background: 'transparent',
+        borderRadius: '12px',
+        overflow: 'hidden',
+      }}
+    />
+  );
 }
