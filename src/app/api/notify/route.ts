@@ -16,12 +16,6 @@ if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
   });
 }
 
-// USER_WEBSITE_URL resolves (prefer explicit NEXT_PUBLIC_USER_WEBSITE_URL)
-const USER_WEBSITE_URL =
-  process.env.NEXT_PUBLIC_USER_WEBSITE_URL ||
-  process.env.NEXT_PUBLIC_BASE_URL ||
-  "https://grandlnik-website.vercel.app";
-
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic'; // avoid caching for webhooks/notifications
 
@@ -30,30 +24,124 @@ export async function POST(request: NextRequest) {
     const payload = await request.json();
     const { type, productName, productId, adminName, newStock } = payload || {};
 
-    // Forward order status updates to the website API
     if (type === "order_status" || (payload?.userItemId && payload?.newStatus)) {
-      try {
-        const ac = new AbortController();
-        const timer = setTimeout(() => ac.abort("timeout"), 5000);
+      const userItemId = payload?.userItemId;
+      const newStatus = payload?.newStatus;
+      if (!userItemId || !newStatus) {
+        return NextResponse.json({ success: false, error: "Missing userItemId or newStatus" }, { status: 400 });
+      }
 
-        const res = await fetch(`${USER_WEBSITE_URL}/api/update-order-status`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ skipUpdate: true, ...payload }),
-          signal: ac.signal,
+      const { data: orderData, error: orderErr } = await supabaseAdmin
+        .from("user_items")
+        .select("*")
+        .eq("id", userItemId)
+        .single();
+
+      if (orderErr || !orderData) {
+        console.error("Order fetch error:", orderErr);
+        return NextResponse.json({ success: false, error: "Order not found" }, { status: 404 });
+      }
+
+      const { data: productData } = await supabaseAdmin
+        .from("products")
+        .select("name")
+        .eq("id", orderData.product_id)
+        .single();
+
+      const productName = payload?.productName || orderData.meta?.product_name || productData?.name || "Your Order";
+      const statusDisplay = String(newStatus).replace(/_/g, " ").toUpperCase();
+      const statusMessages: Record<string, string> = {
+        pending_payment: "Your order is awaiting payment confirmation.",
+        reserved: "Your order has been reserved and payment confirmed.",
+        pending_balance_payment: "Please settle the remaining balance so we can continue processing your order.",
+        approved: "Your order has been approved and will begin production soon.",
+        in_production: "Your order is currently being manufactured.",
+        quality_check: "Your order is undergoing quality inspection.",
+        start_packaging: "Your order is being packaged.",
+        packaging: "Your order is being packaged.",
+        ready_for_delivery: "Your order is ready for delivery! We will contact you soon.",
+        out_for_delivery: "Your order is on its way to you!",
+        completed: "Your order has been completed successfully. Thank you for choosing Grand Link!",
+        cancelled: "Your order has been cancelled. If you have any questions, please contact us.",
+        pending_cancellation: "Your cancellation request is being processed.",
+      };
+
+      const message = statusMessages[newStatus] || `Your order status has been updated to: ${statusDisplay}`;
+      const now = new Date().toISOString();
+      const adminName = payload?.adminName || null;
+
+      const { data: userWrap } = await supabaseAdmin.auth.admin.getUserById(orderData.user_id);
+      const userEmail = userWrap?.user?.email || null;
+
+      const { data: preferences } = await supabaseAdmin
+        .from("user_notification_preferences")
+        .select("*")
+        .eq("user_id", orderData.user_id)
+        .single();
+
+      const shouldSendInApp = preferences?.order_status_notifications !== false;
+      const shouldSendEmail = preferences?.email_notifications !== false;
+
+      let notificationInserted = false;
+      if (shouldSendInApp) {
+        const { error: notifError } = await supabaseAdmin.from("user_notifications").insert({
+          user_id: orderData.user_id,
+          title: `Order Status: ${statusDisplay}`,
+          message: `${productName} - ${message}`,
+          type: "order_status",
+          metadata: {
+            order_id: userItemId,
+            product_id: orderData.product_id,
+            product_name: productName,
+            new_status: newStatus,
+            admin_name: adminName,
+          },
+          action_url: "/profile/order",
+          order_id: userItemId,
+          is_read: false,
+          created_at: now,
         });
 
-        clearTimeout(timer);
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          console.warn("⚠️ notify forward failed:", data?.error || res.statusText);
-          return NextResponse.json({ success: true, forwarded: false, warning: data?.error || "notify failed" });
+        if (!notifError) {
+          notificationInserted = true;
+        } else {
+          console.error("Failed to insert user notification:", notifError);
         }
-        return NextResponse.json({ success: true, forwarded: true, ...data });
-      } catch (e: any) {
-        console.warn("⚠️ notify forward error:", e?.message || e);
-        return NextResponse.json({ success: true, forwarded: false, warning: "website offline or unreachable" });
       }
+
+      let emailSent = false;
+      if (shouldSendEmail && mailTransporter && userEmail) {
+        try {
+          await mailTransporter.sendMail({
+            from: process.env.GMAIL_FROM || process.env.GMAIL_USER!,
+            to: userEmail,
+            subject: `Order Status: ${statusDisplay}`,
+            html: `<p>${message}</p><p>Order ID: ${userItemId}</p>`,
+          });
+          emailSent = true;
+        } catch (mailErr) {
+          console.error("Email send failed:", mailErr);
+        }
+      }
+
+      await supabaseAdmin.from("email_notifications").insert({
+        recipient_email: userEmail,
+        subject: `Order Status: ${statusDisplay}`,
+        message: `${productName} - ${message}`,
+        notification_type: "order_status",
+        related_entity_type: "user_items",
+        related_entity_id: userItemId,
+        status: emailSent ? "sent" : shouldSendEmail && userEmail ? "pending" : "skipped",
+        created_at: now,
+      });
+
+      return NextResponse.json({
+        success: true,
+        notified: {
+          inApp: notificationInserted,
+          emailSent,
+        },
+      });
     }
 
     console.log("📢 Notification API called:", { type, productName, productId, adminName });
@@ -211,7 +299,7 @@ export async function POST(request: NextRequest) {
         message: msg,
         type: "order",
         priority: "high",
-        recipient_role: "Admin",
+  recipient_role: "admin",
         is_read: false,
         created_at: new Date().toISOString()
       });

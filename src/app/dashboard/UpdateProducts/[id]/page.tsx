@@ -6,8 +6,7 @@ import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 import { logActivity } from "@/app/lib/activity";
 import { notifyProductUpdated, notifyProductFileUploaded } from "@/app/lib/notifications";
 import * as THREE from "three";
-import { FBXLoader } from "three-stdlib";
-import { OrbitControls } from "three-stdlib";
+import { FBXLoader, OrbitControls } from "three-stdlib";
 
 type Product = {
   id: string;
@@ -1264,245 +1263,287 @@ async function uploadFile(file: File, field: string, productId: string): Promise
 // FBX Viewer Component (adapted from products page for consistency)
 function FBXViewer({ fbxUrl }: { fbxUrl: string }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!mountRef.current || !fbxUrl) return;
+    const container = mountRef.current;
+    if (!container || !fbxUrl) return;
 
-    let loader: any;
-    let model: THREE.Group | undefined;
-    let controls: any;
-    let renderer: THREE.WebGLRenderer;
-    let scene: THREE.Scene;
-    let camera: THREE.PerspectiveCamera;
-    let animationId: number;
-    let onResizeHandler: (() => void) | null = null;
+    setIsLoading(true);
+    setLoadError(null);
 
-    async function loadFBX() {
-      loader = new FBXLoader();
+    let disposed = false;
+    let frameId = 0;
+    let objectURLToRevoke: string | null = null;
 
-      scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x87ceeb);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(
+      45,
+      (container.clientWidth || 800) / (container.clientHeight || 480),
+      0.1,
+      4000
+    );
+    camera.position.set(0, 160, 260);
 
-      camera = new THREE.PerspectiveCamera(50, 800 / 600, 0.1, 2000);
-      camera.position.set(0, 50, 100);
+    // Color management (r152+ and <=r151)
+    const setOutputCS = (r: any) => {
+      const anyTHREE: any = THREE;
+      if ("outputColorSpace" in r && anyTHREE.SRGBColorSpace !== undefined) {
+        r.outputColorSpace = anyTHREE.SRGBColorSpace;
+      } else if ("outputEncoding" in r && anyTHREE.sRGBEncoding !== undefined) {
+        r.outputEncoding = anyTHREE.sRGBEncoding;
+      }
+    };
+    setOutputCS(renderer);
 
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-      renderer.setSize(800, 600);
-      renderer.shadowMap.enabled = true;
-      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-      renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.2;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(container.clientWidth || 800, container.clientHeight || 480);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.1;
 
-      // Runtime-safe color management for Vercel compatibility
-      const setOutputCS = (r: any) => {
-        const anyTHREE: any = THREE;
-        if ("outputColorSpace" in r && anyTHREE.SRGBColorSpace !== undefined) {
-          r.outputColorSpace = anyTHREE.SRGBColorSpace;
-        } else if ("outputEncoding" in r && anyTHREE.sRGBEncoding !== undefined) {
-          r.outputEncoding = anyTHREE.sRGBEncoding;
-        }
-      };
-      setOutputCS(renderer);
+  // Mount canvas safely without disturbing React's DOM tracking
+  const canvasEl = renderer.domElement;
+  container.appendChild(canvasEl);
 
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-      scene.add(ambientLight);
+  // Lights (no platform/grid); keep transparent background to focus on model
+  scene.background = null;
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.15);
+    hemi.position.set(0, 400, 0);
+    scene.add(hemi);
 
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
-      directionalLight.position.set(10, 10, 5);
-      directionalLight.castShadow = true;
-      scene.add(directionalLight);
+    const dir = new THREE.DirectionalLight(0xffffff, 0.9);
+    dir.position.set(180, 240, 200);
+    dir.castShadow = true;
+    scene.add(dir);
 
-      const rimLight1 = new THREE.DirectionalLight(0x88ccff, 0.5);
-      rimLight1.position.set(-10, 5, -5);
-      scene.add(rimLight1);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.6);
+    fill.position.set(-160, 160, -180);
+    scene.add(fill);
 
-      const rimLight2 = new THREE.DirectionalLight(0xffaa88, 0.3);
-      rimLight2.position.set(5, -5, 10);
-      scene.add(rimLight2);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = 20;
+    controls.maxDistance = 800;
+    controls.target.set(0, 0, 0);
+    controls.update();
 
-      const pointLight = new THREE.PointLight(0xffffff, 0.8, 100);
-      pointLight.position.set(0, 20, 20);
-      scene.add(pointLight);
+    const manager = new THREE.LoadingManager();
+    manager.onError = (url) => !disposed && setLoadError(`Failed to load: ${url}`);
+    const loader = new FBXLoader(manager);
+    loader.setCrossOrigin("anonymous");
 
-      controls = new OrbitControls(camera, renderer.domElement);
-      controls.enableDamping = true;
-      controls.dampingFactor = 0.05;
-      controls.enableZoom = true;
-      controls.enablePan = true;
-      controls.autoRotate = false;
-      controls.minDistance = 10;
-      controls.maxDistance = 500;
+    // Try to fetch the file as a Blob first to avoid any CORS/content-type hiccups,
+    // then fall back to direct URL if needed.
+    const tryLoad = async () => {
+      const tryUrls: string[] = [fbxUrl];
+      // If the URL might contain spaces, also try an encoded version
+      if (fbxUrl.includes(" ")) tryUrls.push(encodeURI(fbxUrl));
 
-      loader.load(
-        fbxUrl,
-        (object: THREE.Group) => {
-          model = object;
+      for (const url of tryUrls) {
+        try {
+          const res = await fetch(url, { mode: "cors" });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const blob = await res.blob();
+          objectURLToRevoke = URL.createObjectURL(blob);
 
-          object.traverse((child: any) => {
-            if (child.isMesh) {
-              const material = child.material;
-              if (Array.isArray(material)) {
-                material.forEach((mat, index) => {
-                  child.material[index] = processGlassMaterial(mat);
+          return new Promise<void>((resolve, reject) => {
+            loader.load(
+              objectURLToRevoke as string,
+              (object) => {
+                if (disposed) return;
+                // attach object to scene with centering, scaling, and camera fit
+                object.traverse((child: any) => {
+                  if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                    if (Array.isArray(child.material)) {
+                      child.material.forEach((m: any) => {
+                        m.side = THREE.DoubleSide;
+                        m.needsUpdate = true;
+                      });
+                    } else if (child.material) {
+                      child.material.side = THREE.DoubleSide;
+                      child.material.needsUpdate = true;
+                    }
+                  }
                 });
-              } else {
-                child.material = processGlassMaterial(material);
+
+                // Center and scale
+                const box1 = new THREE.Box3().setFromObject(object);
+                const center1 = box1.getCenter(new THREE.Vector3());
+                object.position.sub(center1);
+                const size1 = box1.getSize(new THREE.Vector3());
+                const maxAxis1 = Math.max(size1.x, size1.y, size1.z) || 1;
+                const targetSize = 200;
+                object.scale.setScalar(targetSize / maxAxis1);
+
+                // Fit camera
+                const box2 = new THREE.Box3().setFromObject(object);
+                const size2 = box2.getSize(new THREE.Vector3());
+                const maxDim = Math.max(size2.x, size2.y, size2.z) || 1;
+                const center2 = box2.getCenter(new THREE.Vector3());
+                const fov = THREE.MathUtils.degToRad(camera.fov);
+                const fitHeightDistance = maxDim / (2 * Math.tan(fov / 2));
+                const fitWidthDistance = fitHeightDistance / camera.aspect;
+                const distance = 1.15 * Math.max(fitHeightDistance, fitWidthDistance);
+
+                camera.near = Math.max(0.1, maxDim / 100);
+                camera.far = Math.max(1000, maxDim * 100);
+                camera.updateProjectionMatrix();
+                camera.position.set(center2.x + distance, center2.y + distance * 0.2, center2.z + distance);
+                controls.target.copy(center2);
+                controls.minDistance = distance * 0.1;
+                controls.maxDistance = distance * 8;
+                controls.update();
+
+                scene.add(object);
+                setIsLoading(false);
+                resolve();
+              },
+              undefined,
+              (err) => {
+                reject(err);
               }
-              child.castShadow = true;
-              child.receiveShadow = true;
-            }
+            );
           });
-
-          const box = new THREE.Box3().setFromObject(object);
-          const size = box.getSize(new THREE.Vector3());
-          const center = box.getCenter(new THREE.Vector3());
-
-          object.position.sub(center);
-
-          const maxSize = Math.max(size.x, size.y, size.z);
-          if (maxSize > 0) {
-            const scale = 80 / maxSize;
-            object.scale.setScalar(scale);
-          }
-
-          const distance = Math.max(size.x, size.y, size.z) * 1.5;
-          camera.position.set(distance, distance * 0.5, distance);
-          camera.lookAt(0, 0, 0);
-
-          controls.target.set(0, 0, 0);
-          controls.update();
-
-          scene.add(model);
-        },
-        undefined,
-        (error: unknown) => {
-          console.error('Error loading FBX:', error);
-        }
-      );
-
-      const mount = mountRef.current;
-      if (mount) {
-        mount.innerHTML = '';
-        mount.appendChild(renderer.domElement);
-      }
-
-      // Handle resize
-      function onResize() {
-        const w = mount?.clientWidth || 800;
-        const h = mount?.clientHeight || 600;
-        camera.aspect = w / h;
-        camera.updateProjectionMatrix();
-        renderer.setSize(w, h);
-      }
-      onResizeHandler = onResize;
-      window.addEventListener('resize', onResizeHandler);
-
-      function animate() {
-        animationId = requestAnimationFrame(animate);
-        controls.update();
-        renderer.render(scene, camera);
-      }
-      animate();
-    }
-
-    function processGlassMaterial(material: any): THREE.Material {
-      if (!material) return material;
-
-      const materialName = (material.name || '').toLowerCase();
-      const isGlass = materialName.includes('glass') ||
-                      materialName.includes('transparent') ||
-                      materialName.includes('window') ||
-                      materialName.includes('crystal') ||
-                      material.transparent === true ||
-                      (material.opacity !== undefined && material.opacity < 0.9);
-
-      if (isGlass) {
-        const glassMaterial = new THREE.MeshPhysicalMaterial({
-          color: material.color || new THREE.Color(0xffffff),
-          transmission: 0.95,
-          opacity: 0.1,
-          metalness: 0.0,
-          roughness: 0.05,
-          ior: 1.52,
-          thickness: 0.5,
-          transparent: true,
-          side: THREE.DoubleSide,
-          clearcoat: 1.0,
-          clearcoatRoughness: 0.0,
-          reflectivity: 0.9,
-          envMapIntensity: 1.0,
-        });
-
-        if (material.map) glassMaterial.map = material.map;
-        if (material.normalMap) glassMaterial.normalMap = material.normalMap;
-        if (material.roughnessMap) glassMaterial.roughnessMap = material.roughnessMap;
-
-        return glassMaterial;
-      } else {
-        if (material.type === 'MeshBasicMaterial') {
-          const newMaterial = new THREE.MeshStandardMaterial({
-            color: material.color,
-            map: material.map,
-            transparent: material.transparent,
-            opacity: material.opacity,
-            roughness: 0.7,
-            metalness: 0.1,
-          });
-          return newMaterial;
-        } else {
-          material.roughness = material.roughness || 0.7;
-          material.metalness = material.metalness || 0.1;
+        } catch (e) {
+          // Try next variant
+          continue;
         }
       }
+      // If all blob attempts failed, try direct URL once
+      return new Promise<void>((resolve, reject) => {
+        loader.load(
+          fbxUrl,
+          (object) => {
+        if (disposed) return;
+            object.traverse((child: any) => {
+              if (child.isMesh) {
+                child.castShadow = true;
+                child.receiveShadow = true;
+                if (Array.isArray(child.material)) {
+                  child.material.forEach((m: any) => {
+                    m.side = THREE.DoubleSide;
+                    m.needsUpdate = true;
+                  });
+                } else if (child.material) {
+                  child.material.side = THREE.DoubleSide;
+                  child.material.needsUpdate = true;
+                }
+              }
+            });
 
-      material.needsUpdate = true;
-      return material;
-    }
+            const box1 = new THREE.Box3().setFromObject(object);
+            const center1 = box1.getCenter(new THREE.Vector3());
+            object.position.sub(center1);
+            const size1 = box1.getSize(new THREE.Vector3());
+            const maxAxis1 = Math.max(size1.x, size1.y, size1.z) || 1;
+            const targetSize = 200;
+            object.scale.setScalar(targetSize / maxAxis1);
 
-    loadFBX();
+            const box2 = new THREE.Box3().setFromObject(object);
+            const size2 = box2.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size2.x, size2.y, size2.z) || 1;
+            const center2 = box2.getCenter(new THREE.Vector3());
+            const fov = THREE.MathUtils.degToRad(camera.fov);
+            const fitHeightDistance = maxDim / (2 * Math.tan(fov / 2));
+            const fitWidthDistance = fitHeightDistance / camera.aspect;
+            const distance = 1.15 * Math.max(fitHeightDistance, fitWidthDistance);
+
+            camera.near = Math.max(0.1, maxDim / 100);
+            camera.far = Math.max(1000, maxDim * 100);
+            camera.updateProjectionMatrix();
+            camera.position.set(center2.x + distance, center2.y + distance * 0.2, center2.z + distance);
+            controls.target.copy(center2);
+            controls.minDistance = distance * 0.1;
+            controls.maxDistance = distance * 8;
+            controls.update();
+
+            scene.add(object);
+            setIsLoading(false);
+            resolve();
+          },
+          undefined,
+          (err) => reject(err)
+        );
+      });
+    };
+
+    tryLoad().catch((err) => {
+      if (disposed) return;
+      console.error("FBX load error:", err);
+      setLoadError("Unable to render 3D model. Re-upload the FBX if the issue persists.");
+      setIsLoading(false);
+    });
+
+    const handleResize = () => {
+      if (disposed) return;
+      const w = container.clientWidth || 800;
+      const h = container.clientHeight || 480;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    };
+
+    const ro = new ResizeObserver(handleResize);
+    ro.observe(container);
+
+    const animate = () => {
+      if (disposed) return;
+      frameId = requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    };
+    animate();
 
     return () => {
-      const mount = mountRef.current;
-      if (mount) mount.innerHTML = '';
+      disposed = true;
+      cancelAnimationFrame(frameId);
+      ro.disconnect();
+      controls.dispose();
 
-      if (animationId) {
-        cancelAnimationFrame(animationId);
+      // Safe DOM removal (no NotFoundError)
+      try {
+        if (canvasEl?.parentNode === container) container.removeChild(canvasEl);
+      } catch {}
+
+      if (objectURLToRevoke) {
+        try { URL.revokeObjectURL(objectURLToRevoke); } catch {}
+        objectURLToRevoke = null;
       }
 
-      if (onResizeHandler) {
-        window.removeEventListener('resize', onResizeHandler);
-      }
-      if (renderer) {
-        renderer.dispose();
-        renderer.forceContextLoss();
-      }
-      if (controls) controls.dispose();
-      if (model) {
-        scene.remove(model);
-        model.traverse((child: any) => {
-          if (child.isMesh) {
-            child.geometry?.dispose();
-            if (Array.isArray(child.material)) {
-              child.material.forEach((mat: any) => mat.dispose());
-            } else {
-              child.material?.dispose();
-            }
-          }
-        });
-      }
+      // Dispose WebGL resources
+      scene.traverse((child) => {
+        const m = child as any;
+        if (m.isMesh) {
+          m.geometry?.dispose();
+          const mat = m.material;
+          if (Array.isArray(mat)) mat.forEach((mm: any) => mm?.dispose?.());
+          else mat?.dispose?.();
+        }
+      });
+      renderer.dispose();
+      (renderer as any).forceContextLoss?.();
     };
   }, [fbxUrl]);
 
   return (
-    <div
-      ref={mountRef}
-      style={{
-        width: '100%',
-        height: '100%',
-        background: 'transparent',
-        borderRadius: '12px',
-        overflow: 'hidden',
-      }}
-    />
+    <div ref={mountRef} className="relative h-full w-full rounded-lg bg-transparent">
+      {isLoading && (
+        <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-white/80 text-sm text-gray-600">
+          Loading 3D model…
+        </div>
+      )}
+      {loadError && (
+        <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-white/90 px-4 text-center text-sm text-red-600">
+          {loadError}
+        </div>
+      )}
+    </div>
   );
 }

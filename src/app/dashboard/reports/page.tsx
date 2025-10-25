@@ -83,12 +83,14 @@ export default function ReportsPage() {
   });
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
   const [generatingPDF, setGeneratingPDF] = useState(false);
+  const [completedOrders, setCompletedOrders] = useState<any[]>([]);
 
   // Add refs to access the chart instances
   const revenueLineRef = useRef<any>(null);
   const kpiDoughnutRef = useRef<any>(null);        // NEW
   const ordersStatusRef = useRef<any>(null);       // NEW
   const categoryRevenueRef = useRef<any>(null);    // NEW
+  const completedOrdersRef = useRef<any>(null);    // NEW for section reference
 
   // New: daily chart series
   const [dailySeries, setDailySeries] = useState<DailySeries>({
@@ -106,6 +108,8 @@ export default function ReportsPage() {
   useEffect(() => {
     if (currentAdmin) {
       fetchReportsData();
+      // Load completed orders list with details (server API, service role)
+      fetchCompleted();
     }
   }, [currentAdmin, dateRange]);
 
@@ -293,6 +297,18 @@ export default function ReportsPage() {
     }
   };
 
+  const fetchCompleted = async () => {
+    try {
+      const res = await fetch(`/api/order-management/list-items?status=completed`, { cache: 'no-store' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Failed to load completed orders');
+      setCompletedOrders((json.items || []).slice(0, 100));
+    } catch (e) {
+      console.warn('Completed orders load failed:', e);
+      setCompletedOrders([]);
+    }
+  };
+
   const generatePDFReport = async () => {
     if (!currentAdmin) return;
 
@@ -406,10 +422,82 @@ export default function ReportsPage() {
         },
       });
 
-      // Category Summary
+      // Completed Orders Section
       currentY = (pdf as any).lastAutoTable?.finalY
         ? (pdf as any).lastAutoTable.finalY + 20
         : 90;
+
+      pdf.setFontSize(16);
+      pdf.setTextColor(139, 28, 28);
+      pdf.text("COMPLETED ORDERS", 20, currentY);
+
+      const completedOrdersTableData = completedOrders.map((order) => {
+        const addr = order.address_details || {};
+        const fullAddress = addr.address || 
+          [addr.line1 || addr.street, addr.barangay, addr.city, addr.province || addr.region, addr.postal_code]
+            .filter(Boolean)
+            .join(', ') || 
+          order.delivery_address || 
+          '—';
+        
+        const customerName = addr.full_name || 
+          (addr.first_name && addr.last_name ? `${addr.first_name} ${addr.last_name}` : '') ||
+          order.customer?.name || 
+          order.customer_name || 
+          '—';
+        
+        const phone = addr.phone || order.customer?.phone || order.customer_phone || '—';
+        const email = addr.email || order.customer?.email || order.customer_email || '—';
+        const branch = addr.branch || '—';
+        
+        return [
+          new Date(order.created_at).toLocaleDateString(),
+          customerName,
+          `${phone}\n${email}`,
+          fullAddress,
+          branch,
+          order.product_details?.name || order.meta?.product_name || order.product_id || '—',
+          order.quantity?.toString() || '0',
+          `₱${Number(order.total_paid || 0).toLocaleString()}`,
+        ];
+      });
+
+      autoTable(pdf, {
+        startY: currentY + 5,
+        head: [
+          [
+            "Date",
+            "Customer",
+            "Contact",
+            "Address",
+            "Branch",
+            "Product",
+            "Qty",
+            "Total Paid",
+          ],
+        ],
+        body: completedOrdersTableData.length > 0 ? completedOrdersTableData : [['No completed orders in the selected date range', '', '', '', '', '', '', '']],
+        theme: "striped",
+        headStyles: { fillColor: [139, 28, 28] },
+        margin: { left: 20, right: 20 },
+        styles: { fontSize: 8, cellPadding: 2 },
+        columnStyles: {
+          0: { cellWidth: 20 },
+          1: { cellWidth: 25 },
+          2: { cellWidth: 25 },
+          3: { cellWidth: 40 },
+          4: { cellWidth: 18 },
+          5: { cellWidth: 30 },
+          6: { cellWidth: 10 },
+          7: { cellWidth: 22 },
+        },
+      });
+
+      // Products Inventory & Performance Section
+      currentY = (pdf as any).lastAutoTable?.finalY
+        ? (pdf as any).lastAutoTable.finalY + 20
+        : 90;
+
       pdf.setFontSize(16);
       pdf.setTextColor(139, 28, 28);
       pdf.text("CATEGORY PERFORMANCE", 20, currentY);
@@ -948,6 +1036,127 @@ export default function ReportsPage() {
               },
             }}
           />
+        </div>
+      </div>
+
+      {/* Completed Orders Section */}
+      <div className="bg-white rounded-lg shadow-sm border" id="completed-orders-section">
+        <div className="px-6 py-4 border-b border-gray-200">
+          <h2 className="text-lg font-semibold text-gray-900">Completed Orders</h2>
+          <p className="text-sm text-gray-600 mt-1">
+            Showing latest {Math.min(completedOrders.length, 100)} completed orders with customer and address details
+          </p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Order Date
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Customer Name
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Contact Info
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Full Address
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Branch
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Product
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Qty
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Total Paid
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {completedOrders.map((order) => {
+                const addr = order.address_details || {};
+                const fullAddress = addr.address || 
+                  [addr.line1 || addr.street, addr.barangay, addr.city, addr.province || addr.region, addr.postal_code]
+                    .filter(Boolean)
+                    .join(', ') || 
+                  order.delivery_address || 
+                  '—';
+                
+                const customerName = addr.full_name || 
+                  (addr.first_name && addr.last_name ? `${addr.first_name} ${addr.last_name}` : '') ||
+                  order.customer?.name || 
+                  order.customer_name || 
+                  '—';
+                
+                const phone = addr.phone || order.customer?.phone || order.customer_phone || '—';
+                const email = addr.email || order.customer?.email || order.customer_email || '—';
+                const branch = addr.branch || '—';
+                
+                return (
+                  <tr key={order.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                      {new Date(order.created_at).toLocaleDateString()}
+                      <div className="text-xs text-gray-500">
+                        {new Date(order.created_at).toLocaleTimeString()}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm">
+                      <div className="font-medium text-gray-900">{customerName}</div>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-900">
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-1">
+                          <svg className="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                          </svg>
+                          <span className="text-xs">{phone}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <svg className="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                          </svg>
+                          <span className="text-xs text-gray-600">{email}</span>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-900 max-w-xs break-words">
+                      {fullAddress}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                      {branch}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-900">
+                      {order.product_details?.name || order.meta?.product_name || order.product_id}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 text-center">
+                      {order.quantity}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-green-600">
+                      ₱{Number(order.total_paid || 0).toLocaleString()}
+                    </td>
+                  </tr>
+                );
+              })}
+              {completedOrders.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-4 py-12 text-center">
+                    <div className="text-gray-500">
+                      <svg className="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      <p className="text-sm font-medium">No completed orders found</p>
+                      <p className="text-sm">Try adjusting your date range</p>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 

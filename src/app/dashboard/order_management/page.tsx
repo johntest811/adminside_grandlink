@@ -32,6 +32,10 @@ type UserItem = {
   payment_method?: string;
   order_status?: string;
   order_progress?: string;
+  // Enriched by API
+  product_details?: any;
+  address_details?: any;
+  customer?: { name?: string|null; email?: string|null; phone?: string|null };
 };
 
 type PaymentModalData = {
@@ -42,13 +46,14 @@ type PaymentModalData = {
 export default function OrdersPage() {
   const [reservations, setReservations] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('pending_payment');
   // NEW: search
   const [searchQuery, setSearchQuery] = useState('');
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState<PaymentModalData | null>(null);
   const [paymentNotes, setPaymentNotes] = useState('');
+  const [editingPaymentId, setEditingPaymentId] = useState<string | null>(null);
 
   // Minimal API to update only user_items
   const updateOrderViaApi = async (payload: any) => {
@@ -352,7 +357,7 @@ export default function OrdersPage() {
   // Build status options (includes common flow + others)
   const statusOptions = useMemo(
     () => [
-      { value: '', label: 'All Statuses' },
+      
       { value: 'pending_payment', label: 'Pending Payment' },
       { value: 'reserved', label: 'Reserved' },
       { value: 'pending_balance_payment', label: 'Pending Balance Payment' },
@@ -366,6 +371,7 @@ export default function OrdersPage() {
       { value: 'completed', label: 'Completed' },
       { value: 'pending_cancellation', label: 'Pending Cancellation' },
       { value: 'cancelled', label: 'Cancelled' },
+      { value: '', label: 'All Statuses' },
     ],
     []
   );
@@ -465,9 +471,9 @@ export default function OrdersPage() {
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-4 py-2 text-left text-xs font-medium text-black">Reservation Details</th>
-              <th className="px-4 py-2 text-left text-xs font-medium text-black">Item</th>
-              <th className="px-4 py-2 text-left text-xs font-medium text-black">Payment Status</th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-black">Order</th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-black">Delivery Address</th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-black">Payment</th>
               <th className="px-4 py-2 text-left text-xs font-medium text-black">Status</th>
               <th className="px-4 py-2 text-left text-xs font-medium text-black">Actions</th>
             </tr>
@@ -475,25 +481,137 @@ export default function OrdersPage() {
           <tbody className="divide-y divide-gray-200">
             {filteredReservations.map((r) => {
               const actions = getNextActions(r);
+              const addr = r.address_details || {} as any;
+              
+              // Build comprehensive address string from address_details
+              const addressParts = [];
+              if (addr.address) {
+                addressParts.push(addr.address);
+              } else {
+                if (addr.line1 || addr.street) addressParts.push(addr.line1 || addr.street);
+                if (addr.barangay) addressParts.push(addr.barangay);
+                if (addr.city) addressParts.push(addr.city);
+                if (addr.province || addr.region) addressParts.push(addr.province || addr.region);
+                if (addr.postal_code) addressParts.push(addr.postal_code);
+              }
+              
+              const fullAddress = addressParts.length > 0 
+                ? addressParts.join(', ') 
+                : r.delivery_address || '—';
+              
+              const customerName = addr.full_name || 
+                (addr.first_name && addr.last_name ? `${addr.first_name} ${addr.last_name}` : '') ||
+                r.customer?.name || 
+                r.customer_name || 
+                '';
+              
+              const phone = addr.phone || r.customer?.phone || r.customer_phone || '';
+              const email = addr.email || r.customer?.email || r.customer_email || '';
+              const branch = addr.branch || '';
+              
+              const stage = getStage(r);
+              const payInfo = getPaymentInfo(r);
+              const isEditingPayment = editingPaymentId === r.id;
+              
               return (
                 <tr key={r.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3">
-                    <div className="text-sm text-black font-medium break-all">{r.id.slice(0, 8)}...</div>
-                    <div className="text-xs text-black">{new Date(r.created_at).toLocaleDateString()}</div>
-                    <div className="text-xs text-black">Type: {r.item_type}</div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="text-sm text-black">{r.meta?.product_name || r.product_id || "Item"}</div>
+                  <td className="px-4 py-3 align-top">
+                    <div className="text-sm text-black font-medium break-all">{r.id}</div>
+                    <div className="text-xs text-black mt-1">{new Date(r.created_at).toLocaleString()}</div>
+                    <div className="text-xs text-black font-semibold mt-2">{r.meta?.product_name || r.product_details?.name || r.product_id}</div>
                     <div className="text-xs text-black">Qty: {r.quantity}</div>
                   </td>
-                  <td className="px-4 py-3">
-                    <div className="text-xs text-black">
-                      Total Paid: ₱{Number(r.total_paid || 0).toLocaleString()}
+                  <td className="px-4 py-3 align-top max-w-[320px]">
+                    {customerName && (
+                      <div className="text-sm text-black font-medium mb-1">{customerName}</div>
+                    )}
+                    {phone && (
+                      <div className="text-xs text-black flex items-center gap-1 mb-1">
+                        <svg className="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                        </svg>
+                        {phone}
+                      </div>
+                    )}
+                    {email && (
+                      <div className="text-xs text-black flex items-center gap-1 mb-2">
+                        <svg className="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        </svg>
+                        {email}
+                      </div>
+                    )}
+                    <div className="text-xs text-black break-words">
+                      <span className="font-medium">Address:</span> {fullAddress}
                     </div>
+                    {branch && (
+                      <div className="text-xs text-black mt-1">
+                        <span className="font-medium">Branch:</span> {branch}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 align-top">
+                    {stage === 'pending_payment' ? (
+                      <div className="flex flex-col gap-2">
+                        {!isEditingPayment ? (
+                          <>
+                            <div className="text-xs text-black">
+                              Total Paid: ₱{Number(r.total_paid || 0).toLocaleString()}
+                            </div>
+                            <button
+                              className="text-xs bg-gray-600 text-white px-3 py-1 rounded hover:bg-gray-700"
+                              onClick={() => setEditingPaymentId(r.id)}
+                            >
+                              Edit Payment
+                            </button>
+                          </>
+                        ) : (
+                          <div className="flex flex-col gap-2">
+                            <input
+                              type="number"
+                              defaultValue={Number(r.total_paid || 0)}
+                              onChange={(e) => (r as any)._editPaid = e.target.value}
+                              className="w-28 px-2 py-1 border rounded text-sm text-black"
+                              min={0}
+                              placeholder="Amount"
+                            />
+                            <div className="flex gap-1">
+                              <button
+                                className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700"
+                                disabled={updatingStatus === r.id}
+                                onClick={async () => {
+                                  const val = Number((r as any)._editPaid ?? r.total_paid ?? 0);
+                                  try {
+                                    const updated = await updateOrderViaApi({ itemId: r.id, updates: { total_paid: val } });
+                                    setReservations(prev => prev.map(x => x.id === r.id ? { ...x, ...updated } : x));
+                                    setEditingPaymentId(null);
+                                  } catch (e: any) {
+                                    alert(e.message || String(e));
+                                  }
+                                }}
+                              >
+                                Save
+                              </button>
+                              <button
+                                className="text-xs bg-gray-500 text-white px-2 py-1 rounded hover:bg-gray-600"
+                                onClick={() => setEditingPaymentId(null)}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-black">
+                        <div>Total Paid: ₱{Number(r.total_paid || 0).toLocaleString()}</div>
+                        <div className="mt-1">Amount Due: ₱{Math.max((r.price ?? r.meta?.price ?? 0) * r.quantity - (r.total_paid || 0), 0).toLocaleString()}</div>
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${getStatusColor(r.order_status || r.order_progress || r.status)}`}>
-                      {(r.order_status || r.order_progress || r.status || "").replace(/_/g, " ").toUpperCase()}
+                    <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${getStatusColor(stage)}`}>
+                      {(stage || "").replace(/_/g, " ").toUpperCase()}
                     </span>
                   </td>
                   <td className="px-4 py-3">

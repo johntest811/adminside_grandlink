@@ -86,11 +86,28 @@ export default function NotificationBell({
         .select("*")
         .order("created_at", { ascending: false });
 
-      // Filter by role and admin ID
       if (!showAll) {
-        query = query.or(
-          `recipient_role.eq.all,recipient_role.eq.${adminRole},recipient_id.eq.${adminId}`
-        );
+        const normalizedRole = (adminRole || "admin").toLowerCase();
+        const filters: string[] = [
+          "recipient_role.is.null",
+          "recipient_role.eq.all",
+          "recipient_role.eq.admin",
+          "recipient_role.eq.Admin",
+        ];
+
+        if (normalizedRole && normalizedRole !== "admin") {
+          filters.push(`recipient_role.eq.${normalizedRole}`);
+        }
+
+        if (adminRole && !["admin", "Admin"].includes(adminRole)) {
+          filters.push(`recipient_role.eq.${adminRole}`);
+        }
+
+        if (adminId) {
+          filters.push(`recipient_id.eq.${adminId}`);
+        }
+
+        query = query.or(filters.join(","));
       }
 
       query = query.limit(showAll ? 50 : 20);
@@ -105,10 +122,42 @@ export default function NotificationBell({
       }
 
       console.log("✅ Notifications fetched:", data?.length || 0);
-      const notifications = data || [];
-      setNotifications(notifications);
-      
-      const unread = notifications.filter((n) => !n.is_read).length;
+      const baseNotifications = data || [];
+
+      // Also fetch latest pending-payment reservations to surface in dropdown
+      try {
+        const res = await fetch(`/api/recent-orders?limit=${showAll ? 50 : 20}`, { cache: "no-store" });
+        if (res.ok) {
+          const json = await res.json();
+          const recentOrders: Notification[] = (json?.items || []).map((r: any) => ({
+            id: r.id,
+            title: r.title || "New Order",
+            message: r.message,
+            type: (r.type || "order") as any,
+            priority: (r.priority || "medium") as any,
+            is_read: false,
+            created_at: r.created_at,
+          }));
+
+          // Merge: show recent orders first, then normal notifications
+          const merged = [...recentOrders, ...baseNotifications];
+          setNotifications(merged);
+          const unread = merged.filter((n) => !n.is_read).length;
+          setUnreadCount(unread);
+        } else {
+          // fallback: show base notifications only
+          setNotifications(baseNotifications);
+          const unread = baseNotifications.filter((n) => !n.is_read).length;
+          setUnreadCount(unread);
+        }
+      } catch (e) {
+        console.warn("⚠️ Could not fetch recent pending orders:", e);
+        setNotifications(baseNotifications);
+        const unread = baseNotifications.filter((n) => !n.is_read).length;
+        setUnreadCount(unread);
+      }
+
+      const unread = (baseNotifications || []).filter((n) => !n.is_read).length;
       setUnreadCount(unread);
       console.log("📊 Unread notifications:", unread);
     } catch (error) {
