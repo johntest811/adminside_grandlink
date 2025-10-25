@@ -83,6 +83,7 @@ export default function ReportsPage() {
   });
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
   const [generatingPDF, setGeneratingPDF] = useState(false);
+  const [completedOrders, setCompletedOrders] = useState<any[]>([]);
 
   // Add refs to access the chart instances
   const revenueLineRef = useRef<any>(null);
@@ -106,6 +107,8 @@ export default function ReportsPage() {
   useEffect(() => {
     if (currentAdmin) {
       fetchReportsData();
+      // Load completed orders list with details (server API, service role)
+      fetchCompleted();
     }
   }, [currentAdmin, dateRange]);
 
@@ -290,6 +293,18 @@ export default function ReportsPage() {
       console.error("Error fetching reports data:", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchCompleted = async () => {
+    try {
+      const res = await fetch(`/api/order-management/list-items?status=completed`, { cache: 'no-store' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Failed to load completed orders');
+      setCompletedOrders((json.items || []).slice(0, 100));
+    } catch (e) {
+      console.warn('Completed orders load failed:', e);
+      setCompletedOrders([]);
     }
   };
 
@@ -691,6 +706,52 @@ export default function ReportsPage() {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
+
+                  {/* Completed Orders List */}
+                  <div className="bg-white rounded-lg shadow-sm border">
+                    <div className="p-4 border-b">
+                      <h3 className="text-lg font-semibold text-black">Completed Orders</h3>
+                      <p className="text-xs text-black/70">Showing latest {Math.min(completedOrders.length, 100)} completed orders with customer and address details.</p>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-black">Date</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-black">Customer</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-black">Address</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-black">Product</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-black">Qty</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-black">Total Paid</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200">
+                          {completedOrders.map((o) => {
+                            const addr = o.address_details || {};
+                            const addressStr = o.delivery_address || [addr.line1 || addr.street, addr.barangay, addr.city, addr.province || addr.region, addr.postal_code].filter(Boolean).join(', ');
+                            return (
+                              <tr key={o.id}>
+                                <td className="px-4 py-2 text-xs text-black">{new Date(o.created_at).toLocaleString()}</td>
+                                <td className="px-4 py-2 text-xs text-black">
+                                  <div className="font-medium">{o.customer?.name || o.customer_name || '—'}</div>
+                                  <div className="text-black/70">{o.customer?.email || o.customer_email || '—'}</div>
+                                </td>
+                                <td className="px-4 py-2 text-xs text-black max-w-[320px] break-words">{addressStr || '—'}</td>
+                                <td className="px-4 py-2 text-xs text-black">{o.product_details?.name || o.meta?.product_name || o.product_id}</td>
+                                <td className="px-4 py-2 text-xs text-black">{o.quantity}</td>
+                                <td className="px-4 py-2 text-xs text-black">₱{Number(o.total_paid || 0).toLocaleString()}</td>
+                              </tr>
+                            );
+                          })}
+                          {completedOrders.length === 0 && (
+                            <tr>
+                              <td colSpan={6} className="px-4 py-6 text-center text-sm text-black">No completed orders in range.</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
               End Date
             </label>
             <input

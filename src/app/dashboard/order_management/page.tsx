@@ -32,6 +32,10 @@ type UserItem = {
   payment_method?: string;
   order_status?: string;
   order_progress?: string;
+  // Enriched by API
+  product_details?: any;
+  address_details?: any;
+  customer?: { name?: string|null; email?: string|null; phone?: string|null };
 };
 
 type PaymentModalData = {
@@ -465,9 +469,10 @@ export default function OrdersPage() {
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-4 py-2 text-left text-xs font-medium text-black">Reservation Details</th>
-              <th className="px-4 py-2 text-left text-xs font-medium text-black">Item</th>
-              <th className="px-4 py-2 text-left text-xs font-medium text-black">Payment Status</th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-black">Order</th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-black">Customer</th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-black">Address</th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-black">Payment</th>
               <th className="px-4 py-2 text-left text-xs font-medium text-black">Status</th>
               <th className="px-4 py-2 text-left text-xs font-medium text-black">Actions</th>
             </tr>
@@ -475,25 +480,65 @@ export default function OrdersPage() {
           <tbody className="divide-y divide-gray-200">
             {filteredReservations.map((r) => {
               const actions = getNextActions(r);
+              const addr = r.address_details || {} as any;
+              const addressStr = r.delivery_address
+                || [addr.line1 || addr.street, addr.barangay, addr.city, addr.province || addr.region, addr.postal_code]
+                    .filter(Boolean)
+                    .join(', ');
+              const stage = getStage(r);
+              const payInfo = getPaymentInfo(r);
               return (
                 <tr key={r.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3">
-                    <div className="text-sm text-black font-medium break-all">{r.id.slice(0, 8)}...</div>
-                    <div className="text-xs text-black">{new Date(r.created_at).toLocaleDateString()}</div>
-                    <div className="text-xs text-black">Type: {r.item_type}</div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="text-sm text-black">{r.meta?.product_name || r.product_id || "Item"}</div>
+                  <td className="px-4 py-3 align-top">
+                    <div className="text-sm text-black font-medium break-all">{r.id}</div>
+                    <div className="text-xs text-black">{new Date(r.created_at).toLocaleString()}</div>
+                    <div className="text-xs text-black">{r.meta?.product_name || r.product_details?.name || r.product_id}</div>
                     <div className="text-xs text-black">Qty: {r.quantity}</div>
                   </td>
-                  <td className="px-4 py-3">
-                    <div className="text-xs text-black">
-                      Total Paid: ₱{Number(r.total_paid || 0).toLocaleString()}
-                    </div>
+                  <td className="px-4 py-3 align-top">
+                    <div className="text-sm text-black font-medium">{r.customer?.name || r.customer_name || '—'}</div>
+                    <div className="text-xs text-black">{r.customer?.email || r.customer_email || '—'}</div>
+                    <div className="text-xs text-black">{r.customer?.phone || r.customer_phone || '—'}</div>
+                  </td>
+                  <td className="px-4 py-3 align-top max-w-[280px]">
+                    <div className="text-xs text-black break-words">{addressStr || '—'}</div>
+                  </td>
+                  <td className="px-4 py-3 align-top">
+                    {stage === 'pending_payment' ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          defaultValue={Number(r.total_paid || 0)}
+                          onChange={(e) => (r as any)._editPaid = e.target.value}
+                          className="w-28 px-2 py-1 border rounded text-sm text-black"
+                          min={0}
+                        />
+                        <button
+                          className="text-xs bg-indigo-600 text-white px-2 py-1 rounded"
+                          disabled={updatingStatus === r.id}
+                          onClick={async () => {
+                            const val = Number((r as any)._editPaid ?? r.total_paid ?? 0);
+                            try {
+                              const updated = await updateOrderViaApi({ itemId: r.id, updates: { total_paid: val } });
+                              setReservations(prev => prev.map(x => x.id === r.id ? { ...x, ...updated } : x));
+                            } catch (e: any) {
+                              alert(e.message || String(e));
+                            }
+                          }}
+                        >
+                          Save
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="text-xs text-black">
+                        Total Paid: ₱{Number(r.total_paid || 0).toLocaleString()}
+                        <div>Amount Due: ₱{Math.max((r.price ?? r.meta?.price ?? 0) * r.quantity - (r.total_paid || 0), 0).toLocaleString()}</div>
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${getStatusColor(r.order_status || r.order_progress || r.status)}`}>
-                      {(r.order_status || r.order_progress || r.status || "").replace(/_/g, " ").toUpperCase()}
+                    <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${getStatusColor(stage)}`}>
+                      {(stage || "").replace(/_/g, " ").toUpperCase()}
                     </span>
                   </td>
                   <td className="px-4 py-3">
