@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
 
     // Enrich with product names
     const productIds = Array.from(new Set(items.map((r) => r.product_id))).filter(Boolean);
-    let productMap: Record<string, { id: string; name?: string }> = {};
+    const productMap: Record<string, { id: string; name?: string }> = {};
     if (productIds.length) {
       const { data: products } = await supabase
         .from("products")

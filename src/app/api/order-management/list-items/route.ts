@@ -33,8 +33,8 @@ export async function GET(req: NextRequest) {
   const productIds = Array.from(new Set((items || []).map((i: any) => i.product_id).filter(Boolean)));
   const addressIds = Array.from(new Set((items || []).map((i: any) => i.delivery_address_id).filter(Boolean)));
 
-  let productsMap: Record<string, any> = {};
-  let addressesMap: Record<string, any> = {};
+  const productsMap: Record<string, any> = {};
+  const addressesMap: Record<string, any> = {};
 
   if (productIds.length) {
     const { data: products } = await supabase

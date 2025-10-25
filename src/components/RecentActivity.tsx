@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 
 type Activity = {
@@ -20,12 +20,11 @@ type Activity = {
 
 interface RecentActivityProps {
   adminId?: string;
-  adminName?: string;
   limit?: number;
   showAsDropdown?: boolean;
 }
 
-export default function RecentActivity({ adminId, adminName, limit = 10, showAsDropdown = false }: RecentActivityProps) {
+export default function RecentActivity({ adminId, limit = 10, showAsDropdown = false }: RecentActivityProps) {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAll, setShowAll] = useState(false);
@@ -33,47 +32,17 @@ export default function RecentActivity({ adminId, adminName, limit = 10, showAsD
   const [unreadCount, setUnreadCount] = useState(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (adminId) {
-      fetchActivities();
-      
-      // Set up real-time subscription
-      const channel = supabase
-        .channel('activity_realtime')
-        .on('postgres_changes', { 
-          event: '*', 
-          schema: 'public', 
-          table: 'activity_logs' 
-        }, (payload) => {
-          console.log('🔄 Real-time activity update received:', payload);
-          fetchActivities();
-        })
-        .subscribe();
-
-      return () => {
-        supabase.removeChannel(channel);
-      };
+  // Helper function to get read status from localStorage
+  const getActivityReadStatus = useCallback((activityId: string): boolean => {
+    try {
+      const readActivities = JSON.parse(localStorage.getItem(`readActivities_${adminId}`) || '[]');
+      return readActivities.includes(activityId);
+    } catch {
+      return false;
     }
-  }, [adminId, limit, showAll]);
+  }, [adminId]);
 
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
-    };
-
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [isOpen]);
-
-  const fetchActivities = async () => {
+  const fetchActivities = useCallback(async () => {
     if (!adminId) {
       console.log("⚠️ No adminId provided for fetching activities");
       setLoading(false);
@@ -125,17 +94,47 @@ export default function RecentActivity({ adminId, adminName, limit = 10, showAsD
     } finally {
       setLoading(false);
     }
-  };
+  }, [adminId, limit, showAll, getActivityReadStatus]);
 
-  // Helper function to get read status from localStorage
-  const getActivityReadStatus = (activityId: string): boolean => {
-    try {
-      const readActivities = JSON.parse(localStorage.getItem(`readActivities_${adminId}`) || '[]');
-      return readActivities.includes(activityId);
-    } catch {
-      return false;
+  useEffect(() => {
+    if (adminId) {
+      fetchActivities();
+      
+      // Set up real-time subscription
+      const channel = supabase
+        .channel('activity_realtime')
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'activity_logs' 
+        }, (payload) => {
+          console.log('🔄 Real-time activity update received:', payload);
+          fetchActivities();
+        })
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
     }
-  };
+  }, [adminId, fetchActivities]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
 
   // Helper function to mark activity as read
   const markActivityAsRead = (activityId: string) => {
