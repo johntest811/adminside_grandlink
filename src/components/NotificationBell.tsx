@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 
 type Notification = {
@@ -30,47 +30,7 @@ export default function NotificationBell({
   const [showAll, setShowAll] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (adminId) {
-      fetchNotifications();
-
-      // Set up real-time subscription
-      const channel = supabase
-        .channel("notifications_realtime")
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table: "notifications" },
-          () => {
-            console.log("🔔 Real-time notification update received");
-            fetchNotifications();
-          }
-        )
-        .subscribe();
-
-      return () => {
-        supabase.removeChannel(channel);
-      };
-    }
-  }, [adminId, adminRole, showAll]);
-
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
-    };
-
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [isOpen]);
-
-  const fetchNotifications = async () => {
+  const fetchNotifications = useCallback(async () => {
     if (!adminId) {
       console.log("⚠️ No adminId provided for notifications");
       setLoading(false);
@@ -167,7 +127,47 @@ export default function NotificationBell({
     } finally {
       setLoading(false);
     }
-  };
+  }, [adminId, adminRole, showAll]);
+
+  useEffect(() => {
+    if (adminId) {
+      fetchNotifications();
+
+      // Set up real-time subscription
+      const channel = supabase
+        .channel("notifications_realtime")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "notifications" },
+          () => {
+            console.log("🔔 Real-time notification update received");
+            fetchNotifications();
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }
+  }, [adminId, fetchNotifications]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
 
   const markAsRead = async (notificationId: string) => {
     try {

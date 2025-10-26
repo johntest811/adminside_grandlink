@@ -1,6 +1,5 @@
 "use client";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 import bcrypt from "bcryptjs";
 
@@ -9,7 +8,6 @@ export default function SuperAdminRegister() {
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("admin");
   const [message, setMessage] = useState("");
-  const router = useRouter();
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();

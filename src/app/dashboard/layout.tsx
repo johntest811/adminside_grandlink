@@ -172,7 +172,6 @@ export default function DashboardLayout({
           {/* Recent Activity - Popup Style */}
           <RecentActivity
             adminId={currentAdmin?.id}
-            adminName={currentAdmin?.username}
             limit={10}
             showAsDropdown={true}
           />

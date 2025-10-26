@@ -182,7 +182,7 @@ export async function notifyProductUpdated(productName: string, adminName: strin
   try {
     const changesSummary = changes.slice(0, 3).join(", ") + (changes.length > 3 ? `... and ${changes.length - 3} more` : "");
     
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('notifications')
       .insert([
         {
@@ -210,7 +210,7 @@ export async function notifyProductUpdated(productName: string, adminName: strin
 
 export async function notifyProductFileUploaded(productName: string, adminName: string, fileType: string, fileName: string) {
   try {
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('notifications')
       .insert([
         {
@@ -239,7 +239,7 @@ export async function notifyProductFileUploaded(productName: string, adminName: 
 // Product deletion notification
 export async function notifyProductDeleted(productName: string, adminName: string) {
   try {
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('notifications')
       .insert([
         {
