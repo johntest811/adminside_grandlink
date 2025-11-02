@@ -59,6 +59,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing itemId or updates" }, { status: 400 });
     }
 
+    const { data: current } = await supabase
+      .from("user_items")
+      .select("progress_history, meta, product_id, quantity, status, order_status")
+      .eq("id", itemId)
+      .single();
+
     // If UI sent a detailed stage, normalize and populate companion fields
     const uiStage: string | undefined = (updates.order_status as string) || (updates.status as string);
     if (typeof uiStage === "string") {
@@ -72,7 +78,6 @@ export async function POST(req: NextRequest) {
       updates.order_progress = progressMap[uiStage] || uiStage;
 
       // Append progress_history atomically (fetch current first)
-      const { data: current } = await supabase.from("user_items").select("progress_history").eq("id", itemId).single();
       const now = new Date().toISOString();
       const nextHistory = [
         ...((current as any)?.progress_history ?? []),
@@ -80,6 +85,64 @@ export async function POST(req: NextRequest) {
       ];
       updates.progress_history = nextHistory;
       updates.updated_at = now;
+    }
+
+    const currentMeta = ((current as any)?.meta || {}) as Record<string, any>;
+    const productId = (current as any)?.product_id as string | undefined;
+    const quantity = Number((current as any)?.quantity || 0);
+    const previousInventoryReserved = Boolean(currentMeta?.inventory_reserved);
+    const requestedOrderStatus = (updates.order_status as string) || (updates.status as string) || (current as any)?.order_status || (current as any)?.status;
+    const normalizedOrderStatus = requestedOrderStatus === 'approve_cancellation' ? 'cancelled' : requestedOrderStatus;
+
+    let inventoryAction: 'reserve' | 'restore' | null = null;
+    if (!previousInventoryReserved && normalizedOrderStatus === 'approved') {
+      inventoryAction = 'reserve';
+    } else if (previousInventoryReserved && normalizedOrderStatus === 'cancelled') {
+      inventoryAction = 'restore';
+    }
+
+    const metaTimestamp = new Date().toISOString();
+    let productInventoryBefore: number | undefined;
+    let productInventoryAfter: number | undefined;
+
+    if (inventoryAction && productId) {
+      const { data: product } = await supabase
+        .from('products')
+        .select('inventory')
+        .eq('id', productId)
+        .single();
+
+      if (product) {
+        productInventoryBefore = Number(product.inventory || 0);
+        if (inventoryAction === 'reserve') {
+          productInventoryAfter = Math.max(0, productInventoryBefore - quantity);
+        } else {
+          productInventoryAfter = productInventoryBefore + quantity;
+        }
+      }
+    }
+
+    const mergedMeta = {
+      ...currentMeta,
+      ...(updates.meta || {}),
+    } as Record<string, any>;
+
+    if (inventoryAction && productInventoryBefore !== undefined && productInventoryAfter !== undefined) {
+      if (inventoryAction === 'reserve') {
+        mergedMeta.inventory_reserved = true;
+        mergedMeta.inventory_reserved_at = metaTimestamp;
+      } else {
+        mergedMeta.inventory_reserved = false;
+        mergedMeta.inventory_restocked_at = metaTimestamp;
+      }
+      mergedMeta.product_stock_before = productInventoryBefore;
+      mergedMeta.product_stock_after = productInventoryAfter;
+    }
+
+    if (updates.meta) {
+      updates.meta = mergedMeta;
+    } else if (Object.keys(mergedMeta).length > 0) {
+      updates.meta = mergedMeta;
     }
 
     // Update user_items row
@@ -96,7 +159,15 @@ export async function POST(req: NextRequest) {
     }
 
     // Optionally restore inventory (server-side only)
-    if (restoreInventory?.productId && typeof restoreInventory.quantity === "number") {
+    if (inventoryAction && productId && productInventoryAfter !== undefined) {
+      const { error: invErr } = await supabase
+        .from('products')
+        .update({ inventory: productInventoryAfter })
+        .eq('id', productId);
+      if (invErr) {
+        console.warn('⚠️ Inventory update warn:', invErr.message);
+      }
+    } else if (restoreInventory?.productId && typeof restoreInventory.quantity === "number") {
       const { data: prod, error: fetchErr } = await supabase
         .from("products")
         .select("inventory")
