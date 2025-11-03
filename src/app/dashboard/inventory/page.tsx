@@ -24,7 +24,7 @@ export default function InventoryAdminPage() {
   const [filter, setFilter] = useState("");
   const [showOnlyLow, setShowOnlyLow] = useState(true);
 
-  const CATEGORIES = ["Doors", "Windows", "Enclosures", "Sliding", "Canopy", "Railings", "Casement"];
+  const CATEGORIES = ["Doors", "Windows", "Enclosures", "Sliding", "Canopy", "Railings", "Casement", "Curtain Walls"];
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   const [filterOpen, setFilterOpen] = useState(false);
@@ -403,13 +403,21 @@ export default function InventoryAdminPage() {
   }, []);
 
   const filtered = items.filter((it) => {
+    const normalize = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const keyFor = (s: string | null | undefined) => {
+      const k = normalize(s);
+      if (k.includes("curtain") && k.includes("wall")) return "curtainwall";
+      if (k.includes("enclosure")) return "enclosure";
+      return k;
+    };
+
     const inv = it.inventory ?? 0;
     if (showOnlyLow && inv > 5) return false;
     if (selectedCategory && selectedCategory !== "All Categories") {
-      if (it.category !== selectedCategory) return false;
+      if (keyFor(it.category) !== keyFor(selectedCategory)) return false;
     }
     if (!filter) return true;
-    return it.name?.toLowerCase().includes(filter.toLowerCase());
+    return (it.name || "").toLowerCase().includes(filter.toLowerCase());
   });
 
   const unsavedCount = items.reduce((acc, it) => acc + ((originalInventories[it.id] ?? 0) !== (it.inventory ?? 0) ? 1 : 0), 0);
@@ -455,7 +463,7 @@ export default function InventoryAdminPage() {
             </button>
             
             {filterOpen && (
-              <div className="absolute right-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
+              <div className="absolute right-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-10 text-black">
                 <button
                   onClick={() => {
                     handleCategoryFilterChange(null);

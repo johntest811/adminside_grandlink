@@ -353,12 +353,29 @@ export default function UpdateProductsPage() {
 
   // Filter products
   const filteredProducts = products.filter(product => {
-    const matchesName = product.name.toLowerCase().includes(filter.toLowerCase());
-    const matchesCategory = !categoryFilter || product.category === categoryFilter;
+    const normalize = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const keyFor = (s: string | null | undefined) => {
+      const k = normalize(s);
+      if (k.includes("curtain") && k.includes("wall")) return "curtainwall";
+      if (k.includes("enclosure")) return "enclosure";
+      return k;
+    };
+
+    const matchesName = (product.name || "").toLowerCase().includes((filter || "").toLowerCase());
+    const matchesCategory = !categoryFilter || keyFor(product.category) === keyFor(categoryFilter);
     return matchesName && matchesCategory;
   });
 
-  const categories = [...new Set(products.map(p => p.category))].filter(Boolean);
+  // Build categories list and ensure "Curtain Walls" option is available
+  const existingCategories = (products.map(p => p.category).filter(Boolean) as string[]);
+  const hasCurtainWalls = existingCategories.some(c => {
+    const k = (c || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    return k.includes("curtain") && k.includes("wall");
+  });
+  const categories = Array.from(new Set([...
+    existingCategories,
+    ...(hasCurtainWalls ? [] as string[] : ["Curtain Walls"]) 
+  ]));
 
   return (
     <div className="space-y-6">
