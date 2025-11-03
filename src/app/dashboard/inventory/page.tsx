@@ -442,14 +442,14 @@ export default function InventoryAdminPage() {
               placeholder="Search products..."
               value={filter}
               onChange={(e) => handleFilterChange(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-black"
             />
           </div>
           
           <div className="relative" ref={filterRef}>
             <button
               onClick={() => setFilterOpen(!filterOpen)}
-              className="px-4 py-2 border border-gray-300 rounded-lg bg-white hover:bg-gray-50 focus:ring-2 focus:ring-indigo-500"
+              className="px-4 py-2 border border-gray-600 rounded-lg bg-white hover:bg-gray-50 focus:ring-2 focus:ring-indigo-500 text-black"
             >
               {selectedCategory || "All Categories"} ▼
             </button>
@@ -479,7 +479,7 @@ export default function InventoryAdminPage() {
             )}
           </div>
 
-          <label className="flex items-center">
+          <label className="flex items-center text-black">
             <input
               type="checkbox"
               checked={showOnlyLow}
@@ -572,7 +572,7 @@ export default function InventoryAdminPage() {
                     <label className="block text-sm font-medium text-gray-700">
                       Inventory Count
                     </label>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex items-center space-x-2 text-black">
                       <input
                         type="number"
                         min="0"

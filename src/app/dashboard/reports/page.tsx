@@ -480,16 +480,21 @@ export default function ReportsPage() {
         theme: "striped",
         headStyles: { fillColor: [139, 28, 28] },
         margin: { left: 20, right: 20 },
-        styles: { fontSize: 8, cellPadding: 2 },
+        styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak' },
+        bodyStyles: { valign: 'top' },
+        pageBreak: 'auto',
+        // Ensure the table fits within A4 portrait (210mm) minus 20mm margins on each side => 170mm usable.
+        // The following widths sum to exactly 170 to prevent overflow.
+        tableWidth: 'wrap',
         columnStyles: {
-          0: { cellWidth: 20 },
-          1: { cellWidth: 25 },
-          2: { cellWidth: 25 },
-          3: { cellWidth: 40 },
-          4: { cellWidth: 18 },
-          5: { cellWidth: 30 },
-          6: { cellWidth: 10 },
-          7: { cellWidth: 22 },
+          0: { cellWidth: 18 }, // Date
+          1: { cellWidth: 22 }, // Customer
+          2: { cellWidth: 26 }, // Contact
+          3: { cellWidth: 38 }, // Address
+          4: { cellWidth: 16 }, // Branch
+          5: { cellWidth: 28 }, // Product
+          6: { cellWidth: 8 },  // Qty
+          7: { cellWidth: 14 }, // Total Paid
         },
       });
 
@@ -660,25 +665,42 @@ export default function ReportsPage() {
   // REMOVE: kpiBarData and replace with doughnut data
   // const kpiBarData = useMemo(...)
 
+  // Better KPI overview: multi-axis combo chart over the selected period
   const kpiDoughnutData = useMemo(
     () => ({
-      labels: ["Products Sold", "Successful Orders", "Avg Order Value"],
+      labels: dailySeries.labels,
       datasets: [
         {
-          label: "KPIs",
-          // Note: AOV is a currency; for visualization only
-          data: [
-            salesData.totalProductsSold,
-            salesData.successfulOrders,
-            Number(salesData.averageOrderValue.toFixed(2)),
-          ],
-          backgroundColor: ["#2563EB", "#7C3AED", "#F97316"],
-          borderColor: ["#1E40AF", "#5B21B6", "#C2410C"],
+          type: "bar" as const,
+          label: "Products Sold",
+          data: dailySeries.products,
+          backgroundColor: "rgba(37,99,235,0.6)",
+          borderColor: "#2563EB",
           borderWidth: 1,
+          yAxisID: "y",
+        },
+        {
+          type: "bar" as const,
+          label: "Successful Orders",
+          data: dailySeries.successfulOrders,
+          backgroundColor: "rgba(124,58,237,0.6)",
+          borderColor: "#7C3AED",
+          borderWidth: 1,
+          yAxisID: "y",
+        },
+        {
+          type: "line" as const,
+          label: "Avg Order Value (₱)",
+          data: dailySeries.aov.map((n) => Number(n.toFixed(2))),
+          borderColor: "#F97316",
+          backgroundColor: "rgba(249,115,22,0.25)",
+          tension: 0.3,
+          yAxisID: "y1",
+          pointRadius: 2,
         },
       ],
     }),
-    [salesData]
+    [dailySeries]
   );
 
   const ordersStatusData = useMemo(
@@ -774,7 +796,7 @@ export default function ReportsPage() {
               onChange={(e) =>
                 setDateRange((prev) => ({ ...prev, startDate: e.target.value }))
               }
-              className="px-3 py-2 border border-gray-300 rounded-lg"
+              className="px-3 py-2 border border-gray-300 rounded-lg text-black"
             />
           </div>
           <div>
@@ -787,7 +809,7 @@ export default function ReportsPage() {
               onChange={(e) =>
                 setDateRange((prev) => ({ ...prev, endDate: e.target.value }))
               }
-              className="px-3 py-2 border border-gray-300 rounded-lg"
+              className="px-3 py-2 border border-gray-300 rounded-lg text-black"
             />
           </div>
           <div className="pt-6">
@@ -958,37 +980,48 @@ export default function ReportsPage() {
           />
         </div>
 
-        {/* KPIs as circle (doughnut) */}
+        {/* KPIs combo: bars (Products/Orders) + line (AOV) */}
         <div className="bg-white p-4 rounded-lg shadow-sm border">
           <h3 className="text-sm font-semibold text-gray-700 mb-2">
             KPIs overview
           </h3>
-          <div className="mx-auto flex justify-center">
-            <div className="w-[280px] h-[280px]">
-              <Doughnut
-                ref={kpiDoughnutRef}
-                data={kpiDoughnutData}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false, // enforce 180x180
-                  plugins: {
-                    legend: { display: true, position: "bottom" },
-                    tooltip: {
-                      callbacks: {
-                        label: (ctx) => {
-                          const label = ctx.label || "";
-                          const val = ctx.parsed as number;
-                          return label.includes("Value")
-                            ? `${label}: ₱${val.toLocaleString()}`
-                            : `${label}: ${val.toLocaleString()}`;
-                        },
+          <div className="mx-auto">
+            <Bar
+              ref={kpiDoughnutRef}
+              data={kpiDoughnutData as any}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: { display: true, position: "top" },
+                  tooltip: {
+                    callbacks: {
+                      label: (ctx) => {
+                        const dsLabel = ctx.dataset.label || "";
+                        const val = ctx.parsed?.y ?? ctx.parsed;
+                        return dsLabel.includes("(₱)")
+                          ? `${dsLabel}: ₱${Number(val || 0).toLocaleString()}`
+                          : `${dsLabel}: ${Number(val || 0).toLocaleString()}`;
                       },
                     },
                   },
-                  cutout: "60%",
-                }}
-              />
-            </div>
+                },
+                scales: {
+                  y: {
+                    beginAtZero: true,
+                    title: { display: true, text: "Counts" },
+                  },
+                  y1: {
+                    position: "right",
+                    beginAtZero: true,
+                    grid: { drawOnChartArea: false },
+                    ticks: { callback: (v) => `₱${Number(v).toLocaleString()}` },
+                    title: { display: true, text: "Avg Order Value (₱)" },
+                  },
+                },
+              }}
+              height={280}
+            />
           </div>
         </div>
       </div>

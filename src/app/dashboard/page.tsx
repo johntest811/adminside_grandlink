@@ -131,6 +131,17 @@ export default function DashboardPage() {
 
   const [dailySales, setDailySales] = useState<{ date: string; amount: number }[]>([]);
   const [weeklySales, setWeeklySales] = useState<{ label: string; amount: number }[]>([]);
+  // New: Orders status summary (last 30 days)
+  const [ordersStatusCounts, setOrdersStatusCounts] = useState<{ successful: number; cancelled: number; pending: number }>({
+    successful: 0,
+    cancelled: 0,
+    pending: 0,
+  });
+  // NEW: Orders by Status timeframes
+  const [ordersStatusTab, setOrdersStatusTab] = useState<"day" | "week" | "month">("day");
+  const [ordersStatusDay, setOrdersStatusDay] = useState<Array<{ label: string; successful: number; cancelled: number; pending: number }>>([]);
+  const [ordersStatusWeek, setOrdersStatusWeek] = useState<Array<{ label: string; successful: number; cancelled: number; pending: number }>>([]);
+  const [ordersStatusMonth, setOrdersStatusMonth] = useState<Array<{ label: string; successful: number; cancelled: number; pending: number }>>([]);
 
   // NEW: Active Users timeframes
   const [activeTab, setActiveTab] = useState<"day" | "week" | "month">("day");
@@ -279,6 +290,26 @@ export default function DashboardPage() {
         .select("*", { count: "exact", head: true })
         .not("order_status", "in", `("completed","cancelled")`);
 
+      // Orders by Status (last 30 days) for dashboard summary
+      const { data: orders30 } = await supabase
+        .from("user_items")
+        .select("status, order_status, created_at, item_type")
+        .gte("created_at", last30.toISOString())
+        .in("item_type", ["order", "reservation"]) 
+        .limit(20000);
+
+      const successStatuses = ["completed", "approved", "ready_for_delivery"];
+      const statusCounts = { successful: 0, cancelled: 0, pending: 0 } as {
+        successful: number; cancelled: number; pending: number;
+      };
+      (orders30 || []).forEach((o: any) => {
+        const s = String(o.order_status || o.status || "");
+        if (successStatuses.includes(s)) statusCounts.successful += 1;
+        else if (s === "cancelled") statusCounts.cancelled += 1;
+        else statusCounts.pending += 1;
+      });
+      setOrdersStatusCounts(statusCounts);
+
       // NEW: Pull 12 months of user_items activity for day/week/month aggregation
       const { data: items365 } = await supabase
         .from("user_items")
@@ -287,6 +318,14 @@ export default function DashboardPage() {
         .limit(20000);
 
       const items = (items365 || []).map((r: any) => ({ user_id: r.user_id, updated_at: r.updated_at }));
+
+      // NEW: Pull orders with statuses for the same 12 months window
+      const { data: orders365 } = await supabase
+        .from("user_items")
+        .select("status, order_status, created_at, item_type")
+        .gte("created_at", last365.toISOString())
+        .in("item_type", ["order", "reservation"]) 
+        .limit(50000);
 
       // Helpers
       const ymd = (d: Date) => {
@@ -306,6 +345,7 @@ export default function DashboardPage() {
 
       // Aggregate: Daily last 14 days
       const last14: { label: string; count: number }[] = [];
+      const last14Status: Array<{ label: string; successful: number; cancelled: number; pending: number }> = [];
       for (let i = 13; i >= 0; i--) {
         const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate() - i);
         const key = ymd(d);
@@ -315,10 +355,24 @@ export default function DashboardPage() {
           if (ymd(rd) === key) set.add(row.user_id);
         });
         last14.push({ label: new Date(key).toLocaleDateString(), count: set.size });
+
+        // Orders by status for this day
+        const buckets = { successful: 0, cancelled: 0, pending: 0 };
+        (orders365 || []).forEach((o: any) => {
+          const day = ymd(new Date(o.created_at));
+          const s = String(o.order_status || o.status || "");
+          if (day === key) {
+            if (["completed","approved","ready_for_delivery"].includes(s)) buckets.successful += 1;
+            else if (s === "cancelled") buckets.cancelled += 1;
+            else buckets.pending += 1;
+          }
+        });
+        last14Status.push({ label: new Date(key).toLocaleDateString(), ...buckets });
       }
 
       // Aggregate: Weekly last 8 weeks
       const last8w: { label: string; count: number }[] = [];
+      const last8wStatus: Array<{ label: string; successful: number; cancelled: number; pending: number }> = [];
       for (let i = 7; i >= 0; i--) {
         const end = new Date(); end.setHours(23,59,59,999); end.setDate(end.getDate() - (i * 7));
         const start = startOfWeek(new Date(end));
@@ -329,10 +383,23 @@ export default function DashboardPage() {
         });
         const label = `${start.toLocaleDateString()}–${end.toLocaleDateString()}`;
         last8w.push({ label, count: set.size });
+
+        const buckets = { successful: 0, cancelled: 0, pending: 0 };
+        (orders365 || []).forEach((o: any) => {
+          const rd = new Date(o.created_at);
+          const s = String(o.order_status || o.status || "");
+          if (rd >= start && rd <= end) {
+            if (["completed","approved","ready_for_delivery"].includes(s)) buckets.successful += 1;
+            else if (s === "cancelled") buckets.cancelled += 1;
+            else buckets.pending += 1;
+          }
+        });
+        last8wStatus.push({ label, ...buckets });
       }
 
       // Aggregate: Monthly last 12 months
       const last12m: { label: string; count: number }[] = [];
+      const last12mStatus: Array<{ label: string; successful: number; cancelled: number; pending: number }> = [];
       for (let i = 11; i >= 0; i--) {
         const d = new Date(); d.setDate(1); d.setHours(0,0,0,0); d.setMonth(d.getMonth() - i);
         const start = new Date(d);
@@ -344,11 +411,28 @@ export default function DashboardPage() {
         });
         const label = `${start.toLocaleString(undefined, { month: "short" })} ${start.getFullYear()}`;
         last12m.push({ label, count: set.size });
+
+        const buckets = { successful: 0, cancelled: 0, pending: 0 };
+        (orders365 || []).forEach((o: any) => {
+          const rd = new Date(o.created_at);
+          const s = String(o.order_status || o.status || "");
+          if (rd >= start && rd <= end) {
+            if (["completed","approved","ready_for_delivery"].includes(s)) buckets.successful += 1;
+            else if (s === "cancelled") buckets.cancelled += 1;
+            else buckets.pending += 1;
+          }
+        });
+        last12mStatus.push({ label, ...buckets });
       }
 
       setActiveUsersDay(last14);
       setActiveUsersWeek(last8w);
       setActiveUsersMonth(last12m);
+
+  // Update Orders by Status timeframes
+  setOrdersStatusDay(last14Status);
+  setOrdersStatusWeek(last8wStatus);
+  setOrdersStatusMonth(last12mStatus);
 
       setStats({
         totalProducts: (await supabase.from("products").select("*", { count: "exact", head: true })).count || 0,
@@ -358,8 +442,8 @@ export default function DashboardPage() {
         pendingOrders: pendingOrders || 0,
       });
 
-      setDailySales(last10);
-      setWeeklySales(week);
+    setDailySales(last10);
+    setWeeklySales(week);
     } catch (e) {
       console.error("metrics error:", e);
     }
@@ -386,20 +470,26 @@ export default function DashboardPage() {
     };
   }, [activeTab, activeUsersDay, activeUsersWeek, activeUsersMonth]);
 
-  // Keep Sales Analytics (line) as before
-  const salesAnalyticsData = useMemo(() => ({
-    labels: weeklySales.map(w => w.label),
-    datasets: [
-      {
-        label: "Sales",
-        data: weeklySales.map(w => w.amount),
-        borderColor: "#7c3aed",
-        backgroundColor: "rgba(124,58,237,0.15)",
-        fill: true,
-        pointBackgroundColor: "#7c3aed",
-      },
-    ],
-  }), [weeklySales]);
+  // Orders by Status chart data (stacked), switchable Day/Week/Month
+  const ordersByStatusData = useMemo(() => {
+    const source =
+      ordersStatusTab === "day" ? ordersStatusDay :
+      ordersStatusTab === "week" ? ordersStatusWeek : ordersStatusMonth;
+
+    const labels = source.map((s) => s.label);
+    const succ = source.map((s) => s.successful);
+    const canc = source.map((s) => s.cancelled);
+    const pend = source.map((s) => s.pending);
+
+    return {
+      labels,
+      datasets: [
+        { label: "Successful", data: succ, backgroundColor: "#16A34A", stack: 's' },
+        { label: "Cancelled", data: canc, backgroundColor: "#DC2626", stack: 's' },
+        { label: "Pending", data: pend, backgroundColor: "#F59E0B", stack: 's' },
+      ],
+    };
+  }, [ordersStatusTab, ordersStatusDay, ordersStatusWeek, ordersStatusMonth]);
 
   // ADD: test helpers to avoid runtime ReferenceError
   const testActivityLogging = async () => {
@@ -573,10 +663,33 @@ export default function DashboardPage() {
           />
         </div>
 
-        {/* Sales Analytics */}
+        {/* Orders by Status – Daily / Weekly / Monthly */}
         <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-semibold text-black mb-4">Sales Analytics</h2>
-          <Line data={salesAnalyticsData} options={{ responsive: true, plugins: { legend: { display: false } } }} />
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-black">Orders by Status</h2>
+            <div className="flex gap-2">
+              {(["day","week","month"] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setOrdersStatusTab(t)}
+                  className={`px-3 py-1 rounded text-sm border ${ordersStatusTab===t? 'bg-emerald-600 text-white border-emerald-700' : 'bg-white text-black border-gray-300 hover:bg-gray-100'}`}
+                >
+                  {t === 'day' ? 'Daily' : t === 'week' ? 'Weekly' : 'Monthly'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <Bar
+            data={ordersByStatusData}
+            options={{
+              responsive: true,
+              plugins: { legend: { display: true } },
+              scales: {
+                x: { stacked: true, ticks: { color: '#000' } },
+                y: { stacked: true, beginAtZero: true, ticks: { color: '#000' } },
+              },
+            }}
+          />
         </div>
       </div>
 

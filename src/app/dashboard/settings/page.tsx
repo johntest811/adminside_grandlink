@@ -864,7 +864,7 @@ export default function SettingsPage() {
             <div className="mt-4 flex gap-2">
               <button
                 onClick={() => setEditOpen(false)}
-                className="flex-1 px-4 py-2 bg-gray-200 rounded"
+                className="flex-1 px-4 py-2 bg-gray-200 rounded text-black"
               >
                 Cancel
               </button>

@@ -407,7 +407,7 @@ export default function UpdateProductsPage() {
               placeholder="Search products..."
               value={filter}
               onChange={(e) => handleFilterChange(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-black"
             />
           </div>
           
@@ -415,7 +415,7 @@ export default function UpdateProductsPage() {
             <select
               value={categoryFilter}
               onChange={(e) => handleCategoryFilterChange(e.target.value)}
-              className="px-4 py-2 border border-gray-300 rounded-lg bg-white hover:bg-gray-50 focus:ring-2 focus:ring-indigo-500"
+              className="px-4 py-2 border border-gray-600 rounded-lg bg-white hover:bg-gray-50 focus:ring-2 focus:ring-indigo-500 text-black"
             >
               <option value="">All Categories</option>
               {categories.map(category => (
