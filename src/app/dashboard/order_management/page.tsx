@@ -53,7 +53,18 @@ export default function OrdersPage() {
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState<PaymentModalData | null>(null);
   const [paymentNotes, setPaymentNotes] = useState('');
-  const [editingPaymentId, setEditingPaymentId] = useState<string | null>(null);
+  // removed inline edit id in favor of modal
+  // New: edit payment modal state
+  const [editPaymentItem, setEditPaymentItem] = useState<UserItem | null>(null);
+  const [editPaymentForm, setEditPaymentForm] = useState({
+    price: '',
+    total_amount: '',
+    payment_id: '',
+    payment_method: '',
+  });
+  // New: date/time filter
+  const [startDateTime, setStartDateTime] = useState<string>('');
+  const [endDateTime, setEndDateTime] = useState<string>('');
 
   // Minimal API to update only user_items
   const updateOrderViaApi = async (payload: any) => {
@@ -359,13 +370,10 @@ export default function OrdersPage() {
     () => [
       
       { value: 'pending_payment', label: 'Pending Payment' },
-      { value: 'reserved', label: 'Reserved' },
-      { value: 'pending_balance_payment', label: 'Pending Balance Payment' },
       { value: 'approved', label: 'Approved' },
       { value: 'in_production', label: 'In Production' },
       { value: 'quality_check', label: 'Quality Check' },
       { value: 'packaging', label: 'Packaging' },
-      { value: 'start_packaging', label: 'Start Packaging' },
       { value: 'ready_for_delivery', label: 'Ready for Delivery' },
       { value: 'out_for_delivery', label: 'Out for Delivery' },
       { value: 'completed', label: 'Completed' },
@@ -388,6 +396,17 @@ export default function OrdersPage() {
   // NEW: query filter
   const filteredReservations = reservations.filter((r) => {
     if (statusFilter && getStage(r) !== statusFilter) return false;
+    // Date range filter (created_at)
+    if (startDateTime) {
+      const from = new Date(startDateTime).getTime();
+      const created = new Date(r.created_at).getTime();
+      if (!Number.isNaN(from) && !Number.isNaN(created) && created < from) return false;
+    }
+    if (endDateTime) {
+      const to = new Date(endDateTime).getTime();
+      const created = new Date(r.created_at).getTime();
+      if (!Number.isNaN(to) && !Number.isNaN(created) && created > to) return false;
+    }
     const q = searchQuery.trim().toLowerCase();
     if (!q) return true;
     const fields = [
@@ -428,41 +447,64 @@ export default function OrdersPage() {
       {/* Filters / Controls */}
       <div className="bg-white p-4 rounded-lg shadow-sm border">
         <div className="flex flex-wrap items-end gap-4">
-          {/* NEW: Search */}
-          <div className="flex-1 min-w-[240px]">
-            <label className="block text-sm font-medium text-black mb-1">Search</label>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by Order ID, Product, Customer name/email/phone"
-              className="w-full px-3 py-2 border rounded-md text-black placeholder:text-black/50"
-            />
+          {/* Left group: search + date range */}
+          <div className="flex-1 min-w-[260px] grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-black mb-1">Search</label>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by Order ID, Product, Customer name/email/phone"
+                className="w-full px-3 py-2 border rounded-md text-black placeholder:text-black/50"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-black mb-1">Date From</label>
+              <input
+                type="datetime-local"
+                value={startDateTime}
+                onChange={(e) => setStartDateTime(e.target.value)}
+                className="w-full px-3 py-2 border rounded-md text-black"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-black mb-1">Date To</label>
+              <input
+                type="datetime-local"
+                value={endDateTime}
+                onChange={(e) => setEndDateTime(e.target.value)}
+                className="w-full px-3 py-2 border rounded-md text-black"
+              />
+            </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-black mb-1">Filter by Status</label>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-3 py-2 border rounded-md text-black"
-            >
-              {statusOptions.map((o) => (
-                <option key={o.value || 'all'} value={o.value}>
-                  {o.label}{o.value && stageCounts[o.value] ? ` (${stageCounts[o.value]})` : ''}
-                </option>
-              ))}
-            </select>
+          {/* Right group: status filter + clear */}
+          <div className="ml-auto flex items-end gap-2">
+            <div>
+              <label className="block text-sm font-medium text-black mb-1">Filter by Status</label>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="px-3 py-2 border rounded-md text-black"
+              >
+                {statusOptions.map((o) => (
+                  <option key={o.value || 'all'} value={o.value}>
+                    {o.label}{o.value && stageCounts[o.value] ? ` (${stageCounts[o.value]})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {(statusFilter || searchQuery || startDateTime || endDateTime) && (
+              <button
+                onClick={() => { setStatusFilter(''); setSearchQuery(''); setStartDateTime(''); setEndDateTime(''); }}
+                className="px-3 py-2 border rounded-md bg-white hover:bg-gray-50 text-black"
+                title="Clear filters"
+              >
+                Clear
+              </button>
+            )}
           </div>
-          {(statusFilter || searchQuery) && (
-            <button
-              onClick={() => { setStatusFilter(''); setSearchQuery(''); }}
-              className="px-3 py-2 border rounded-md bg-white hover:bg-gray-50 text-black"
-              title="Clear filters"
-            >
-              Clear
-            </button>
-          )}
         </div>
       </div>
 
@@ -510,8 +552,7 @@ export default function OrdersPage() {
               const branch = addr.branch || '';
               
               const stage = getStage(r);
-              const payInfo = getPaymentInfo(r);
-              const isEditingPayment = editingPaymentId === r.id;
+              // inline payment editing removed; we now use a modal
               
               return (
                 <tr key={r.id} className="hover:bg-gray-50">
@@ -551,63 +592,27 @@ export default function OrdersPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 align-top">
-                    {stage === 'pending_payment' ? (
-                      <div className="flex flex-col gap-2">
-                        {!isEditingPayment ? (
-                          <>
-                            <div className="text-xs text-black">
-                              Total Paid: ₱{Number(r.total_paid || 0).toLocaleString()}
-                            </div>
-                            <button
-                              className="text-xs bg-gray-600 text-white px-3 py-1 rounded hover:bg-gray-700"
-                              onClick={() => setEditingPaymentId(r.id)}
-                            >
-                              Edit Payment
-                            </button>
-                          </>
-                        ) : (
-                          <div className="flex flex-col gap-2">
-                            <input
-                              type="number"
-                              defaultValue={Number(r.total_paid || 0)}
-                              onChange={(e) => (r as any)._editPaid = e.target.value}
-                              className="w-28 px-2 py-1 border rounded text-sm text-black"
-                              min={0}
-                              placeholder="Amount"
-                            />
-                            <div className="flex gap-1">
-                              <button
-                                className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700"
-                                disabled={updatingStatus === r.id}
-                                onClick={async () => {
-                                  const val = Number((r as any)._editPaid ?? r.total_paid ?? 0);
-                                  try {
-                                    const updated = await updateOrderViaApi({ itemId: r.id, updates: { total_paid: val } });
-                                    setReservations(prev => prev.map(x => x.id === r.id ? { ...x, ...updated } : x));
-                                    setEditingPaymentId(null);
-                                  } catch (e: any) {
-                                    alert(e.message || String(e));
-                                  }
-                                }}
-                              >
-                                Save
-                              </button>
-                              <button
-                                className="text-xs bg-gray-500 text-white px-2 py-1 rounded hover:bg-gray-600"
-                                onClick={() => setEditingPaymentId(null)}
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="text-xs text-black">
-                        <div>Total Paid: ₱{Number(r.total_paid || 0).toLocaleString()}</div>
-                        <div className="mt-1">Amount Due: ₱{Math.max((r.price ?? r.meta?.price ?? 0) * r.quantity - (r.total_paid || 0), 0).toLocaleString()}</div>
-                      </div>
-                    )}
+                    <div className="text-xs text-black">
+                      {(() => {
+                        const perItem = (r.total_amount ?? r.meta?.final_total_per_item ?? r.price ?? r.meta?.price ?? 0);
+                        const total = Number(perItem) * Number(r.quantity || 1);
+                        return <div>Total Amount: ₱{Number(total || 0).toLocaleString()}</div>;
+                      })()}
+                    </div>
+                    <button
+                      className="mt-2 text-xs bg-gray-600 text-white px-3 py-1 rounded hover:bg-gray-700"
+                      onClick={() => {
+                        setEditPaymentItem(r);
+                        setEditPaymentForm({
+                          price: String(r.price ?? r.meta?.price ?? ''),
+                          total_amount: String(r.total_amount ?? r.meta?.final_total_per_item ?? ''),
+                          payment_id: String(r.payment_id ?? ''),
+                          payment_method: String(r.payment_method ?? r.meta?.payment_type ?? ''),
+                        });
+                      }}
+                    >
+                      Edit Payment
+                    </button>
                   </td>
                   <td className="px-4 py-3">
                     <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${getStatusColor(stage)}`}>
@@ -652,7 +657,114 @@ export default function OrdersPage() {
         </div>
       )}
 
-      {/* Payment modal JSX remains unchanged */}
+      {/* Edit Payment Modal */}
+      {editPaymentItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white w-full max-w-md rounded-lg shadow-lg p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-semibold text-black">Edit Payment</h3>
+              <button
+                className="text-sm px-2 py-1 rounded bg-gray-200 hover:bg-gray-300 text-black"
+                onClick={() => setEditPaymentItem(null)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-black mb-1">Unit Price (₱)</label>
+                  <input
+                    type="number"
+                    className="w-full px-3 py-2 border rounded text-black"
+                    value={editPaymentForm.price}
+                    onChange={(e) => setEditPaymentForm((f) => ({ ...f, price: e.target.value }))}
+                    min={0}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-black mb-1">Total Amount (per item) (₱)</label>
+                  <input
+                    type="number"
+                    className="w-full px-3 py-2 border rounded text-black"
+                    value={editPaymentForm.total_amount}
+                    onChange={(e) => setEditPaymentForm((f) => ({ ...f, total_amount: e.target.value }))}
+                    min={0}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-black mb-1">Payment Method</label>
+                  <input
+                    type="text"
+                    className="w-full px-3 py-2 border rounded text-black"
+                    placeholder="PayMongo / PayPal / Cash / Other"
+                    value={editPaymentForm.payment_method}
+                    onChange={(e) => setEditPaymentForm((f) => ({ ...f, payment_method: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-black mb-1">Payment Reference / ID</label>
+                  <input
+                    type="text"
+                    className="w-full px-3 py-2 border rounded text-black"
+                    value={editPaymentForm.payment_id}
+                    onChange={(e) => setEditPaymentForm((f) => ({ ...f, payment_id: e.target.value }))}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                className="px-3 py-2 text-sm rounded bg-gray-100 hover:bg-gray-200 text-black"
+                onClick={() => setEditPaymentItem(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-3 py-2 text-sm rounded bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-60"
+                disabled={!!updatingStatus}
+                onClick={async () => {
+                  if (!editPaymentItem) return;
+                  setUpdatingStatus(editPaymentItem.id);
+                  try {
+                    const updates: any = { updated_at: new Date().toISOString() };
+                    const pr = editPaymentForm.price.trim();
+                    const ta = editPaymentForm.total_amount.trim();
+                    if (pr !== '') updates.price = Number(pr);
+                    if (ta !== '') updates.total_amount = Number(ta);
+                    if (editPaymentForm.payment_id) updates.payment_id = editPaymentForm.payment_id.trim();
+                    if (editPaymentForm.payment_method) updates.payment_method = editPaymentForm.payment_method.trim();
+
+                    // Also mirror into meta for audit (non-destructive merge happens server-side)
+                    updates.meta = {
+                      manual_payment_override: true,
+                      manual_payment_updated_at: new Date().toISOString(),
+                      ...(editPaymentForm.payment_method ? { payment_type: editPaymentForm.payment_method.trim() } : {}),
+                      ...(pr !== '' ? { price: Number(pr) } : {}),
+                      ...(ta !== '' ? { final_total_per_item: Number(ta) } : {}),
+                    };
+
+                    const updated = await updateOrderViaApi({ itemId: editPaymentItem.id, updates });
+                    setReservations(prev => prev.map(x => x.id === editPaymentItem.id ? { ...x, ...updated } : x));
+                    setEditPaymentItem(null);
+                    await fetchReservations();
+                  } catch (e: any) {
+                    alert(e.message || String(e));
+                  } finally {
+                    setUpdatingStatus(null);
+                  }
+                }}
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
