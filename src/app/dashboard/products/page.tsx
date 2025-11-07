@@ -25,7 +25,7 @@ export default function ProductsAdminPage() {
   const [fullProductName, setFullProductName] = useState("");
   const [additionalFeatures, setAdditionalFeatures] = useState("");
   const [price, setPrice] = useState("");
-  const [inventory, setInventory] = useState("0");
+  const [inventory, setInventory] = useState("");
   const [images, setImages] = useState<File[]>([]);
   const [fbxFiles, setFbxFiles] = useState<File[]>([]);
   const [show3DViewer, setShow3DViewer] = useState(false);
@@ -843,7 +843,8 @@ export default function ProductsAdminPage() {
                 value={inventory}
                 onChange={e => setInventory(e.target.value)}
                 className="w-full border border-gray-300 p-2 rounded bg-white text-black mb-4"
-                placeholder="0"
+                placeholder="Enter inventory quantity"
+                required
                 min="0"
               />
               <div className="flex space-x-4 mb-4">
