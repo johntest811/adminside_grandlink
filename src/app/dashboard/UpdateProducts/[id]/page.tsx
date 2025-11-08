@@ -910,16 +910,6 @@ export default function EditProductPage() {
                 required
               />
             </div>
-
-            <div>
-              <label className="block font-medium mb-1 text-black">Inventory Count</label>
-              <input
-                type="number"
-                value={product.inventory || ""}
-                onChange={e => handleChange("inventory", Number(e.target.value) || 0)}
-                className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
           </div>
 
           <div className="mt-4">
