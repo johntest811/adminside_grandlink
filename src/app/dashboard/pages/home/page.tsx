@@ -1,14 +1,13 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
 import { supabase } from "../../../Clients/Supabase/SupabaseClients";
 import { logActivity, autoLogActivity } from "@/app/lib/activity";
 
 type HomeContent = {
-  carousel?: Array<{ image?: string; title?: string; buttonText?: string; buttonLink?: string }>;
+  carousel?: Array<{ image?: string; youtube_url?: string; title?: string; buttonText?: string; buttonLink?: string }>;
   explore?: Array<{ image?: string; title?: string; buttonText?: string; buttonLink?: string }>;
-  featured_projects?: Array<{ image?: string; title?: string; description?: string }>;
+  featured_projects?: Array<{ image?: string; title?: string; description?: string; youtube_url?: string }>;
   services?: { images?: string[]; title?: string; description?: string; buttonText?: string; buttonLink?: string };
   about?: { logo?: string; title?: string; description?: string; buttonText?: string; buttonLink?: string };
   [k: string]: any;
@@ -670,7 +669,22 @@ export default function HomeEditor() {
       <section className="mb-6 border p-4 rounded">
         <div className="flex justify-between items-center">
           <h2 className="font-semibold text-black">Carousel</h2>
-          <button onClick={() => addArrayItem("carousel", {})} className="text-sm px-2 py-1 bg-gray-100 rounded text-black">Add Slide</button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => addArrayItem("carousel", { image: "", youtube_url: "" })}
+              className="text-sm px-2 py-1 bg-gray-100 rounded text-black"
+              type="button"
+            >
+              Add Image Slide
+            </button>
+            <button
+              onClick={() => addArrayItem("carousel", { youtube_url: "" })}
+              className="text-sm px-2 py-1 bg-gray-100 rounded text-black"
+              type="button"
+            >
+              Add YouTube Slide
+            </button>
+          </div>
         </div>
         {(content.carousel || []).map((s, i) => (
           <div key={i} className="mt-3 border-t pt-3">
@@ -683,6 +697,12 @@ export default function HomeEditor() {
               />
               <button className="px-2 bg-gray-100 text-black" onClick={() => openImagePicker("carousel", i)}>Choose</button>
             </div>
+            <input
+              className={`${formControl} mb-2`}
+              placeholder="YouTube URL (optional — if set, this slide becomes a video)"
+              value={s.youtube_url || ""}
+              onChange={(e) => handleCarouselChange(i, 'youtube_url', e.target.value)}
+            />
             <input 
               className={`${formControl} mb-2`} 
               placeholder="Title" 
@@ -778,6 +798,12 @@ export default function HomeEditor() {
               placeholder="Description" 
               value={p.description || ""} 
               onChange={(e) => handleFeaturedProjectsChange(i, 'description', e.target.value)} 
+            />
+            <input
+              className={`${formControl} mb-2`}
+              placeholder="YouTube URL (e.g. https://www.youtube.com/watch?v=...)"
+              value={p.youtube_url || ""}
+              onChange={(e) => handleFeaturedProjectsChange(i, 'youtube_url', e.target.value)}
             />
             <button className="text-black" onClick={() => removeArrayItem("featured_projects", i)}>Remove</button>
           </div>
