@@ -6,7 +6,7 @@ import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 type Admin = {
   id: string;
   username: string;
-  role: "superadmin" | "admin" | "manager";
+  role: "superadmin" | "admin" | "manager" | "employee";
   position?: string | null;
   full_name?: string | null;
   employee_number?: string | null;
@@ -26,11 +26,12 @@ type InquireContentRow = {
   facebook?: string | null;
 };
 
-const POSITIONS = [
+const DEFAULT_POSITIONS = [
   "Sales Manager",
   "Site Manager",
   "Media Handler",
   "Supervisor",
+  "Employee",
   "Manager",
   "Admin",
   "Superadmin",
@@ -41,6 +42,13 @@ export default function SettingsPage() {
   const [currentAdmin, setCurrentAdmin] = useState<Admin | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
 
+  // RBAC positions (for create/edit admin forms)
+  const [positionsList, setPositionsList] = useState<string[]>(DEFAULT_POSITIONS);
+
+  const norm = (v?: string | null) => String(v || "").toLowerCase().replace(/[\s_-]/g, "");
+  const isCurrentSuperadmin =
+    norm(currentAdmin?.role) === "superadmin" || norm(currentAdmin?.position) === "superadmin";
+
   // Edit profile modal
   const [editOpen, setEditOpen] = useState(false);
   const [editFullName, setEditFullName] = useState("");
@@ -50,6 +58,24 @@ export default function SettingsPage() {
 
   useEffect(() => {
     loadCurrentAdminProfile();
+  }, []);
+
+  useEffect(() => {
+    const loadPositions = async () => {
+      try {
+        const res = await fetch("/api/rbac/positions");
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) return;
+        const names = Array.isArray(j?.positions)
+          ? j.positions.map((p: any) => String(p?.name)).filter(Boolean)
+          : [];
+        if (names.length) setPositionsList(names);
+      } catch {
+        // ignore, keep defaults
+      }
+    };
+
+    loadPositions();
   }, []);
 
   const loadCurrentAdminProfile = async () => {
@@ -161,6 +187,8 @@ export default function SettingsPage() {
   };
 
   const logout = async () => {
+    const ok = window.confirm("Are you sure you want to log out?");
+    if (!ok) return;
     try {
       await supabase.auth.signOut();
     } catch {}
@@ -254,10 +282,16 @@ export default function SettingsPage() {
       }
 
       // admins list
-      await fetchAdmins();
+      if (isCurrentSuperadmin) {
+        await fetchAdmins();
+      } else {
+        setAdmins([]);
+        setAdminsLoading(false);
+      }
     };
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCurrentSuperadmin]);
 
   const fetchAdmins = async () => {
     setAdminsLoading(true);
@@ -346,8 +380,22 @@ export default function SettingsPage() {
   // Create admin
   const createAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isCurrentSuperadmin) {
+      alert("Only a superadmin can manage admin accounts.");
+      return;
+    }
     if (!newAdmin.username || !newAdmin.password) {
       alert("Username and password are required.");
+      return;
+    }
+
+    if (
+      String(newAdmin.role || "")
+        .toLowerCase()
+        .replace(/[\s_-]/g, "") === "superadmin" &&
+      !isCurrentSuperadmin
+    ) {
+      alert("Only a superadmin can create another superadmin.");
       return;
     }
     setCreating(true);
@@ -390,6 +438,10 @@ export default function SettingsPage() {
 
   // Toggle active
   const toggleActive = async (a: Admin) => {
+    if (!isCurrentSuperadmin) {
+      alert("Only a superadmin can manage admin accounts.");
+      return;
+    }
     try {
       const { error } = await supabase
         .from("admins")
@@ -407,7 +459,22 @@ export default function SettingsPage() {
     id: string,
     changes: Partial<Pick<Admin, "role" | "position" | "full_name">>
   ) => {
+    if (!isCurrentSuperadmin) {
+      alert("Only a superadmin can manage admin accounts.");
+      return;
+    }
     try {
+      if (
+        changes.role &&
+        String(changes.role)
+          .toLowerCase()
+          .replace(/[\s_-]/g, "") === "superadmin" &&
+        !isCurrentSuperadmin
+      ) {
+        alert("Only a superadmin can promote another account to superadmin.");
+        return;
+      }
+
       const { error } = await supabase.from("admins").update(changes).eq("id", id);
       if (error) throw error;
       await fetchAdmins();
@@ -418,6 +485,10 @@ export default function SettingsPage() {
 
   // Reset password (prompt)
   const resetPassword = async (a: Admin) => {
+    if (!isCurrentSuperadmin) {
+      alert("Only a superadmin can manage admin accounts.");
+      return;
+    }
     const pw = window.prompt(
       `Enter new password for ${a.username}`,
       Math.random().toString(36).slice(2, 10)
@@ -642,6 +713,13 @@ export default function SettingsPage() {
       <div className="bg-white shadow rounded-lg p-6">
         <h2 className="text-xl font-semibold mb-4 text-black">Admin Accounts</h2>
 
+        {!isCurrentSuperadmin ? (
+          <div className="p-4 border rounded bg-gray-50 text-black">
+            Only Superadmins can view and manage admin accounts.
+          </div>
+        ) : (
+          <>
+
         {/* Create admin */}
         <form onSubmit={createAdmin} className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-6">
           <div>
@@ -676,7 +754,7 @@ export default function SettingsPage() {
             >
               <option value="admin">admin</option>
               <option value="manager">manager</option>
-              <option value="superadmin">superadmin</option>
+              {isCurrentSuperadmin && <option value="superadmin">superadmin</option>}
             </select>
           </div>
           <div>
@@ -688,7 +766,7 @@ export default function SettingsPage() {
                 setNewAdmin({ ...newAdmin, position: e.target.value })
               }
             >
-              {POSITIONS.map((p) => (
+                      {positionsList.map((p) => (
                 <option key={p} value={p}>
                   {p}
                 </option>
@@ -764,7 +842,7 @@ export default function SettingsPage() {
                       >
                         <option value="admin">admin</option>
                         <option value="manager">manager</option>
-                        <option value="superadmin">superadmin</option>
+                        {isCurrentSuperadmin && <option value="superadmin">superadmin</option>}
                       </select>
                     </td>
                     <td className="p-2">
@@ -775,7 +853,7 @@ export default function SettingsPage() {
                           updateAdminField(a.id, { position: e.target.value })
                         }
                       >
-                        {POSITIONS.map((p) => (
+                        {positionsList.map((p) => (
                           <option key={p} value={p}>
                             {p}
                           </option>
@@ -813,6 +891,8 @@ export default function SettingsPage() {
             </tbody>
           </table>
         </div>
+          </>
+        )}
       </div>
 
       {/* Edit profile modal */}
@@ -842,7 +922,7 @@ export default function SettingsPage() {
                   value={editPosition}
                   onChange={(e) => setEditPosition(e.target.value)}
                 >
-                  {POSITIONS.map((p) => (
+                  {positionsList.map((p) => (
                     <option key={p} value={p}>
                       {p}
                     </option>

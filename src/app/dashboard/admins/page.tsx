@@ -1,5 +1,6 @@
 "use client";
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { supabase } from '@/app/Clients/Supabase/SupabaseClients';
 import { logActivity } from '@/app/lib/activity';
 import { createNotification } from '@/app/lib/notifications';
@@ -16,6 +17,7 @@ type AdminUser = {
 };
 
 export default function AdminsPage() {
+  const router = useRouter();
   const [admins, setAdmins] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
@@ -36,6 +38,21 @@ export default function AdminsPage() {
     loadAdmins();
   }, []);
 
+  const norm = (v?: string) => String(v || '').toLowerCase().replace(/[\s_-]/g, '');
+  const isSuperadmin = useMemo(() => {
+    const roleNorm = norm(currentAdmin?.role);
+    const posNorm = norm(currentAdmin?.position);
+    return roleNorm === 'superadmin' || posNorm === 'superadmin';
+  }, [currentAdmin]);
+
+  useEffect(() => {
+    // If we have a session and it's not a superadmin, hard-block this page.
+    if (!currentAdmin) return;
+    if (!isSuperadmin) {
+      router.replace('/dashboard/unauthorized');
+    }
+  }, [currentAdmin, isSuperadmin, router]);
+
   const loadCurrentAdmin = () => {
     const sessionData = localStorage.getItem('adminSession');
     if (sessionData) {
@@ -46,6 +63,17 @@ export default function AdminsPage() {
   const loadAdmins = async () => {
     try {
       setLoading(true);
+
+      // Only Superadmins may load/manage the full admin list on this page.
+      const sessionData = localStorage.getItem('adminSession');
+      const sess = sessionData ? JSON.parse(sessionData) : null;
+      const roleNorm = norm(sess?.role);
+      const posNorm = norm(sess?.position);
+      if (roleNorm !== 'superadmin' && posNorm !== 'superadmin') {
+        setAdmins([]);
+        return;
+      }
+
       const { data, error } = await supabase
         .from('admins')
         .select('*')
@@ -231,6 +259,10 @@ export default function AdminsPage() {
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
       </div>
     );
+  }
+
+  if (currentAdmin && !isSuperadmin) {
+    return null;
   }
 
   return (

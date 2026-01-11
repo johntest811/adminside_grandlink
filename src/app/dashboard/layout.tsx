@@ -18,6 +18,7 @@ export default function DashboardLayout({
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [allowedPaths, setAllowedPaths] = useState<string[] | null>(null);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false); // NEW
 
   // Helper for active nav item
@@ -83,6 +84,7 @@ export default function DashboardLayout({
       dropdown: [
         { name: 'Settings', path: '/dashboard/settings' },
         { name: 'Audit', path: '/dashboard/settings/audit' },
+        { name: 'Roles & Permissions', path: '/dashboard/settings/roles' },
       ],
     },
   ];
@@ -90,6 +92,42 @@ export default function DashboardLayout({
   useEffect(() => {
     checkAuthAndLoadAdmin();
   }, []);
+
+  useEffect(() => {
+    const loadAllowed = async () => {
+      if (!currentAdmin?.id) return;
+      try {
+        const res = await fetch(`/api/rbac/allowed-pages?adminId=${encodeURIComponent(currentAdmin.id)}`);
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          console.warn("RBAC allowed-pages failed", j?.error);
+          setAllowedPaths(["/dashboard"]);
+          return;
+        }
+        const paths = Array.isArray(j?.allowedPaths) ? j.allowedPaths : ["/dashboard"];
+        // Always allow these utility pages
+        const merged = Array.from(new Set(["/dashboard", "/dashboard/unauthorized", ...paths]));
+        setAllowedPaths(merged);
+      } catch (e) {
+        console.warn("RBAC allowed-pages exception", e);
+        setAllowedPaths(["/dashboard", "/dashboard/unauthorized"]);
+      }
+    };
+
+    // Only fetch after we have an admin session
+    loadAllowed();
+  }, [currentAdmin?.id]);
+
+  useEffect(() => {
+    if (!allowedPaths) return;
+    if (!pathname.startsWith("/dashboard")) return;
+
+    // Allow exact match, or child routes of allowed pages (e.g. /dashboard/UpdateProducts/[id])
+    const allowed = allowedPaths.some((p) => pathname === p || pathname.startsWith(p + "/"));
+    if (!allowed) {
+      router.push("/dashboard/unauthorized");
+    }
+  }, [pathname, allowedPaths, router]);
 
   const checkAuthAndLoadAdmin = () => {
     try {
@@ -138,7 +176,7 @@ export default function DashboardLayout({
 
   const handleLogoutClick = () => setShowLogoutConfirm(true); // NEW
 
-  if (loading) {
+  if (loading || (currentAdmin && !allowedPaths)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
         <div className="text-center">
@@ -148,6 +186,17 @@ export default function DashboardLayout({
       </div>
     );
   }
+
+  const allowedSet = new Set(allowedPaths || []);
+  const filteredNav = navStructure
+    .map((item) => {
+      if (!item.dropdown) {
+        return allowedSet.has(item.path!) ? item : null;
+      }
+      const subs = item.dropdown.filter((sub) => allowedSet.has(sub.path));
+      return subs.length ? { ...item, dropdown: subs } : null;
+    })
+    .filter(Boolean) as typeof navStructure;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -219,7 +268,7 @@ export default function DashboardLayout({
         {/* Scrollable nav content */}
         <div className="flex-1 overflow-y-auto p-4">
           <nav className="space-y-1">
-            {navStructure.map((item) =>
+            {filteredNav.map((item) =>
               item.dropdown ? (
                 <div key={item.name} className="mb-2">
                   <button
