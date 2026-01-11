@@ -162,6 +162,16 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: "Position name is required" }, { status: 400 });
     }
 
+    // Clean up assignments first (even if FK doesn't cascade).
+    const { error: delAsgErr } = await auth.supabase
+      .from("rbac_position_pages")
+      .delete()
+      .eq("position_name", name);
+
+    if (delAsgErr) {
+      return NextResponse.json({ error: delAsgErr.message }, { status: 500 });
+    }
+
     const { error } = await auth.supabase.from("rbac_positions").delete().eq("name", name);
 
     if (error) {

@@ -42,6 +42,9 @@ VALUES
 
   ('user_accounts', 'User Accounts', '/dashboard/user-accounts', 'Accounts'),
   ('employee_accounts', 'Employee Accounts', '/dashboard/admins', 'Accounts'),
+  -- Capability-style permissions for /dashboard/admins actions (kept as unique paths)
+  ('employee_accounts_edit', 'Employee Accounts - Edit', '/dashboard/admins#edit', 'Accounts'),
+  ('employee_accounts_password', 'Employee Accounts - Change Password', '/dashboard/admins#password', 'Accounts'),
 
   ('reports', 'Reports', '/dashboard/reports', 'Reports'),
 

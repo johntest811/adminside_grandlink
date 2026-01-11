@@ -31,6 +31,7 @@ export default function RolesAndPermissionsPage() {
   const [selectedPageKeys, setSelectedPageKeys] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const [newPositionName, setNewPositionName] = useState("");
   const [newPositionDescription, setNewPositionDescription] = useState("");
@@ -73,9 +74,15 @@ export default function RolesAndPermissionsPage() {
     setPages(pagesJson.pages || []);
     setPositions(positionsJson.positions || []);
 
-    // Pick first position if none selected
-    const firstName = (positionsJson.positions?.[0]?.name as string | undefined) || "";
-    setSelectedPosition((prev) => prev || firstName);
+    // Pick a valid selected position.
+    const names: string[] = Array.isArray(positionsJson.positions)
+      ? positionsJson.positions.map((p: any) => String(p?.name || "")).filter(Boolean)
+      : [];
+    const firstName = names[0] || "";
+    setSelectedPosition((prev) => {
+      if (prev && names.includes(prev)) return prev;
+      return firstName;
+    });
   };
 
   useEffect(() => {
@@ -134,6 +141,45 @@ export default function RolesAndPermissionsPage() {
       alert("Permissions saved.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const deleteSelectedPosition = async () => {
+    if (!currentAdmin?.id) return;
+    if (!selectedPosition) return;
+
+    const selectedNorm = norm(selectedPosition);
+    if (selectedNorm === "superadmin") {
+      alert("The Superadmin position cannot be deleted.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Delete position "${selectedPosition}"? This will also remove its page permissions.`
+    );
+    if (!ok) return;
+
+    setDeleting(true);
+    try {
+      const res = await fetch(
+        `/api/rbac/positions?name=${encodeURIComponent(selectedPosition)}`,
+        {
+          method: "DELETE",
+          headers: {
+            "x-admin-id": currentAdmin.id,
+          },
+        }
+      );
+
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || "Failed to delete position");
+
+      // Clear selection first, then refresh (fetchAll will pick first remaining).
+      setSelectedPosition("");
+      await fetchAll();
+      alert("Position deleted.");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -253,6 +299,14 @@ export default function RolesAndPermissionsPage() {
               Assign which pages this position can access.
             </div>
           </div>
+
+          <button
+            disabled={deleting || !selectedPosition}
+            onClick={() => deleteSelectedPosition().catch((e) => alert(e.message))}
+            className="px-3 py-2 border border-red-300 text-red-700 rounded disabled:opacity-60"
+          >
+            {deleting ? "Deleting..." : "Delete Position"}
+          </button>
 
           <button
             disabled={saving || !selectedPosition}

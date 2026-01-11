@@ -195,7 +195,7 @@ export default function SettingsPage() {
     try {
       localStorage.removeItem("adminSession");
     } catch {}
-    window.location.href = "/dashboard/login";
+    window.location.href = "/login";
   };
 
   const initials = (() => {
