@@ -22,9 +22,18 @@ type RbacPosition = {
   pageKeys: string[];
 };
 
+type AdminListRow = {
+  id: string;
+  username: string;
+  role?: string | null;
+  position?: string | null;
+  is_active?: boolean | null;
+};
+
 export default function RolesAndPermissionsPage() {
   const [currentAdmin, setCurrentAdmin] = useState<AdminSession | null>(null);
   const [loading, setLoading] = useState(true);
+  const [allowedPaths, setAllowedPaths] = useState<string[] | null>(null);
   const [pages, setPages] = useState<RbacPage[]>([]);
   const [positions, setPositions] = useState<RbacPosition[]>([]);
   const [selectedPosition, setSelectedPosition] = useState<string>("");
@@ -36,9 +45,32 @@ export default function RolesAndPermissionsPage() {
   const [newPositionName, setNewPositionName] = useState("");
   const [newPositionDescription, setNewPositionDescription] = useState("");
 
+  // Admin overrides UI
+  const [mode, setMode] = useState<"positions" | "admins">("positions");
+  const [admins, setAdmins] = useState<AdminListRow[]>([]);
+  const [selectedAdminId, setSelectedAdminId] = useState<string>("");
+  const [adminOverrideKeys, setAdminOverrideKeys] = useState<Set<string>>(new Set());
+  const [adminPositionKeys, setAdminPositionKeys] = useState<Set<string>>(new Set());
+  const [adminEffectiveKeys, setAdminEffectiveKeys] = useState<Set<string>>(new Set());
+  const [adminHasWildcardAccess, setAdminHasWildcardAccess] = useState(false);
+  const [savingAdminOverrides, setSavingAdminOverrides] = useState(false);
+
   const norm = (v?: string) => String(v || "").toLowerCase().replace(/[\s_-]/g, "");
   const isSuperadmin =
     norm(currentAdmin?.role) === "superadmin" || norm(currentAdmin?.position) === "superadmin";
+
+  const canViewRoles = useMemo(() => {
+    if (isSuperadmin) return true;
+    return Array.isArray(allowedPaths) && allowedPaths.includes("/dashboard/settings/roles");
+  }, [allowedPaths, isSuperadmin]);
+
+  const canManageAdminOverrides = useMemo(() => {
+    if (isSuperadmin) return true;
+    return (
+      Array.isArray(allowedPaths) &&
+      allowedPaths.includes("/dashboard/settings/roles#admin-overrides")
+    );
+  }, [allowedPaths, isSuperadmin]);
 
   useEffect(() => {
     try {
@@ -52,6 +84,32 @@ export default function RolesAndPermissionsPage() {
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    const loadAllowed = async () => {
+      try {
+        if (!currentAdmin?.id) return;
+        const res = await fetch(
+          `/api/rbac/allowed-pages?adminId=${encodeURIComponent(currentAdmin.id)}`
+        );
+        if (!res.ok) {
+          setAllowedPaths(["/dashboard"]);
+          return;
+        }
+        const j = await res.json().catch(() => ({}));
+        setAllowedPaths(Array.isArray(j?.allowedPaths) ? j.allowedPaths : ["/dashboard"]);
+      } catch {
+        setAllowedPaths(["/dashboard"]);
+      }
+    };
+
+    if (!currentAdmin?.id) return;
+    if (isSuperadmin) {
+      setAllowedPaths(["*"]);
+      return;
+    }
+    loadAllowed();
+  }, [currentAdmin?.id, isSuperadmin]);
 
   const fetchAll = async () => {
     const [pagesRes, positionsRes] = await Promise.all([
@@ -85,11 +143,102 @@ export default function RolesAndPermissionsPage() {
     });
   };
 
+  const fetchAdmins = async () => {
+    if (!currentAdmin?.id) return;
+    const res = await fetch("/api/rbac/admins", {
+      headers: {
+        "x-admin-id": currentAdmin.id,
+      },
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j?.error || "Failed to load admins");
+    const list: AdminListRow[] = Array.isArray(j?.admins) ? j.admins : [];
+    setAdmins(list);
+    setSelectedAdminId((prev) => {
+      if (prev && list.some((a) => a.id === prev)) return prev;
+      return list[0]?.id || "";
+    });
+  };
+
+  const loadAdminPermissionState = async (adminId: string) => {
+    if (!currentAdmin?.id) return;
+
+    const selectedAdmin = admins.find((a) => a.id === adminId);
+    const selectedAdminPosition = selectedAdmin?.position || "";
+    const positionRow = positions.find((p) => p.name === selectedAdminPosition);
+    setAdminPositionKeys(new Set(positionRow?.pageKeys || []));
+
+    // Load override keys
+    const overridesRes = await fetch(
+      `/api/rbac/admins/${encodeURIComponent(adminId)}/page-overrides`,
+      {
+        headers: {
+          "x-admin-id": currentAdmin.id,
+        },
+      }
+    );
+    const overridesJson = await overridesRes.json().catch(() => ({}));
+    if (!overridesRes.ok) {
+      throw new Error(overridesJson?.error || "Failed to load admin overrides");
+    }
+    const overrideKeys: string[] = Array.isArray(overridesJson?.pageKeys)
+      ? overridesJson.pageKeys
+      : [];
+    setAdminOverrideKeys(new Set(overrideKeys));
+
+    // Load effective paths, then map to page keys
+    const effRes = await fetch(
+      `/api/rbac/allowed-pages?adminId=${encodeURIComponent(adminId)}`
+    );
+    const effJson = await effRes.json().catch(() => ({}));
+    const effPaths: string[] = Array.isArray(effJson?.allowedPaths)
+      ? effJson.allowedPaths
+      : [];
+
+    // Wildcard means full access.
+    if (effPaths.includes("*")) {
+      setAdminHasWildcardAccess(true);
+      setAdminEffectiveKeys(new Set(pages.map((p) => p.key)));
+      return;
+    }
+
+    setAdminHasWildcardAccess(false);
+
+    const byPath = new Map<string, string>();
+    for (const p of pages) byPath.set(p.path, p.key);
+    const effKeys = effPaths
+      .map((path) => byPath.get(path))
+      .filter((k): k is string => typeof k === "string" && k.length > 0);
+    setAdminEffectiveKeys(new Set(effKeys));
+  };
+
   useEffect(() => {
-    if (!loading && isSuperadmin) {
+    if (!loading && currentAdmin && (isSuperadmin || allowedPaths !== null)) {
+      if (!canViewRoles) return;
       fetchAll().catch((e) => alert(e.message));
     }
-  }, [loading, isSuperadmin]);
+  }, [allowedPaths, canViewRoles, currentAdmin, isSuperadmin, loading]);
+
+  useEffect(() => {
+    if (!canViewRoles) return;
+    if (mode !== "admins") return;
+    if (!currentAdmin?.id) return;
+
+    // Admin dropdown is only needed in admin override mode.
+    fetchAdmins().catch((e) => alert(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, canViewRoles, currentAdmin?.id]);
+
+  useEffect(() => {
+    if (!canViewRoles) return;
+    if (mode !== "admins") return;
+    if (!selectedAdminId) return;
+    if (!pages.length) return;
+    if (!positions.length) return;
+    if (!admins.length) return;
+    loadAdminPermissionState(selectedAdminId).catch((e) => alert(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, selectedAdminId, pages.length, positions.length, admins.length, canViewRoles]);
 
   useEffect(() => {
     const pos = positions.find((p) => p.name === selectedPosition);
@@ -114,6 +263,47 @@ export default function RolesAndPermissionsPage() {
       else next.add(pageKey);
       return next;
     });
+  };
+
+  const toggleAdminOverride = (pageKey: string) => {
+    setAdminOverrideKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(pageKey)) next.delete(pageKey);
+      else next.add(pageKey);
+      return next;
+    });
+  };
+
+  const saveAdminOverrides = async () => {
+    if (!currentAdmin?.id) return;
+    if (!selectedAdminId) return;
+
+    if (!canManageAdminOverrides) {
+      alert("You do not have permission to manage admin overrides.");
+      return;
+    }
+
+    setSavingAdminOverrides(true);
+    try {
+      const res = await fetch(
+        `/api/rbac/admins/${encodeURIComponent(selectedAdminId)}/page-overrides`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "x-admin-id": currentAdmin.id,
+          },
+          body: JSON.stringify({ pageKeys: Array.from(adminOverrideKeys) }),
+        }
+      );
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || "Failed to save admin overrides");
+
+      await loadAdminPermissionState(selectedAdminId);
+      alert("Admin permissions saved.");
+    } finally {
+      setSavingAdminOverrides(false);
+    }
   };
 
   const saveAssignments = async () => {
@@ -231,11 +421,11 @@ export default function RolesAndPermissionsPage() {
     return <div className="text-black">No admin session found.</div>;
   }
 
-  if (!isSuperadmin) {
+  if (!canViewRoles) {
     return (
       <div className="bg-white border border-gray-200 rounded-lg p-6">
         <h1 className="text-xl font-semibold text-gray-900">Roles & Permissions</h1>
-        <p className="mt-2 text-gray-700">Only Superadmins can manage roles and permissions.</p>
+        <p className="mt-2 text-gray-700">You do not have access to this page.</p>
       </div>
     );
   }
@@ -244,17 +434,96 @@ export default function RolesAndPermissionsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Roles & Permissions</h1>
-        <button
-          onClick={() => fetchAll().catch((e) => alert(e.message))}
-          className="px-3 py-2 bg-black text-white rounded"
-        >
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setMode("positions")}
+            className={`px-3 py-2 rounded border ${
+              mode === "positions"
+                ? "bg-black text-white border-black"
+                : "bg-white text-gray-900 border-gray-300"
+            }`}
+          >
+            Position Permissions
+          </button>
+          <button
+            onClick={() => setMode("admins")}
+            className={`px-3 py-2 rounded border ${
+              mode === "admins"
+                ? "bg-black text-white border-black"
+                : "bg-white text-gray-900 border-gray-300"
+            }`}
+          >
+            Admin Overrides
+          </button>
+          <button
+            onClick={() => {
+              fetchAll().catch((e) => alert(e.message));
+              if (mode === "admins") fetchAdmins().catch((e) => alert(e.message));
+            }}
+            className="px-3 py-2 bg-black text-white rounded"
+          >
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {mode === "admins" && (
+        <div className="bg-white border border-gray-200 rounded-lg p-5 space-y-4">
+          <div className="flex flex-col md:flex-row md:items-end gap-3">
+            <div className="flex-1">
+              <div className="text-sm font-semibold text-gray-800">Select Admin Account</div>
+              <select
+                className="mt-2 w-full p-2 border rounded text-black"
+                value={selectedAdminId}
+                onChange={(e) => setSelectedAdminId(e.target.value)}
+              >
+                {admins.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.username} {a.position ? `(${a.position})` : ""}
+                  </option>
+                ))}
+              </select>
+              <div className="mt-1 text-xs text-gray-600">
+                Effective permissions include the admin’s position permissions + any overrides.
+              </div>
+            </div>
+
+            <div className="min-w-[240px]">
+              <div className="text-sm text-gray-700">
+                Effective: <span className="font-semibold">{adminEffectiveKeys.size}</span>
+              </div>
+              <div className="text-sm text-gray-700">
+                Overrides: <span className="font-semibold">{adminOverrideKeys.size}</span>
+              </div>
+              <button
+                disabled={!canManageAdminOverrides || savingAdminOverrides || !selectedAdminId}
+                onClick={() => saveAdminOverrides().catch((e) => alert(e.message))}
+                className="mt-2 w-full px-3 py-2 bg-indigo-600 text-white rounded disabled:opacity-60"
+              >
+                {savingAdminOverrides ? "Saving..." : "Save Admin Overrides"}
+              </button>
+              {adminHasWildcardAccess && (
+                <div className="mt-2 text-xs text-gray-600">
+                  This admin has full access. Permissions are pre-checked and read-only.
+                </div>
+              )}
+              {!canManageAdminOverrides && (
+                <div className="mt-2 text-xs text-gray-600">
+                  Read-only: you don’t have the “Roles - Admin Overrides” permission.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: Create + select position */}
-        <div className="bg-white border border-gray-200 rounded-lg p-5 space-y-4">
+        <div
+          className={`bg-white border border-gray-200 rounded-lg p-5 space-y-4 ${
+            mode === "admins" ? "opacity-60 pointer-events-none" : ""
+          }`}
+        >
           <div>
             <div className="text-sm font-semibold text-gray-800">Create Position</div>
             <div className="mt-2 space-y-2">
@@ -321,11 +590,25 @@ export default function RolesAndPermissionsPage() {
         <div className="lg:col-span-2 bg-white border border-gray-200 rounded-lg p-5">
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-sm text-gray-600">Editing position</div>
-              <div className="text-lg font-semibold text-gray-900">{selectedPosition || "—"}</div>
+              <div className="text-sm text-gray-600">
+                {mode === "admins" ? "Admin override editor" : "Editing position"}
+              </div>
+              <div className="text-lg font-semibold text-gray-900">
+                {mode === "admins"
+                  ? admins.find((a) => a.id === selectedAdminId)?.username || "—"
+                  : selectedPosition || "—"}
+              </div>
             </div>
             <div className="text-sm text-gray-600">
-              Selected: <span className="font-semibold">{selectedPageKeys.size}</span>
+              {mode === "admins" ? (
+                <>
+                  Overrides selected: <span className="font-semibold">{adminOverrideKeys.size}</span>
+                </>
+              ) : (
+                <>
+                  Selected: <span className="font-semibold">{selectedPageKeys.size}</span>
+                </>
+              )}
             </div>
           </div>
 
@@ -335,6 +618,20 @@ export default function RolesAndPermissionsPage() {
                 <div className="text-sm font-semibold text-gray-800 mb-2">{group}</div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   {groupPages.map((p) => (
+                    (() => {
+                      const isPositionGranted = mode === "admins" && adminPositionKeys.has(p.key);
+                      const isOverrideGranted = mode === "admins" && adminOverrideKeys.has(p.key);
+                      const isEffectiveGranted = mode === "admins" && adminEffectiveKeys.has(p.key);
+                      const isChecked =
+                        mode === "admins"
+                          ? isEffectiveGranted || isPositionGranted || isOverrideGranted
+                          : selectedPageKeys.has(p.key);
+                      const isDisabled =
+                        mode === "admins"
+                          ? !canManageAdminOverrides || adminHasWildcardAccess || isPositionGranted
+                          : false;
+
+                      return (
                     <label
                       key={p.key}
                       className="flex items-start gap-2 p-2 rounded hover:bg-gray-50 cursor-pointer"
@@ -342,14 +639,33 @@ export default function RolesAndPermissionsPage() {
                       <input
                         type="checkbox"
                         className="mt-1"
-                        checked={selectedPageKeys.has(p.key)}
-                        onChange={() => toggle(p.key)}
+                        checked={isChecked}
+                        disabled={isDisabled}
+                        onChange={() => {
+                          if (mode !== "admins") {
+                            toggle(p.key);
+                            return;
+                          }
+                          if (isPositionGranted) return;
+                          toggleAdminOverride(p.key);
+                        }}
                       />
                       <div>
                         <div className="text-sm text-gray-900">{p.name}</div>
                         <div className="text-xs text-gray-500">{p.path}</div>
+                        {mode === "admins" && (isPositionGranted || isOverrideGranted || isEffectiveGranted) && (
+                          <div className="text-xs text-green-700">
+                            {isPositionGranted
+                              ? "Granted by position"
+                              : isOverrideGranted
+                                ? "Granted by override"
+                                : "Effective for this admin"}
+                          </div>
+                        )}
                       </div>
                     </label>
+                      );
+                    })()
                   ))}
                 </div>
               </div>

@@ -34,6 +34,16 @@ CREATE TABLE IF NOT EXISTS public.rbac_position_pages (
   PRIMARY KEY (position_name, page_key)
 );
 
+-- 2b) Optional: per-admin override permissions (extra grants beyond the position)
+-- These are additive grants; effective access = position pages UNION admin override pages.
+CREATE TABLE IF NOT EXISTS public.rbac_admin_page_overrides (
+  admin_id uuid NOT NULL REFERENCES public.admins(id) ON DELETE CASCADE,
+  page_key text NOT NULL REFERENCES public.rbac_pages(key) ON DELETE CASCADE,
+  created_by uuid REFERENCES public.admins(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (admin_id, page_key)
+);
+
 -- 3) Seed pages (matches current sidebar routes)
 INSERT INTO public.rbac_pages (key, name, path, group_name)
 VALUES
@@ -72,7 +82,9 @@ VALUES
 
   ('settings', 'Settings', '/dashboard/settings', 'Settings'),
   ('audit', 'Audit', '/dashboard/settings/audit', 'Settings'),
-  ('roles', 'Roles & Permissions', '/dashboard/settings/roles', 'Settings')
+  ('roles', 'Roles & Permissions', '/dashboard/settings/roles', 'Settings'),
+  -- Capability: allow non-superadmins to manage per-admin overrides via Roles page
+  ('roles_admin_overrides', 'Roles - Admin Overrides', '/dashboard/settings/roles#admin-overrides', 'Settings')
 ON CONFLICT (key) DO UPDATE SET
   name = EXCLUDED.name,
   path = EXCLUDED.path,

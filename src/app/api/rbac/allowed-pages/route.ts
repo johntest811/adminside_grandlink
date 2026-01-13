@@ -47,27 +47,43 @@ export async function GET(req: Request) {
     }
 
     const position = adminRow.position ? String(adminRow.position) : null;
-    if (!position) {
-      return NextResponse.json({ allowedPaths: ["/dashboard"] });
-    }
-
-    // Join position -> pages
-    // rbac_position_pages(position_name,page_key) -> rbac_pages(key,path)
-    const { data: rows, error: joinErr } = await supabase
-      .from("rbac_position_pages")
-      .select("rbac_pages(path)")
-      .eq("position_name", position);
-
-    if (joinErr) {
-      return NextResponse.json({ error: joinErr.message }, { status: 500 });
-    }
-
+    // Start with base allowed paths
     const allowedPaths = new Set<string>();
     allowedPaths.add("/dashboard");
-    for (const row of rows || []) {
-      const nested = (row as any).rbac_pages;
-      const path = nested?.path;
-      if (typeof path === "string" && path.length) allowedPaths.add(path);
+
+    // Position-based permissions
+    if (position) {
+      // Join position -> pages
+      // rbac_position_pages(position_name,page_key) -> rbac_pages(key,path)
+      const { data: rows, error: joinErr } = await supabase
+        .from("rbac_position_pages")
+        .select("rbac_pages(path)")
+        .eq("position_name", position);
+
+      if (joinErr) {
+        return NextResponse.json({ error: joinErr.message }, { status: 500 });
+      }
+
+      for (const row of rows || []) {
+        const nested = (row as any).rbac_pages;
+        const path = nested?.path;
+        if (typeof path === "string" && path.length) allowedPaths.add(path);
+      }
+    }
+
+    // Per-admin override permissions (additional grants)
+    const { data: overrides, error: ovErr } = await supabase
+      .from("rbac_admin_page_overrides")
+      .select("rbac_pages(path)")
+      .eq("admin_id", adminId);
+
+    // If the table doesn't exist yet, ignore (keeps backward compatibility)
+    if (!ovErr) {
+      for (const row of overrides || []) {
+        const nested = (row as any).rbac_pages;
+        const path = nested?.path;
+        if (typeof path === "string" && path.length) allowedPaths.add(path);
+      }
     }
 
     return NextResponse.json({ allowedPaths: Array.from(allowedPaths) });
