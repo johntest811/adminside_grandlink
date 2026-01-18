@@ -130,7 +130,8 @@ export default function OrdersPage() {
     try {
       const by = currentAdmin.username || currentAdmin.name || 'admin';
       const now = new Date().toISOString();
-      const normalized = mapStatusForDB(newStatus);
+      const previousStage = String(item?.meta?.cancel_prev_stage || item?.order_status || item?.order_progress || item?.status || 'approved');
+      const normalized = newStatus === 'reject_cancellation' ? mapStatusForDB(previousStage) : mapStatusForDB(newStatus);
 
       const progressMap: Record<string, string> = {
         pending_payment: "awaiting_payment",
@@ -150,13 +151,22 @@ export default function OrdersPage() {
         approve_cancellation: "cancelled",
       };
 
+      const computedOrderStatus =
+        newStatus === 'approve_cancellation'
+          ? 'cancelled'
+          : newStatus === 'reject_cancellation'
+          ? previousStage
+          : newStatus;
+
       const updates: any = {
         status: normalized,
-        order_status: newStatus === 'approve_cancellation' ? 'cancelled' : newStatus,
-        order_progress: progressMap[newStatus] || newStatus,
+        order_status: computedOrderStatus,
+        order_progress: progressMap[computedOrderStatus] || computedOrderStatus,
         admin_notes:
           newStatus === 'approved' ? `Order approved by ${by}` :
-          newStatus === 'cancelled' || newStatus === 'approve_cancellation' ? `Order cancellation approved by ${by}` :
+          newStatus === 'approve_cancellation' ? `Order cancellation approved by ${by}` :
+          newStatus === 'reject_cancellation' ? `Order cancellation rejected by ${by}` :
+          newStatus === 'cancelled' ? `Order cancelled by ${by}` :
           newStatus === 'in_production' ? `Production started by ${by}` :
           newStatus === 'start_packaging' || newStatus === 'packaging' ? `Packaging started by ${by}` :
           newStatus === 'out_for_delivery' ? `Out for delivery - ${by}` :
@@ -164,21 +174,36 @@ export default function OrdersPage() {
           newStatus === 'completed' ? `Delivered by ${by}` :
           null,
         updated_at: now,
-        // NEW: mark cancellation approved timestamp if applicable
-        ...(newStatus === 'approve_cancellation' ? { cancellation_approved_at: now } : {}),
+        meta: {
+          ...(item.meta || {}),
+          ...(newStatus === 'approve_cancellation'
+            ? {
+                cancel_request_status: 'approved',
+                cancel_approved_at: now,
+                cancel_approved_by: by,
+              }
+            : {}),
+          ...(newStatus === 'reject_cancellation'
+            ? {
+                cancel_request_status: 'rejected',
+                cancel_rejected_at: now,
+                cancel_rejected_by: by,
+              }
+            : {}),
+        },
       };
 
       const updatedItem = await updateOrderViaApi({ itemId, updates });
 
       // Notify user
       try {
-        await adminNotificationService.notifyOrderStatusUpdate(
-          itemId,
-          item.user_id,
-          newStatus === 'approve_cancellation' ? 'cancelled' : newStatus,
-          by,
-          item.meta?.product_name || ''
-        );
+        const notifStatus =
+          newStatus === 'approve_cancellation'
+            ? 'cancelled'
+            : newStatus === 'reject_cancellation'
+            ? 'cancellation_denied'
+            : newStatus;
+        await adminNotificationService.notifyOrderStatusUpdate(itemId, item.user_id, notifStatus, by, item.meta?.product_name || '');
       } catch (notifError: any) {
         console.warn('Failed to send notification:', notifError);
       }
@@ -341,7 +366,7 @@ export default function OrdersPage() {
     ready_for_delivery: ["out_for_delivery", "completed"],
     out_for_delivery: ["completed"],
     // NEW: allow approving cancellation
-    pending_cancellation: ["approve_cancellation"],
+    pending_cancellation: ["approve_cancellation", "reject_cancellation"],
   };
 
   const getNextActions = (r: UserItem) => {
@@ -361,6 +386,7 @@ export default function OrdersPage() {
       completed: "✅ Mark Delivered",
       // NEW
       approve_cancellation: "🛑 Approve Cancellation",
+      reject_cancellation: "↩ Reject Cancellation",
     };
     return labels[action] || action.replace(/_/g, ' ').toUpperCase();
   };

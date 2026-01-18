@@ -80,6 +80,8 @@ VALUES
   ('delivery_process_page', 'Delivery & Ordering Process', '/dashboard/pages/DeliveryProcess', 'Content'),
   ('faqs_page', 'FAQs', '/dashboard/pages/FAQs', 'Content'),
 
+  ('predictive', 'Predictive', '/dashboard/predictive', 'Analytics'),
+
   ('settings', 'Settings', '/dashboard/settings', 'Settings'),
   ('audit', 'Audit', '/dashboard/settings/audit', 'Settings'),
   ('roles', 'Roles & Permissions', '/dashboard/settings/roles', 'Settings'),
@@ -107,6 +109,11 @@ ON CONFLICT (name) DO NOTHING;
 INSERT INTO public.rbac_position_pages (position_name, page_key)
 SELECT 'Superadmin', p.key
 FROM public.rbac_pages p
+ON CONFLICT (position_name, page_key) DO NOTHING;
+
+-- 5b) Minimal default access: allow Admins to view Predictive page
+INSERT INTO public.rbac_position_pages (position_name, page_key)
+VALUES ('Admin', 'predictive')
 ON CONFLICT (position_name, page_key) DO NOTHING;
 
 -- Optional: you can create more defaults like Admin/Manager here if you want.

@@ -13,7 +13,7 @@ export const POSITION_PERMISSIONS: Record<Position, { nav: string[]; actions: st
     actions: ["create","read","update","delete","manage_users","manage_settings"],
   },
   Admin: {
-    nav: ["Dashboard","Accounts","Inventory","Task","Orders","Content Management","Settings","Announcement"],
+    nav: ["Dashboard","Accounts","Inventory","Task","Orders","Content Management","Settings","Predictive","Announcement"],
     actions: ["create","read","update","delete","manage_users"],
   },
   Manager: {
