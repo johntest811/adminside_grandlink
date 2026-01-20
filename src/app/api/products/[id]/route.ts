@@ -222,42 +222,33 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
 
-    // Attempt to remove any associated storage objects (best-effort)
-    try {
-      const urls: string[] = [];
-      const addUrl = (u?: string | null) => { if (u && typeof u === 'string') urls.push(u); };
-      addUrl((product as any)?.image1);
-      addUrl((product as any)?.image2);
-      addUrl((product as any)?.image3);
-      addUrl((product as any)?.image4);
-      addUrl((product as any)?.image5);
-      if (Array.isArray((product as any)?.images)) {
-        for (const u of (product as any).images) addUrl(u);
-      }
-      addUrl((product as any)?.fbx_url);
-      if (Array.isArray((product as any)?.fbx_urls)) {
-        for (const u of (product as any).fbx_urls) addUrl(u);
-      }
+    // Move to archive/trashcan first (so it can be permanently deleted later)
+    // NOTE: Requires the products_archive table (SQL provided in chat).
+    const archivePayload: any = {
+      product_id: (product as any).id,
+      product_name: (product as any).name ?? null,
+      product_category: (product as any).category ?? null,
+      product_price: (product as any).price ?? null,
+      product_data: product,
+      archived_by: currentAdmin?.id ?? null,
+      archived_by_name: currentAdmin?.username ?? null,
+    };
 
-      const toObjectPath = (url: string): string | null => {
-        const marker = "/storage/v1/object/public/products/";
-        const idx = url.indexOf(marker);
-        if (idx === -1) return null;
-        return url.slice(idx + marker.length);
-      };
+    const { data: archivedRow, error: archiveError } = await supabaseAdmin
+      .from("products_archive")
+      .insert([archivePayload])
+      .select("id")
+      .single();
 
-      const paths = urls.map(toObjectPath).filter((p): p is string => !!p);
-      if (paths.length) {
-        const { error: removeErr } = await supabaseAdmin.storage.from("products").remove(paths);
-        if (removeErr) {
-          console.warn("⚠️ Failed removing product files from storage:", removeErr.message);
-        }
-      }
-    } catch (storageErr) {
-      console.warn("⚠️ Storage cleanup error (non-fatal):", storageErr);
+    if (archiveError) {
+      console.error("Product archive error:", archiveError);
+      return NextResponse.json(
+        { error: `Failed to archive product before delete: ${archiveError.message}` },
+        { status: 500 }
+      );
     }
 
-    // Delete the product
+    // Remove from main products table (now it's safely in the archive)
     const { error: deleteError } = await supabaseAdmin
       .from("products")
       .delete()
@@ -276,15 +267,16 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
         action: "delete",
         entity_type: "products",
         entity_id: id,
-        details: `Deleted product: ${product.name}`,
+        details: `Moved product to Archive/Trashcan: ${product.name}`,
         metadata: {
           product_name: product.name,
-          deleted_at: new Date().toISOString()
+          archived_at: new Date().toISOString(),
+          archive_id: archivedRow?.id,
         }
       });
     }
 
-    return NextResponse.json({ success: true }, { status: 200 });
+    return NextResponse.json({ success: true, archivedId: archivedRow?.id }, { status: 200 });
   } catch (err: any) {
     console.error("DELETE /api/products/[id] error", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

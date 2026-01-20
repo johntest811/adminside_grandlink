@@ -178,7 +178,7 @@ export default function UpdateProductsPage() {
       return;
     }
 
-    if (!confirm(`Are you sure you want to delete "${productName}"? This action cannot be undone.`)) {
+    if (!confirm(`Move "${productName}" to Archive/Trashcan? You can permanently delete it from the Trashcan later.`)) {
       // Log deletion cancelled
       await logActivity({
         admin_id: currentAdmin.id,
@@ -257,7 +257,7 @@ export default function UpdateProductsPage() {
         console.warn("Notification creation failed (non-critical):", notifyError);
       }
 
-      alert(`✅ Product "${productName}" deleted successfully!`);
+      alert(`✅ Product "${productName}" moved to Archive/Trashcan.`);
 
     } catch (error: any) {
       console.error("Error deleting product:", error);

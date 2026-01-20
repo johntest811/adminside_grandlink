@@ -51,7 +51,6 @@ export default function RolesAndPermissionsPage() {
   const [selectedAdminId, setSelectedAdminId] = useState<string>("");
   const [adminOverrideKeys, setAdminOverrideKeys] = useState<Set<string>>(new Set());
   const [adminPositionKeys, setAdminPositionKeys] = useState<Set<string>>(new Set());
-  const [adminEffectiveKeys, setAdminEffectiveKeys] = useState<Set<string>>(new Set());
   const [adminHasWildcardAccess, setAdminHasWildcardAccess] = useState(false);
   const [savingAdminOverrides, setSavingAdminOverrides] = useState(false);
 
@@ -186,7 +185,7 @@ export default function RolesAndPermissionsPage() {
       : [];
     setAdminOverrideKeys(new Set(overrideKeys));
 
-    // Load effective paths, then map to page keys
+    // Load effective paths (we only need wildcard/full-access detection here)
     const effRes = await fetch(
       `/api/rbac/allowed-pages?adminId=${encodeURIComponent(adminId)}`
     );
@@ -198,18 +197,10 @@ export default function RolesAndPermissionsPage() {
     // Wildcard means full access.
     if (effPaths.includes("*")) {
       setAdminHasWildcardAccess(true);
-      setAdminEffectiveKeys(new Set(pages.map((p) => p.key)));
       return;
     }
 
     setAdminHasWildcardAccess(false);
-
-    const byPath = new Map<string, string>();
-    for (const p of pages) byPath.set(p.path, p.key);
-    const effKeys = effPaths
-      .map((path) => byPath.get(path))
-      .filter((k): k is string => typeof k === "string" && k.length > 0);
-    setAdminEffectiveKeys(new Set(effKeys));
   };
 
   useEffect(() => {
@@ -255,6 +246,15 @@ export default function RolesAndPermissionsPage() {
     }
     return Array.from(grouped.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   }, [pages]);
+
+  const adminEffectiveComputedKeys = useMemo(() => {
+    if (mode !== "admins") return new Set<string>();
+    if (adminHasWildcardAccess) return new Set(pages.map((p) => p.key));
+    const merged = new Set<string>();
+    for (const k of adminPositionKeys) merged.add(k);
+    for (const k of adminOverrideKeys) merged.add(k);
+    return merged;
+  }, [adminHasWildcardAccess, adminOverrideKeys, adminPositionKeys, mode, pages]);
 
   const toggle = (pageKey: string) => {
     setSelectedPageKeys((prev) => {
@@ -490,7 +490,7 @@ export default function RolesAndPermissionsPage() {
 
             <div className="min-w-[240px]">
               <div className="text-sm text-gray-700">
-                Effective: <span className="font-semibold">{adminEffectiveKeys.size}</span>
+                Effective: <span className="font-semibold">{adminEffectiveComputedKeys.size}</span>
               </div>
               <div className="text-sm text-gray-700">
                 Overrides: <span className="font-semibold">{adminOverrideKeys.size}</span>
@@ -504,7 +504,7 @@ export default function RolesAndPermissionsPage() {
               </button>
               {adminHasWildcardAccess && (
                 <div className="mt-2 text-xs text-gray-600">
-                  This admin has full access. Permissions are pre-checked and read-only.
+                  This admin has full access. Checkboxes reflect “Admin Overrides” only.
                 </div>
               )}
               {!canManageAdminOverrides && (
@@ -621,15 +621,20 @@ export default function RolesAndPermissionsPage() {
                     (() => {
                       const isPositionGranted = mode === "admins" && adminPositionKeys.has(p.key);
                       const isOverrideGranted = mode === "admins" && adminOverrideKeys.has(p.key);
-                      const isEffectiveGranted = mode === "admins" && adminEffectiveKeys.has(p.key);
+                      const isEffectiveGranted =
+                        mode === "admins" && adminEffectiveComputedKeys.has(p.key);
+
+                      // In wildcard/full-access mode, show only explicit overrides as checked so they can be removed.
                       const isChecked =
                         mode === "admins"
-                          ? isEffectiveGranted || isPositionGranted || isOverrideGranted
+                          ? adminHasWildcardAccess
+                            ? isOverrideGranted
+                            : isPositionGranted || isOverrideGranted
                           : selectedPageKeys.has(p.key);
+
+                      // Overrides are additive; you can't remove position-granted access via overrides.
                       const isDisabled =
-                        mode === "admins"
-                          ? !canManageAdminOverrides || adminHasWildcardAccess || isPositionGranted
-                          : false;
+                        mode === "admins" ? !canManageAdminOverrides || (!adminHasWildcardAccess && isPositionGranted) : false;
 
                       return (
                     <label
@@ -646,7 +651,7 @@ export default function RolesAndPermissionsPage() {
                             toggle(p.key);
                             return;
                           }
-                          if (isPositionGranted) return;
+                          if (!adminHasWildcardAccess && isPositionGranted) return;
                           toggleAdminOverride(p.key);
                         }}
                       />

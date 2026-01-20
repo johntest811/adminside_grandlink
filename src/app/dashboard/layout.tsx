@@ -47,6 +47,7 @@ export default function DashboardLayout({
         { name: 'Update Products', path: '/dashboard/UpdateProducts' },
         { name: 'Add Products', path: '/dashboard/products' },
         { name: 'Inventory', path: '/dashboard/inventory' },
+        { name: 'Archive', path: '/dashboard/trash' },
         { name: 'Discounts', path: '/dashboard/discounts' },
       ],
     },

@@ -61,6 +61,7 @@ VALUES
   ('update_products', 'Update Products', '/dashboard/UpdateProducts', 'Inventory'),
   ('add_products', 'Add Products', '/dashboard/products', 'Inventory'),
   ('inventory', 'Inventory', '/dashboard/inventory', 'Inventory'),
+  ('inventory_trash', 'Archive / Trashcan', '/dashboard/trash', 'Inventory'),
   ('discounts', 'Discounts', '/dashboard/discounts', 'Inventory'),
 
   ('assigned_task', 'Assigned Task', '/dashboard/task/assigntask', 'Task'),
