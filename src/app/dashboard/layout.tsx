@@ -7,6 +7,7 @@ import Logo from '../../components/Logo';
 import NotificationBell from "../../components/NotificationBell";
 import RecentActivity from "../../components/RecentActivity";
 import { logLogoutActivity } from "@/app/lib/activity"; // ADD
+import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 
 export default function DashboardLayout({
   children,
@@ -20,9 +21,20 @@ export default function DashboardLayout({
   const [loading, setLoading] = useState(true);
   const [allowedPaths, setAllowedPaths] = useState<string[] | null>(null);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false); // NEW
+  const [adminTheme, setAdminTheme] = useState<"light" | "dark" | "midnight">("light");
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   // Helper for active nav item
   const isActive = (path: string) => pathname === path;
+
+  const applyTheme = (theme: "light" | "dark" | "midnight") => {
+    setAdminTheme(theme);
+    try {
+      document.documentElement.dataset.adminTheme = theme;
+    } catch {
+      // ignore
+    }
+  };
 
   // Dropdown state
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
@@ -79,6 +91,7 @@ export default function DashboardLayout({
       ],
     },
     { name: 'Predictive', path: '/dashboard/predictive', icon: '🔮' },
+    { name: 'Sales Forecasting', path: '/dashboard/sales-forecasting', icon: '📈' },
     {
       name: 'Settings',
       icon: '⚙️',
@@ -93,6 +106,83 @@ export default function DashboardLayout({
   useEffect(() => {
     checkAuthAndLoadAdmin();
   }, []);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("adminSidebarCollapsed");
+      setIsSidebarCollapsed(saved === "1");
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("adminSidebarCollapsed", isSidebarCollapsed ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    const load = () => {
+      try {
+        const saved = localStorage.getItem("adminTheme");
+        const next = (saved === "dark" || saved === "midnight" || saved === "light")
+          ? (saved as "light" | "dark" | "midnight")
+          : "light";
+        applyTheme(next);
+      } catch {
+        applyTheme("light");
+      }
+    };
+
+    const onThemeChanged = () => load();
+
+    load();
+    window.addEventListener("admin-theme-changed", onThemeChanged);
+    window.addEventListener("storage", (e) => {
+      if (e.key === "adminTheme") load();
+    });
+
+    return () => {
+      window.removeEventListener("admin-theme-changed", onThemeChanged);
+    };
+  }, []);
+
+  // Prefer the theme saved on the account (admins.theme) when available
+  useEffect(() => {
+    const loadAccountTheme = async () => {
+      const adminId = currentAdmin?.id;
+      const adminUsername = currentAdmin?.username;
+      if (!adminId && !adminUsername) return;
+
+      try {
+        let q = supabase.from("admins").select("*").limit(1);
+        if (adminId) q = q.eq("id", adminId);
+        else q = q.eq("username", adminUsername);
+
+        const { data, error } = await q.maybeSingle<any>();
+        if (error) throw error;
+
+        const t = (data as any)?.theme;
+        if (t === "light" || t === "dark" || t === "midnight") {
+          applyTheme(t);
+          try {
+            localStorage.setItem("adminTheme", t);
+          } catch {}
+          try {
+            window.dispatchEvent(new Event("admin-theme-changed"));
+          } catch {}
+        }
+      } catch (e) {
+        // If the column doesn't exist yet, or RLS blocks it, fallback to localStorage/default.
+        console.warn("Unable to load account theme; falling back", e);
+      }
+    };
+
+    loadAccountTheme();
+  }, [currentAdmin?.id, currentAdmin?.username]);
 
   useEffect(() => {
     const loadAllowed = async () => {
@@ -200,7 +290,7 @@ export default function DashboardLayout({
     .filter(Boolean) as typeof navStructure;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="admin-app min-h-screen">
       <header className="flex items-center justify-between px-6 py-3 bg-white border-b border-gray-200 shadow-sm">
         <div className="flex items-center gap-4">
           <button
@@ -214,7 +304,7 @@ export default function DashboardLayout({
           </button>
 
           <div className="flex items-center gap-3">
-            <Logo color="dark" />
+            <Logo color={adminTheme === "light" ? "dark" : "light"} />
           </div>
         </div>
 
@@ -251,16 +341,28 @@ export default function DashboardLayout({
 
       {/* Sidebar (scrollable) */}
       <aside
-        className={`fixed inset-y-0 left-0 z-30 w-64 bg-gray-800 text-white transform transition-transform duration-300 ease-in-out ${
+        className={`admin-sidebar fixed inset-y-0 left-0 z-30 w-64 ${isSidebarCollapsed ? "lg:w-20" : "lg:w-64"} bg-gray-800 text-white transform transition-transform duration-300 ease-in-out ${
           isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'
         } lg:translate-x-0 flex flex-col`} // flex column to allow scrolling body
         aria-label="Sidebar navigation"
       >
         {/* Sidebar top header */}
-        <div className="flex-shrink-0 flex items-center justify-between h-16 px-4 border-b border-gray-700">
+        <div className="flex-shrink-0 flex items-center justify-between h-16 px-4 border-b border-white/10">
           <div className="flex-shrink-0">
-            <Logo color="light" />
+            {isSidebarCollapsed ? (
+              <div className="text-white font-bold">GL</div>
+            ) : (
+              <Logo color="light" />
+            )}
           </div>
+          <button
+            className="hidden lg:inline-flex text-gray-300 hover:text-white"
+            onClick={() => setIsSidebarCollapsed((v) => !v)}
+            aria-label={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            <span className="text-xl">{isSidebarCollapsed ? "»" : "«"}</span>
+          </button>
           <button className="lg:hidden text-gray-300 hover:text-white" onClick={() => setIsMobileSidebarOpen(false)}>
             <span className="text-2xl">×</span>
           </button>
@@ -271,40 +373,67 @@ export default function DashboardLayout({
           <nav className="space-y-1">
             {filteredNav.map((item) =>
               item.dropdown ? (
-                <div key={item.name} className="mb-2">
+                <div key={item.name} className={`mb-2 ${isSidebarCollapsed ? "relative" : ""}`}>
                   <button
                     type="button"
-                    className={`flex items-center w-full px-4 py-3 text-sm font-medium rounded-md transition-colors ${openDropdown === item.name ? 'bg-gray-900 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
+                    className={`flex items-center w-full ${isSidebarCollapsed ? "justify-center px-2" : "px-4"} py-3 text-sm font-medium rounded-md transition-colors ${openDropdown === item.name ? 'bg-gray-900 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
                     onClick={() => setOpenDropdown(openDropdown === item.name ? null : item.name)}
+                    title={item.name}
                   >
-                    <span className="mr-3">{item.icon}</span>
-                    {item.name}
-                    <span className="ml-auto">{openDropdown === item.name ? '▲' : '▼'}</span>
+                    <span className={isSidebarCollapsed ? "" : "mr-3"}>{item.icon}</span>
+                    {!isSidebarCollapsed && (
+                      <>
+                        {item.name}
+                        <span className="ml-auto">{openDropdown === item.name ? '▲' : '▼'}</span>
+                      </>
+                    )}
                   </button>
                   {openDropdown === item.name && (
-                    <div className="ml-8 mt-1 flex flex-col gap-1">
-                      {item.dropdown.map((sub) => (
-                        <Link
-                          key={sub.path}
-                          href={sub.path}
-                          className={`px-3 py-2 text-xs rounded-md transition-colors ${isActive(sub.path) ? 'bg-gray-900 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
-                          onClick={() => setIsMobileSidebarOpen(false)}
-                        >
-                          {sub.name}
-                        </Link>
-                      ))}
-                    </div>
+                    isSidebarCollapsed ? (
+                      <div className="absolute left-full top-0 ml-2 w-56 rounded-md border border-white/10 bg-gray-800 p-2 shadow-lg z-40">
+                        <div className="text-xs text-gray-300 px-2 pb-1">{item.name}</div>
+                        <div className="flex flex-col gap-1">
+                          {item.dropdown.map((sub) => (
+                            <Link
+                              key={sub.path}
+                              href={sub.path}
+                              className={`px-3 py-2 text-xs rounded-md transition-colors ${isActive(sub.path) ? 'bg-gray-900 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
+                              onClick={() => {
+                                setIsMobileSidebarOpen(false);
+                                setOpenDropdown(null);
+                              }}
+                            >
+                              {sub.name}
+                            </Link>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="ml-8 mt-1 flex flex-col gap-1">
+                        {item.dropdown.map((sub) => (
+                          <Link
+                            key={sub.path}
+                            href={sub.path}
+                            className={`px-3 py-2 text-xs rounded-md transition-colors ${isActive(sub.path) ? 'bg-gray-900 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
+                            onClick={() => setIsMobileSidebarOpen(false)}
+                          >
+                            {sub.name}
+                          </Link>
+                        ))}
+                      </div>
+                    )
                   )}
                 </div>
               ) : (
                 <Link
                   key={item.path}
                   href={item.path}
-                  className={`flex items-center px-4 py-3 text-sm font-medium rounded-md transition-colors ${isActive(item.path) ? 'bg-gray-900 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
+                  className={`flex items-center ${isSidebarCollapsed ? "justify-center px-2" : "px-4"} py-3 text-sm font-medium rounded-md transition-colors ${isActive(item.path) ? 'bg-gray-900 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
                   onClick={() => setIsMobileSidebarOpen(false)}
+                  title={item.name}
                 >
-                  <span className="mr-3">{item.icon}</span>
-                  {item.name}
+                  <span className={isSidebarCollapsed ? "" : "mr-3"}>{item.icon}</span>
+                  {!isSidebarCollapsed && item.name}
                 </Link>
               )
             )}
@@ -312,19 +441,20 @@ export default function DashboardLayout({
         </div>
 
         {/* Footer with logout (not absolute; stays after scrollable area) */}
-        <div className="flex-shrink-0 w-full p-4 border-t border-gray-700">
+        <div className="flex-shrink-0 w-full p-4 border-t border-white/10">
           <button
             onClick={handleLogoutClick}
-            className="flex items-center w-full px-4 py-3 text-sm font-medium text-gray-300 rounded-md hover:bg-gray-700 hover:text-white"
+            className={`flex items-center w-full ${isSidebarCollapsed ? "justify-center px-2" : "px-4"} py-3 text-sm font-medium text-gray-300 rounded-md hover:bg-gray-700 hover:text-white`}
+            title="Logout"
           >
-            <span className="mr-3">🚪</span>
-            Logout
+            <span className={isSidebarCollapsed ? "" : "mr-3"}>🚪</span>
+            {!isSidebarCollapsed && "Logout"}
           </button>
         </div>
       </aside>
 
       {/* Main Content */}
-      <div className="flex-1 lg:ml-64">
+      <div className={`flex-1 ${isSidebarCollapsed ? "lg:ml-20" : "lg:ml-64"}`}>
         <main className="p-4 lg:p-8">
           {children}
         </main>

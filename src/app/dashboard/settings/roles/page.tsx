@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 
 type AdminSession = {
   id: string;
@@ -30,6 +31,19 @@ type AdminListRow = {
   is_active?: boolean | null;
 };
 
+type AdminAccount = {
+  id: string;
+  username: string;
+  role: "superadmin" | "admin" | "manager" | "employee";
+  position?: string | null;
+  full_name?: string | null;
+  employee_number?: string | null;
+  is_active?: boolean | null;
+  created_at?: string | null;
+  last_login?: string | null;
+  password?: string | null;
+};
+
 export default function RolesAndPermissionsPage() {
   const [currentAdmin, setCurrentAdmin] = useState<AdminSession | null>(null);
   const [loading, setLoading] = useState(true);
@@ -46,13 +60,26 @@ export default function RolesAndPermissionsPage() {
   const [newPositionDescription, setNewPositionDescription] = useState("");
 
   // Admin overrides UI
-  const [mode, setMode] = useState<"positions" | "admins">("positions");
+  const [mode, setMode] = useState<"positions" | "admins" | "accounts">("positions");
   const [admins, setAdmins] = useState<AdminListRow[]>([]);
   const [selectedAdminId, setSelectedAdminId] = useState<string>("");
   const [adminOverrideKeys, setAdminOverrideKeys] = useState<Set<string>>(new Set());
   const [adminPositionKeys, setAdminPositionKeys] = useState<Set<string>>(new Set());
   const [adminHasWildcardAccess, setAdminHasWildcardAccess] = useState(false);
   const [savingAdminOverrides, setSavingAdminOverrides] = useState(false);
+
+  // Admin accounts management (moved from Settings page)
+  const [adminAccounts, setAdminAccounts] = useState<AdminAccount[]>([]);
+  const [adminAccountsLoading, setAdminAccountsLoading] = useState(false);
+  const [adminAccountSearch, setAdminAccountSearch] = useState("");
+  const [creatingAdminAccount, setCreatingAdminAccount] = useState(false);
+  const [newAdminAccount, setNewAdminAccount] = useState({
+    username: "",
+    password: "",
+    role: "admin" as AdminAccount["role"],
+    position: "Admin",
+    full_name: "",
+  });
 
   const norm = (v?: string) => String(v || "").toLowerCase().replace(/[\s_-]/g, "");
   const isSuperadmin =
@@ -159,6 +186,145 @@ export default function RolesAndPermissionsPage() {
     });
   };
 
+  const positionOptions = useMemo(() => {
+    const names = positions.map((p) => p.name).filter(Boolean);
+    return names.length ? names : ["Admin", "Manager", "Employee", "Superadmin"];
+  }, [positions]);
+
+  const fetchAdminAccounts = async () => {
+    setAdminAccountsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("admins")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      setAdminAccounts((data as any) || []);
+    } catch (e) {
+      console.error("Load admin accounts error:", e);
+      setAdminAccounts([]);
+    } finally {
+      setAdminAccountsLoading(false);
+    }
+  };
+
+  const createAdminAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isSuperadmin) {
+      alert("Only a superadmin can manage admin accounts.");
+      return;
+    }
+    if (!newAdminAccount.username || !newAdminAccount.password) {
+      alert("Username and password are required.");
+      return;
+    }
+
+    setCreatingAdminAccount(true);
+    try {
+      const payload = {
+        username: newAdminAccount.username,
+        password: newAdminAccount.password, // NOTE: stored as plain text per schema
+        role: newAdminAccount.role,
+        position: newAdminAccount.position,
+        full_name: newAdminAccount.full_name || null,
+        is_active: true,
+      };
+      const { error } = await supabase.from("admins").insert(payload);
+      if (error) throw error;
+
+      // Optional notification for audit/visibility
+      await supabase.from("notifications").insert({
+        title: "Admin created",
+        message: `Admin "${newAdminAccount.username}" created with role "${newAdminAccount.role}".`,
+        type: "general",
+        recipient_role: "admin",
+        metadata: { created_by: currentAdmin?.username || "system" },
+      });
+
+      setNewAdminAccount({
+        username: "",
+        password: "",
+        role: "admin",
+        position: "Admin",
+        full_name: "",
+      });
+      await fetchAdminAccounts();
+      alert("Admin account created.");
+    } catch (e: any) {
+      alert(`Create admin failed: ${e?.message || e}`);
+    } finally {
+      setCreatingAdminAccount(false);
+    }
+  };
+
+  const toggleAdminAccountActive = async (a: AdminAccount) => {
+    if (!isSuperadmin) {
+      alert("Only a superadmin can manage admin accounts.");
+      return;
+    }
+    try {
+      const { error } = await supabase
+        .from("admins")
+        .update({ is_active: !a.is_active })
+        .eq("id", a.id);
+      if (error) throw error;
+      await fetchAdminAccounts();
+    } catch (e: any) {
+      alert(`Update failed: ${e?.message || e}`);
+    }
+  };
+
+  const updateAdminAccountField = async (
+    id: string,
+    changes: Partial<Pick<AdminAccount, "role" | "position" | "full_name">>
+  ) => {
+    if (!isSuperadmin) {
+      alert("Only a superadmin can manage admin accounts.");
+      return;
+    }
+    try {
+      const { error } = await supabase.from("admins").update(changes).eq("id", id);
+      if (error) throw error;
+      await fetchAdminAccounts();
+    } catch (e: any) {
+      alert(`Update failed: ${e?.message || e}`);
+    }
+  };
+
+  const resetAdminAccountPassword = async (a: AdminAccount) => {
+    if (!isSuperadmin) {
+      alert("Only a superadmin can manage admin accounts.");
+      return;
+    }
+    const pw = window.prompt(
+      `Enter new password for ${a.username}`,
+      Math.random().toString(36).slice(2, 10)
+    );
+    if (!pw) return;
+    try {
+      const { error } = await supabase
+        .from("admins")
+        .update({ password: pw })
+        .eq("id", a.id);
+      if (error) throw error;
+      alert("Password updated.");
+    } catch (e: any) {
+      alert(`Password reset failed: ${e?.message || e}`);
+    }
+  };
+
+  const filteredAdminAccounts = useMemo(() => {
+    const q = adminAccountSearch.trim().toLowerCase();
+    if (!q) return adminAccounts;
+    return adminAccounts.filter((a) =>
+      [a.username, a.role, a.position, a.full_name, a.employee_number]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [adminAccountSearch, adminAccounts]);
+
   const loadAdminPermissionState = async (adminId: string) => {
     if (!currentAdmin?.id) return;
 
@@ -217,8 +383,15 @@ export default function RolesAndPermissionsPage() {
 
     // Admin dropdown is only needed in admin override mode.
     fetchAdmins().catch((e) => alert(e.message));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, canViewRoles, currentAdmin?.id]);
+
+  useEffect(() => {
+    if (!canViewRoles) return;
+    if (mode !== "accounts") return;
+    if (!isSuperadmin) return;
+
+    fetchAdminAccounts().catch((e) => alert(e.message));
+  }, [mode, canViewRoles, isSuperadmin]);
 
   useEffect(() => {
     if (!canViewRoles) return;
@@ -228,7 +401,6 @@ export default function RolesAndPermissionsPage() {
     if (!positions.length) return;
     if (!admins.length) return;
     loadAdminPermissionState(selectedAdminId).catch((e) => alert(e.message));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, selectedAdminId, pages.length, positions.length, admins.length, canViewRoles]);
 
   useEffect(() => {
@@ -456,9 +628,20 @@ export default function RolesAndPermissionsPage() {
             Admin Overrides
           </button>
           <button
+            onClick={() => setMode("accounts")}
+            className={`px-3 py-2 rounded border ${
+              mode === "accounts"
+                ? "bg-black text-white border-black"
+                : "bg-white text-gray-900 border-gray-300"
+            }`}
+          >
+            Admin Accounts
+          </button>
+          <button
             onClick={() => {
               fetchAll().catch((e) => alert(e.message));
               if (mode === "admins") fetchAdmins().catch((e) => alert(e.message));
+              if (mode === "accounts") fetchAdminAccounts().catch((e) => alert(e.message));
             }}
             className="px-3 py-2 bg-black text-white rounded"
           >
@@ -466,6 +649,206 @@ export default function RolesAndPermissionsPage() {
           </button>
         </div>
       </div>
+
+      {mode === "accounts" && (
+        <div className="bg-white border border-gray-200 rounded-lg p-6 space-y-4">
+          <h2 className="text-xl font-semibold text-black">Admin Accounts</h2>
+
+          {!isSuperadmin ? (
+            <div className="p-4 border rounded bg-gray-50 text-black">
+              Only Superadmins can view and manage admin accounts.
+            </div>
+          ) : (
+            <>
+              <form
+                onSubmit={createAdminAccount}
+                className="grid grid-cols-1 md:grid-cols-5 gap-3"
+              >
+                <div>
+                  <label className="block text-sm text-black mb-1">Username</label>
+                  <input
+                    className="w-full p-2 border rounded text-black"
+                    value={newAdminAccount.username}
+                    onChange={(e) =>
+                      setNewAdminAccount({
+                        ...newAdminAccount,
+                        username: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-black mb-1">Password</label>
+                  <input
+                    type="password"
+                    className="w-full p-2 border rounded text-black"
+                    value={newAdminAccount.password}
+                    onChange={(e) =>
+                      setNewAdminAccount({
+                        ...newAdminAccount,
+                        password: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-black mb-1">Role</label>
+                  <select
+                    className="w-full p-2 border rounded text-black"
+                    value={newAdminAccount.role}
+                    onChange={(e) =>
+                      setNewAdminAccount({
+                        ...newAdminAccount,
+                        role: e.target.value as AdminAccount["role"],
+                      })
+                    }
+                  >
+                    <option value="admin">admin</option>
+                    <option value="manager">manager</option>
+                    <option value="employee">employee</option>
+                    <option value="superadmin">superadmin</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-black mb-1">Position</label>
+                  <select
+                    className="w-full p-2 border rounded text-black"
+                    value={newAdminAccount.position}
+                    onChange={(e) =>
+                      setNewAdminAccount({
+                        ...newAdminAccount,
+                        position: e.target.value,
+                      })
+                    }
+                  >
+                    {positionOptions.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-end">
+                  <button
+                    type="submit"
+                    disabled={creatingAdminAccount}
+                    className="bg-black text-white px-4 py-2 rounded w-full disabled:opacity-60"
+                  >
+                    {creatingAdminAccount ? "Creating..." : "Create Admin"}
+                  </button>
+                </div>
+              </form>
+
+              <div className="flex items-center gap-3">
+                <input
+                  placeholder="Search admins (username, role, position)"
+                  className="w-full p-2 border rounded text-black"
+                  value={adminAccountSearch}
+                  onChange={(e) => setAdminAccountSearch(e.target.value)}
+                />
+                <button
+                  onClick={() => fetchAdminAccounts().catch((e) => alert(e.message))}
+                  className="px-3 py-2 bg-black text-white rounded"
+                >
+                  Refresh
+                </button>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="text-left p-2 text-black">Username</th>
+                      <th className="text-left p-2 text-black">Role</th>
+                      <th className="text-left p-2 text-black">Position</th>
+                      <th className="text-left p-2 text-black">Active</th>
+                      <th className="text-left p-2 text-black">Last login</th>
+                      <th className="text-left p-2 text-black">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {adminAccountsLoading ? (
+                      <tr>
+                        <td className="p-3 text-black" colSpan={6}>
+                          Loading…
+                        </td>
+                      </tr>
+                    ) : filteredAdminAccounts.length === 0 ? (
+                      <tr>
+                        <td className="p-3 text-black" colSpan={6}>
+                          No admins found
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredAdminAccounts.map((a) => (
+                        <tr key={a.id} className="hover:bg-gray-50">
+                          <td className="p-2 text-black">{a.username}</td>
+                          <td className="p-2">
+                            <select
+                              className="p-1 border rounded text-black"
+                              value={a.role}
+                              onChange={(e) =>
+                                updateAdminAccountField(a.id, {
+                                  role: e.target.value as AdminAccount["role"],
+                                })
+                              }
+                            >
+                              <option value="admin">admin</option>
+                              <option value="manager">manager</option>
+                              <option value="employee">employee</option>
+                              <option value="superadmin">superadmin</option>
+                            </select>
+                          </td>
+                          <td className="p-2">
+                            <select
+                              className="p-1 border rounded text-black"
+                              value={a.position || ""}
+                              onChange={(e) =>
+                                updateAdminAccountField(a.id, {
+                                  position: e.target.value,
+                                })
+                              }
+                            >
+                              {positionOptions.map((p) => (
+                                <option key={p} value={p}>
+                                  {p}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="p-2">
+                            <button
+                              onClick={() => toggleAdminAccountActive(a)}
+                              className={`px-2 py-1 rounded text-white ${
+                                a.is_active ? "bg-green-600" : "bg-gray-500"
+                              }`}
+                            >
+                              {a.is_active ? "Active" : "Inactive"}
+                            </button>
+                          </td>
+                          <td className="p-2 text-black">
+                            {a.last_login
+                              ? new Date(a.last_login).toLocaleString()
+                              : "—"}
+                          </td>
+                          <td className="p-2">
+                            <button
+                              onClick={() => resetAdminAccountPassword(a)}
+                              className="px-2 py-1 rounded bg-black text-white"
+                            >
+                              Reset Password
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {mode === "admins" && (
         <div className="bg-white border border-gray-200 rounded-lg p-5 space-y-4">
@@ -517,6 +900,7 @@ export default function RolesAndPermissionsPage() {
         </div>
       )}
 
+      {mode !== "accounts" && (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: Create + select position */}
         <div
@@ -682,6 +1066,7 @@ export default function RolesAndPermissionsPage() {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

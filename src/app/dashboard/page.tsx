@@ -46,6 +46,8 @@ const getActionColor = (action?: string) => {
     case "accept_order":
     case "reserve_order":
       return "border-green-500 bg-green-50";
+    case "view":
+      return "border-gray-400 bg-gray-100";
     case "update":
     case "stock":
     case "change":
@@ -124,7 +126,7 @@ export default function DashboardPage() {
   const [stats, setStats] = useState({
     totalProducts: 0,
     numberOfSales: 0,
-    salesRevenue: 0,
+    totalUserAccounts: 0,
     activeUsers: 0,
     pendingOrders: 0,
   });
@@ -245,8 +247,6 @@ export default function DashboardPage() {
         .gte("created_at", startOfMonth.toISOString());
 
       const completed = (sessions || []).filter((s: any) => s.status === "completed");
-      const numberOfSales = completed.length;
-      const salesRevenue = completed.reduce((sum: number, s: any) => sum + Number(s.amount || 0), 0);
 
       // Daily sales (last 10 days) for the line chart below
       const { data: sessions30 } = await supabase
@@ -298,17 +298,46 @@ export default function DashboardPage() {
         .in("item_type", ["order", "reservation"]) 
         .limit(20000);
 
-      const successStatuses = ["completed", "approved", "ready_for_delivery"];
+      const successStatuses = ["completed", "approved", "ready_for_delivery", "delivered"];
       const statusCounts = { successful: 0, cancelled: 0, pending: 0 } as {
         successful: number; cancelled: number; pending: number;
       };
       (orders30 || []).forEach((o: any) => {
-        const s = String(o.order_status || o.status || "");
+        const s = String(o.order_status || o.status || "").toLowerCase();
         if (successStatuses.includes(s)) statusCounts.successful += 1;
         else if (s === "cancelled") statusCounts.cancelled += 1;
         else statusCounts.pending += 1;
       });
       setOrdersStatusCounts(statusCounts);
+
+      // KPI: Number of Sales = completed/delivered orders in the current month
+      let numberOfSales = 0;
+      try {
+        const { data: ordersMonth } = await supabase
+          .from("user_items")
+          .select("status, order_status, created_at, item_type")
+          .gte("created_at", startOfMonth.toISOString())
+          .in("item_type", ["order", "reservation"])
+          .limit(50000);
+        numberOfSales = (ordersMonth || []).filter((o: any) => {
+          const s = String(o.order_status || o.status || "").toLowerCase();
+          return successStatuses.includes(s);
+        }).length;
+      } catch {
+        numberOfSales = 0;
+      }
+
+      // KPI: Total user accounts
+      let totalUserAccounts = 0;
+      try {
+        const res = await fetch("/api/admin-users");
+        if (res.ok) {
+          const result = await res.json();
+          totalUserAccounts = Array.isArray(result?.users) ? result.users.length : 0;
+        }
+      } catch {
+        totalUserAccounts = 0;
+      }
 
       // NEW: Pull 12 months of user_items activity for day/week/month aggregation
       const { data: items365 } = await supabase
@@ -362,7 +391,7 @@ export default function DashboardPage() {
           const day = ymd(new Date(o.created_at));
           const s = String(o.order_status || o.status || "");
           if (day === key) {
-            if (["completed","approved","ready_for_delivery"].includes(s)) buckets.successful += 1;
+            if (["completed","approved","ready_for_delivery","delivered"].includes(s)) buckets.successful += 1;
             else if (s === "cancelled") buckets.cancelled += 1;
             else buckets.pending += 1;
           }
@@ -389,7 +418,7 @@ export default function DashboardPage() {
           const rd = new Date(o.created_at);
           const s = String(o.order_status || o.status || "");
           if (rd >= start && rd <= end) {
-            if (["completed","approved","ready_for_delivery"].includes(s)) buckets.successful += 1;
+            if (["completed","approved","ready_for_delivery","delivered"].includes(s)) buckets.successful += 1;
             else if (s === "cancelled") buckets.cancelled += 1;
             else buckets.pending += 1;
           }
@@ -417,7 +446,7 @@ export default function DashboardPage() {
           const rd = new Date(o.created_at);
           const s = String(o.order_status || o.status || "");
           if (rd >= start && rd <= end) {
-            if (["completed","approved","ready_for_delivery"].includes(s)) buckets.successful += 1;
+            if (["completed","approved","ready_for_delivery","delivered"].includes(s)) buckets.successful += 1;
             else if (s === "cancelled") buckets.cancelled += 1;
             else buckets.pending += 1;
           }
@@ -437,7 +466,7 @@ export default function DashboardPage() {
       setStats({
         totalProducts: (await supabase.from("products").select("*", { count: "exact", head: true })).count || 0,
         numberOfSales,
-        salesRevenue,
+        totalUserAccounts,
         activeUsers,
         pendingOrders: pendingOrders || 0,
       });
@@ -448,8 +477,6 @@ export default function DashboardPage() {
       console.error("metrics error:", e);
     }
   };
-
-  const currency = (n: number) => `₱${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 0 })}`;
 
   // NEW: Active Users chart data (Daily/Weekly/Monthly)
   const activeUsersChartData = useMemo(() => {
@@ -565,7 +592,7 @@ export default function DashboardPage() {
   }, []);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="min-h-screen bg-gray-100 p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-black">Dashboard</h1>
@@ -592,8 +619,8 @@ export default function DashboardPage() {
           <div className="flex items-center">
             <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center text-white text-sm">💵</div>
             <div className="ml-4">
-              <div className="text-sm font-medium text-black">Sales Revenue</div>
-              <div className="text-2xl font-bold text-black">{currency(stats.salesRevenue)}</div>
+              <div className="text-sm font-medium text-black">Total User Accounts</div>
+              <div className="text-2xl font-bold text-black">{stats.totalUserAccounts.toLocaleString()}</div>
             </div>
           </div>
         </div>

@@ -580,7 +580,7 @@ export default function InventoryAdminPage() {
                     <label className="block text-sm font-medium text-gray-700">
                       Inventory Count
                     </label>
-                    <div className="flex items-center space-x-2 text-black">
+                    <div className="flex items-center gap-2 text-black w-full">
                       <input
                         type="number"
                         min="0"
@@ -593,14 +593,14 @@ export default function InventoryAdminPage() {
                             )
                           );
                         }}
-                        className={`flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 ${
+                        className={`flex-1 min-w-0 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 ${
                           isUnsaved ? 'border-yellow-400' : 'border-gray-300'
                         }`}
                       />
                       <button
                         onClick={() => updateInventory(item.id, item.inventory ?? 0)}
                         disabled={savingId === item.id || !isUnsaved}
-                        className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        className={`shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                           isUnsaved
                             ? 'bg-indigo-600 text-white hover:bg-indigo-700'
                             : 'bg-gray-200 text-gray-400 cursor-not-allowed'

@@ -3,6 +3,17 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  /* Admin theme (scoped via .admin-app wrapper) */
+  --admin-bg: #f9fafb;
+  --admin-surface: #ffffff;
+  --admin-text: #111827;
+  --admin-muted: #6b7280;
+  --admin-border: #e5e7eb;
+  --admin-sidebar-bg: #1e2939;
+  --admin-sidebar-text: #e5e7eb;
+  --admin-sidebar-hover: #243147;
+  --admin-sidebar-active: #0f172a;
 }
 
 @theme inline {
@@ -17,6 +28,93 @@
     --background: #0a0a0a;
     --foreground: #ededed;
   }
+}
+
+/*
+  Admin theme switching
+  - Enabled by setting: document.documentElement.dataset.adminTheme = 'light' | 'dark' | 'midnight'
+  - Scoped to dashboard shell via the `.admin-app` wrapper class
+*/
+
+html[data-admin-theme="light"] {
+  --admin-bg: #f9fafb;
+  --admin-surface: #ffffff;
+  --admin-text: #111827;
+  --admin-muted: #6b7280;
+  --admin-border: #e5e7eb;
+  --admin-sidebar-bg: #1e2939;
+  --admin-sidebar-text: #e5e7eb;
+  --admin-sidebar-hover: #243147;
+  --admin-sidebar-active: #0f172a;
+}
+
+html[data-admin-theme="dark"] {
+  --admin-bg: #0b1220;
+  --admin-surface: #111827;
+  --admin-text: #e5e7eb;
+  --admin-muted: #9ca3af;
+  --admin-border: #1f2937;
+  --admin-sidebar-bg: #070b14;
+  --admin-sidebar-text: #e5e7eb;
+  --admin-sidebar-hover: #111827;
+  --admin-sidebar-active: #0b1220;
+}
+
+html[data-admin-theme="midnight"] {
+  --admin-bg: #050816;
+  --admin-surface: #0b1026;
+  --admin-text: #e7e9ff;
+  --admin-muted: #a3a8d6;
+  --admin-border: #1b2455;
+  --admin-sidebar-bg: #030515;
+  --admin-sidebar-text: #e7e9ff;
+  --admin-sidebar-hover: #0b1026;
+  --admin-sidebar-active: #111a3d;
+}
+
+.admin-app {
+  background: var(--admin-bg);
+  color: var(--admin-text);
+}
+
+/* Utility-class overrides to make existing Tailwind classes theme-aware (admin only) */
+html[data-admin-theme] .admin-app .bg-white {
+  background-color: var(--admin-surface) !important;
+}
+html[data-admin-theme] .admin-app .bg-gray-50 {
+  background-color: var(--admin-bg) !important;
+}
+html[data-admin-theme] .admin-app .bg-gray-100 {
+  background-color: color-mix(in srgb, var(--admin-bg) 88%, var(--admin-surface)) !important;
+}
+html[data-admin-theme] .admin-app .text-black {
+  color: var(--admin-text) !important;
+}
+html[data-admin-theme] .admin-app .text-gray-600,
+html[data-admin-theme] .admin-app .text-gray-700,
+html[data-admin-theme] .admin-app .text-gray-500 {
+  color: var(--admin-muted) !important;
+}
+html[data-admin-theme] .admin-app .border-gray-200,
+html[data-admin-theme] .admin-app .border-gray-300,
+html[data-admin-theme] .admin-app .border-gray-700 {
+  border-color: var(--admin-border) !important;
+}
+/* Sidebar-only overrides (avoid leaking into main content) */
+html[data-admin-theme] .admin-app .admin-sidebar.bg-gray-800 {
+  background-color: var(--admin-sidebar-bg) !important;
+}
+html[data-admin-theme] .admin-app .admin-sidebar .bg-gray-900 {
+  background-color: var(--admin-sidebar-active) !important;
+}
+html[data-admin-theme] .admin-app .admin-sidebar .text-gray-300 {
+  color: var(--admin-sidebar-text) !important;
+}
+html[data-admin-theme] .admin-app .admin-sidebar .hover\:bg-gray-700:hover {
+  background-color: var(--admin-sidebar-hover) !important;
+}
+html[data-admin-theme] .admin-app .hover\:bg-gray-50:hover {
+  background-color: color-mix(in srgb, var(--admin-surface) 85%, var(--admin-bg)) !important;
 }
 
 body {

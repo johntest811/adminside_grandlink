@@ -23,7 +23,7 @@
     "bcryptjs": "^3.0.2",
     "chart.js": "^4.5.1",
     "class-variance-authority": "^0.7.1",
-    "jspdf": "^3.0.3",
+    "jspdf": "^4.0.0",
     "jspdf-autotable": "^5.0.2",
     "lucide-react": "^0.544.0",
     "ml-random-forest": "^2.1.0",

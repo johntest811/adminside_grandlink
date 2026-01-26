@@ -18,6 +18,41 @@ type ActivityLog = {
 
 const actions = ["create","update","delete","login","logout","upload","view","accept_order","reserve_order"];
 
+const actionBadgeClass = (a: string) => {
+  switch ((a || "").toLowerCase()) {
+    case "create":
+      return "bg-emerald-100 text-emerald-800";
+    case "update":
+      return "bg-blue-100 text-blue-800";
+    case "delete":
+      return "bg-red-100 text-red-800";
+    case "login":
+      return "bg-indigo-100 text-indigo-800";
+    case "logout":
+      return "bg-slate-100 text-slate-800";
+    case "upload":
+      return "bg-purple-100 text-purple-800";
+    case "accept_order":
+      return "bg-green-100 text-green-800";
+    case "reserve_order":
+      return "bg-amber-100 text-amber-900";
+    default:
+      return "bg-gray-100 text-gray-800";
+  }
+};
+
+const formatTs = (iso: string) => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
 export default function AuditPage() {
   const [data, setData] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -121,15 +156,15 @@ export default function AuditPage() {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="space-y-4 w-full max-w-full">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold text-black">Audit Logs</h1>
-        <button onClick={exportCsv} className="px-3 py-2 bg-black text-white rounded">Export CSV</button>
+        <button onClick={exportCsv} className="px-3 py-2 bg-black text-white rounded w-full sm:w-auto">Export CSV</button>
       </div>
 
-      <div className="bg-white p-4 rounded-lg shadow-sm border">
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-          <div className="md:col-span-2">
+      <div className="bg-white p-4 rounded-lg shadow-sm border w-full max-w-full overflow-hidden">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="md:col-span-4">
             <label className="text-xs text-black">Search</label>
             <input
               className="w-full mt-1 px-3 py-2 border rounded text-black placeholder:text-black/50"
@@ -138,6 +173,27 @@ export default function AuditPage() {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
+
+          <div className="md:col-span-2">
+            <label className="text-xs text-black">From</label>
+            <input
+              type="date"
+              className="w-full mt-1 px-3 py-2 border rounded text-black"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+            />
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="text-xs text-black">To</label>
+            <input
+              type="date"
+              className="w-full mt-1 px-3 py-2 border rounded text-black"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+            />
+          </div>
+
           <div>
             <label className="text-xs text-black">Action</label>
             <select className="w-full mt-1 px-3 py-2 border rounded text-black" value={action} onChange={(e) => setAction(e.target.value)}>
@@ -152,16 +208,6 @@ export default function AuditPage() {
               {pages.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
-          <div className="flex gap-2">
-            <div className="flex-1">
-              <label className="text-xs text-black">From</label>
-              <input type="date" className="w-full mt-1 px-3 py-2 border rounded text-black" value={from} onChange={(e) => setFrom(e.target.value)} />
-            </div>
-            <div className="flex-1">
-              <label className="text-xs text-black">To</label>
-              <input type="date" className="w-full mt-1 px-3 py-2 border rounded text-black" value={to} onChange={(e) => setTo(e.target.value)} />
-            </div>
-          </div>
         </div>
         <div className="mt-3 flex gap-2">
           <button onClick={fetchAll} className="px-3 py-2 bg-blue-600 text-white rounded">Apply</button>
@@ -175,49 +221,85 @@ export default function AuditPage() {
           <div className="text-sm text-black/70">{loading ? "Loading…" : `${data.length} records`}</div>
         </div>
 
-        <div className="max-h-[70vh] overflow-auto">
-          <table className="min-w-full text-sm">
-            <thead className="sticky top-0 bg-gray-100">
-              <tr>
-                <th className="px-3 py-2 text-left text-black">Time</th>
-                <th className="px-3 py-2 text-left text-black">Admin</th>
-                <th className="px-3 py-2 text-left text-black">Action</th>
-                <th className="px-3 py-2 text-left text-black">Entity</th>
-                <th className="px-3 py-2 text-left text-black">Details</th>
-                <th className="px-3 py-2 text-left text-black">Page</th>
-                <th className="px-3 py-2 text-left text-black">Metadata</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {loading ? (
-                <tr><td className="px-3 py-4 text-black" colSpan={7}>Loading…</td></tr>
-              ) : data.length === 0 ? (
-                <tr><td className="px-3 py-6 text-black" colSpan={7}>No records</td></tr>
-              ) : (
-                data.map((r) => {
-                  const meta = (() => { try { return r.metadata ? JSON.parse(r.metadata) : null; } catch { return r.metadata; } })();
-                  return (
-                    <tr key={String(r.id)} className="hover:bg-gray-50">
-                      <td className="px-3 py-2 text-black whitespace-nowrap">{new Date(r.created_at).toLocaleString()}</td>
-                      <td className="px-3 py-2 text-black">{r.admin_name}</td>
-                      <td className="px-3 py-2 text-black capitalize">{r.action}</td>
-                      <td className="px-3 py-2 text-black">{r.entity_type}{r.entity_id ? ` • ${r.entity_id}` : ""}</td>
-                      <td className="px-3 py-2 text-black max-w-xl">{r.details}</td>
-                      <td className="px-3 py-2 text-black">{r.page || "-"}</td>
-                      <td className="px-3 py-2">
-                        {meta ? (
-                          <details className="text-black">
-                            <summary className="cursor-pointer text-blue-700">View</summary>
-                            <pre className="text-xs bg-gray-100 p-2 rounded overflow-auto max-h-40">{JSON.stringify(meta, null, 2)}</pre>
-                          </details>
-                        ) : <span className="text-black/70">-</span>}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
+        <div className="max-h-[70vh] overflow-auto w-full">
+          {loading ? (
+            <div className="p-4 text-black">Loading…</div>
+          ) : data.length === 0 ? (
+            <div className="p-6 text-black">No records</div>
+          ) : (
+            <div className="divide-y">
+              {data.map((r) => {
+                const meta = (() => {
+                  try {
+                    return r.metadata ? JSON.parse(r.metadata) : null;
+                  } catch {
+                    return r.metadata;
+                  }
+                })();
+
+                const summary = `${r.admin_name} • ${r.action} • ${r.entity_type}${r.entity_id ? ` • ${r.entity_id}` : ""}${r.page ? ` • ${r.page}` : ""}`;
+
+                return (
+                  <details key={String(r.id)} className="group">
+                    <summary className="list-none cursor-pointer px-4 py-3 hover:bg-gray-50">
+                      <div className="flex items-start gap-3">
+                        <div className="mt-0.5 flex-shrink-0 text-black/60 group-open:rotate-90 transition-transform select-none">▶</div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <div className="text-sm font-medium text-black">{formatTs(r.created_at)}</div>
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${actionBadgeClass(r.action)}`}>
+                              {r.action}
+                            </span>
+                            <div className="text-xs text-black/60 break-words">ID: {String(r.id)}</div>
+                          </div>
+                          <div className="mt-1 text-sm text-black break-words">
+                            <span className="font-medium">{r.admin_name}</span>
+                            <span className="text-black/70"> • {r.entity_type}</span>
+                            {r.entity_id ? <span className="text-black/60"> • {r.entity_id}</span> : null}
+                            {r.page ? <span className="text-black/60"> • {r.page}</span> : null}
+                          </div>
+                          <div className="mt-1 text-xs text-black/60 break-words line-clamp-2">
+                            {r.details}
+                          </div>
+                        </div>
+                      </div>
+                    </summary>
+
+                    <div className="px-4 pb-4">
+                      <div className="mt-2 rounded-md border bg-gray-50 p-3">
+                        <div className="text-xs font-medium text-black/70">Full Details</div>
+                        <div className="mt-1 text-sm text-black whitespace-pre-wrap break-words">{r.details}</div>
+
+                        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                          <div className="text-black">
+                            <div className="text-xs text-black/60">Entity</div>
+                            <div className="font-medium break-words">
+                              {r.entity_type}{r.entity_id ? ` • ${r.entity_id}` : ""}
+                            </div>
+                          </div>
+                          <div className="text-black">
+                            <div className="text-xs text-black/60">Page</div>
+                            <div className="font-medium break-words">{r.page || "-"}</div>
+                          </div>
+                        </div>
+
+                        <div className="mt-3">
+                          <div className="text-xs text-black/60">Metadata</div>
+                          {meta ? (
+                            <pre className="mt-1 text-xs bg-white p-2 rounded overflow-auto max-h-56 whitespace-pre-wrap break-words">{typeof meta === "string" ? meta : JSON.stringify(meta, null, 2)}</pre>
+                          ) : (
+                            <div className="mt-1 text-sm text-black/70">-</div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mt-2 text-xs text-black/50 break-words">{summary}</div>
+                    </div>
+                  </details>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>
