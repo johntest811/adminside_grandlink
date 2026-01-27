@@ -16,7 +16,7 @@ type Notification = {
 
 export default function EmployeeNotificationsPage() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const userRole = "employee"; // 🔴 Replace with actual logged-in user's role
+  const userRole = "employee"; // Replace with actual logged-in user's role
 
   // Fetch notifications
   const fetchNotifications = async () => {

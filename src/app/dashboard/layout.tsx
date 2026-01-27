@@ -82,6 +82,7 @@ export default function DashboardLayout({
       dropdown: [
         { name: 'Home', path: '/dashboard/pages/home' },
         { name: 'About Us', path: '/dashboard/pages/about' },
+        { name: 'Blogs Editor', path: '/dashboard/pages/blogs_editor' },
         { name: 'Showrooms', path: '/dashboard/pages/showroom' },
         { name: 'Services We Offer', path: '/dashboard/pages/Service' },
         { name: 'Featured Projects', path: '/dashboard/pages/Featured' },
@@ -369,7 +370,7 @@ export default function DashboardLayout({
         </div>
 
         {/* Scrollable nav content */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto overflow-x-visible p-4">
           <nav className="space-y-1">
             {filteredNav.map((item) =>
               item.dropdown ? (
@@ -403,7 +404,12 @@ export default function DashboardLayout({
                                 setOpenDropdown(null);
                               }}
                             >
-                              {sub.name}
+                              <span className="inline-flex items-center gap-2">
+                                <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-white/10 text-white text-[10px]">
+                                  {String((sub as any).icon || sub.name?.charAt(0)?.toUpperCase() || "•")}
+                                </span>
+                                <span>{sub.name}</span>
+                              </span>
                             </Link>
                           ))}
                         </div>
@@ -417,7 +423,12 @@ export default function DashboardLayout({
                             className={`px-3 py-2 text-xs rounded-md transition-colors ${isActive(sub.path) ? 'bg-gray-900 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
                             onClick={() => setIsMobileSidebarOpen(false)}
                           >
-                            {sub.name}
+                            <span className="inline-flex items-center gap-2">
+                              <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-white/10 text-white text-[9px]">
+                                {String((sub as any).icon || sub.name?.charAt(0)?.toUpperCase() || "•")}
+                              </span>
+                              <span>{sub.name}</span>
+                            </span>
                           </Link>
                         ))}
                       </div>
