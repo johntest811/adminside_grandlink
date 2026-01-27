@@ -67,6 +67,111 @@ function slugify(input: string) {
     .replace(/(^-|-$)/g, "");
 }
 
+function normalizeForCompare(url: string) {
+  return String(url || "")
+    .trim()
+    .replace(/\s+/g, "")
+    .split("?")[0]
+    .toLowerCase();
+}
+
+function sizeFromImgStyle(style: string): ImageSize {
+  const s = String(style || "").toLowerCase().replace(/\s+/g, "");
+  if (s.includes("max-width:320px")) return "sm";
+  if (s.includes("max-width:640px")) return "md";
+  if (s.includes("max-width:960px")) return "lg";
+  return "default";
+}
+
+function parseContentHtmlToBlocks(html: string, coverImageUrl: string | null | undefined): ContentBlock[] {
+  if (typeof window === "undefined" || typeof DOMParser === "undefined") {
+    return [{ id: `text_${Date.now()}`, type: "text", html: String(html || "") }];
+  }
+
+  const coverNorm = coverImageUrl ? normalizeForCompare(coverImageUrl) : "";
+  const doc = new DOMParser().parseFromString(String(html || ""), "text/html");
+  const nodes = Array.from(doc.body.childNodes);
+
+  const blocks: ContentBlock[] = [];
+  let textBuffer = "";
+  let imageBuffer: ImageItem[] = [];
+
+  const flushText = () => {
+    const trimmed = textBuffer.replace(/\s+/g, " ").trim();
+    if (trimmed.length) {
+      blocks.push({
+        id: `text_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        type: "text",
+        html: textBuffer,
+      });
+    }
+    textBuffer = "";
+  };
+
+  const flushImages = () => {
+    if (imageBuffer.length) {
+      blocks.push({
+        id: `img_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        type: "images",
+        images: imageBuffer,
+        newImageSize: "default",
+      });
+    }
+    imageBuffer = [];
+  };
+
+  const pushImage = (img: HTMLImageElement) => {
+    const src = img.getAttribute("src") || img.src || "";
+    if (!src) return;
+    if (coverNorm && normalizeForCompare(src) === coverNorm) return;
+
+    const size = sizeFromImgStyle(img.getAttribute("style") || "");
+    imageBuffer.push({ url: src, size });
+  };
+
+  const isImgOnlyContainer = (el: Element) => {
+    if (el.tagName.toLowerCase() === "img") return true;
+    const imgs = el.querySelectorAll("img");
+    if (imgs.length === 0) return false;
+    const text = (el.textContent || "").trim();
+    return text.length === 0;
+  };
+
+  for (const node of nodes) {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node as Element;
+
+      if (isImgOnlyContainer(el)) {
+        flushText();
+        if (el.tagName.toLowerCase() === "img") {
+          pushImage(el as HTMLImageElement);
+        } else {
+          const imgs = Array.from(el.querySelectorAll("img"));
+          imgs.forEach((img) => pushImage(img));
+        }
+        continue;
+      }
+
+      // Non-image content
+      flushImages();
+      textBuffer += (el as HTMLElement).outerHTML;
+      continue;
+    }
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      const t = node.textContent || "";
+      if (t.trim().length === 0) continue;
+      flushImages();
+      textBuffer += escapeAttr(t);
+    }
+  }
+
+  flushImages();
+  flushText();
+
+  return blocks.length ? blocks : [{ id: `text_${Date.now()}`, type: "text", html: "" }];
+}
+
 export default function BlogsEditorPage() {
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
   const [blogs, setBlogs] = useState<BlogRow[]>([]);
@@ -176,8 +281,9 @@ export default function BlogsEditorPage() {
       });
       setSelectedId(b.id);
 
-      // Back-compat: treat existing HTML as a single text block.
-      setBlocks([{ id: `text_${Date.now()}`, type: "text", html: String(b.content_html || "") }]);
+      // Parse existing HTML into the same Text/Image blocks used when creating.
+      // Also: never include the cover image inside the content blocks.
+      setBlocks(parseContentHtmlToBlocks(String(b.content_html || ""), b.cover_image_url));
     } catch (e: any) {
       setError(e?.message || String(e));
     }

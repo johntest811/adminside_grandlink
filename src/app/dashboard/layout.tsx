@@ -76,6 +76,7 @@ export default function DashboardLayout({
     { name: 'Order Management', path: '/dashboard/order_management', icon: '📋' },
     { name: 'Calendar', path: '/dashboard/calendar', icon: '📅' },
     { name: 'User Inquiries', path: '/dashboard/inquiries', icon: '📨' },
+    { name: 'Chat Inbox', path: '/dashboard/chat', icon: '💬' },
     {
       name: 'Content Management',
       icon: '🗂️',
