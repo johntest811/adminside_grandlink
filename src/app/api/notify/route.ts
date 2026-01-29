@@ -144,10 +144,10 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    console.log("📢 Notification API called:", { type, productName, productId, adminName });
+    console.log("Notification API called:", { type, productName, productId, adminName });
 
     if (type === "new_product") {
-      // Get all users
+      // Gets all of the users
       const { data: allUsers, error: usersError } = await supabaseAdmin.auth.admin.listUsers();
       
       if (usersError) {
@@ -175,7 +175,7 @@ export async function POST(request: NextRequest) {
             .from('user_notifications')
             .insert({
               user_id: user.id,
-              title: 'New Product Available! 🆕',
+              title: 'New Product Available!',
               message: `Check out our new product: ${productName}`,
               type: 'new_product',
               metadata: {
@@ -212,7 +212,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      console.log(`✅ New product notifications sent: ${notificationsSent} in-app, ${emailsSent} emails`);
+      console.log(`New product notifications sent: ${notificationsSent} in-app, ${emailsSent} emails`);
       return NextResponse.json({ 
         success: true, 
         notificationsSent, 
@@ -246,7 +246,7 @@ export async function POST(request: NextRequest) {
             .from('user_notifications')
             .insert({
               user_id: user.id,
-              title: 'Stock Replenished! 📦',
+              title: 'Stock Replenished!',
               message: `${productName} is back in stock with ${newStock} units available. Order now!`,
               type: 'stock_update',
               metadata: {
@@ -282,7 +282,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      console.log(`✅ Stock update notifications sent: ${notificationsSent} in-app, ${emailsSent} emails`);
+      console.log(` Stock update notifications sent: ${notificationsSent} in-app, ${emailsSent} emails`);
       return NextResponse.json({ 
         success: true, 
         notificationsSent, 
@@ -299,7 +299,7 @@ export async function POST(request: NextRequest) {
         message: msg,
         type: "order",
         priority: "high",
-  recipient_role: "admin",
+        recipient_role: "admin",
         is_read: false,
         created_at: new Date().toISOString()
       });
@@ -309,7 +309,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: false, error: "Invalid notification type" }, { status: 400 });
   } catch (error) {
-    console.error("💥 Notification API error:", error);
+    console.error(" Notification API error:", error);
     return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 });
   }
 }
