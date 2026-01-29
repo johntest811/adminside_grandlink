@@ -93,7 +93,15 @@ export default function DashboardLayout({
       ],
     },
     { name: 'Predictive', path: '/dashboard/predictive', icon: '🔮' },
-    { name: 'Sales Forecasting', path: '/dashboard/sales-forecasting', icon: '📈' },
+    {
+      name: 'Sales',
+      icon: '💳',
+      dropdown: [
+        { name: 'Invoices', path: '/dashboard/sales/invoices' },
+        { name: 'Quotations', path: '/dashboard/sales/quotations' },
+        { name: 'Sales Forecasting', path: '/dashboard/sales-forecasting', icon: '📈' },
+      ],
+    },
     {
       name: 'Settings',
       icon: '⚙️',
