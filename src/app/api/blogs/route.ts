@@ -24,7 +24,7 @@ function getAdminFromHeader(req: Request): { id: string; username: string } | nu
 
 function sanitizeHtmlLoose(input: unknown) {
   const html = typeof input === "string" ? input : "";
-  // Minimal hardening: remove <script> tags and inline event handlers.
+  //Replaces and removes <script> tags and inline event handlers.
   return html
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
     .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")

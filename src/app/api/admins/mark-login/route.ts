@@ -7,7 +7,7 @@ export async function POST(req: Request) {
 
   const supabase = createClient(
     process.env.SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY! // SERVER ONLY
+    process.env.SUPABASE_SERVICE_ROLE_KEY! 
   );
 
   // update by id or email

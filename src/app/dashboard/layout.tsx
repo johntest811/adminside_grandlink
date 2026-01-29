@@ -81,14 +81,14 @@ export default function DashboardLayout({
       name: 'Content Management',
       icon: '🗂️',
       dropdown: [
-        { name: 'Home', path: '/dashboard/pages/home' },
-        { name: 'About Us', path: '/dashboard/pages/about' },
-        { name: 'Blogs Editor', path: '/dashboard/pages/blogs_editor' },
-        { name: 'Showrooms', path: '/dashboard/pages/showroom' },
-        { name: 'Services We Offer', path: '/dashboard/pages/Service' },
-        { name: 'Featured Projects', path: '/dashboard/pages/Featured' },
-        { name: 'Delivery & Ordering Process', path: '/dashboard/pages/DeliveryProcess' },
-        { name: 'FAQs', path: '/dashboard/pages/FAQs' },
+        { name: 'Home', path: '/dashboard/Content_management/home' },
+        { name: 'About Us', path: '/dashboard/Content_management/about' },
+        { name: 'Blogs Editor', path: '/dashboard/Content_management/blogs_editor' },
+        { name: 'Showrooms', path: '/dashboard/Content_management/showroom' },
+        { name: 'Services We Offer', path: '/dashboard/Content_management/Service' },
+        { name: 'Featured Projects', path: '/dashboard/Content_management/Featured' },
+        { name: 'Delivery & Ordering Process', path: '/dashboard/Content_management/DeliveryProcess' },
+        { name: 'FAQs', path: '/dashboard/Content_management/FAQs' },
         { name: 'Inquire Page Editor', path: '/dashboard/inquiries/editor', icon: '📝' },
       ],
     },
@@ -345,7 +345,7 @@ export default function DashboardLayout({
       <aside
         className={`admin-sidebar fixed inset-y-0 left-0 z-30 w-64 ${isSidebarCollapsed ? "lg:w-20" : "lg:w-64"} bg-gray-800 text-white transform transition-transform duration-300 ease-in-out ${
           isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        } lg:translate-x-0 flex flex-col`} // flex column to allow scrolling body
+        } lg:translate-x-0 flex flex-col`} 
         aria-label="Sidebar navigation"
       >
         {/* Sidebar top header */}
