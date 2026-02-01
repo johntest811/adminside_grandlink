@@ -46,7 +46,7 @@ type PaymentModalData = {
 export default function OrdersPage() {
   const [reservations, setReservations] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState('pending_payment');
+  const [statusFilter, setStatusFilter] = useState('');
   // NEW: search
   const [searchQuery, setSearchQuery] = useState('');
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
@@ -161,7 +161,6 @@ export default function OrdersPage() {
       const updates: any = {
         status: normalized,
         order_status: computedOrderStatus,
-        order_progress: progressMap[computedOrderStatus] || computedOrderStatus,
         admin_notes:
           newStatus === 'approved' ? `Order approved by ${by}` :
           newStatus === 'approve_cancellation' ? `Order cancellation approved by ${by}` :

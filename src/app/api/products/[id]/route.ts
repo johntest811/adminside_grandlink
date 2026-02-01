@@ -93,21 +93,33 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       updateError = error;
     }
 
-    // Fallback if "images" column doesn't exist
-    if (updateError && String(updateError.message || '').toLowerCase().includes('images')) {
-      try {
-        const fallbackData = { ...updateData };
+    // Backward compatible fallback if optional columns don't exist yet
+    if (updateError) {
+      const msg = String(updateError.message || '').toLowerCase();
+      const fallbackData = { ...updateData };
+      let changed = false;
+      if (msg.includes('images')) {
         delete fallbackData.images;
-        const { data, error } = await supabaseAdmin
-          .from("products")
-          .update(fallbackData)
-          .eq("id", id)
-          .select()
-          .single();
-        updatedProduct = data;
-        updateError = error;
-      } catch (e) {
-        // keep original error
+        changed = true;
+      }
+      if (msg.includes('skyboxes')) {
+        delete fallbackData.skyboxes;
+        changed = true;
+      }
+
+      if (changed) {
+        try {
+          const { data, error } = await supabaseAdmin
+            .from("products")
+            .update(fallbackData)
+            .eq("id", id)
+            .select()
+            .single();
+          updatedProduct = data;
+          updateError = error;
+        } catch (e) {
+          // keep original error
+        }
       }
     }
 

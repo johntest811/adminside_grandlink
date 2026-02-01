@@ -47,11 +47,42 @@ export async function POST(req: Request) {
     }
 
     // Insert the product
-    const { data: product, error } = await supabaseAdmin
-      .from("products")
-      .insert(body)
-      .select()
-      .single();
+    let product: any = null;
+    let error: any = null;
+
+    {
+      const result = await supabaseAdmin
+        .from("products")
+        .insert(body)
+        .select()
+        .single();
+      product = result.data;
+      error = result.error;
+    }
+
+    // Backward compatible fallback if optional JSON/array columns don't exist yet
+    if (error) {
+      const msg = String(error.message || "").toLowerCase();
+      const fallbackBody: any = { ...body };
+      let changed = false;
+      if (msg.includes("images")) {
+        delete fallbackBody.images;
+        changed = true;
+      }
+      if (msg.includes("skyboxes")) {
+        delete fallbackBody.skyboxes;
+        changed = true;
+      }
+      if (changed) {
+        const retry = await supabaseAdmin
+          .from("products")
+          .insert(fallbackBody)
+          .select()
+          .single();
+        product = retry.data;
+        error = retry.error;
+      }
+    }
 
     if (error) {
       console.error("Product creation error:", error);

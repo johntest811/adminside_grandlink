@@ -24,8 +24,10 @@ export default function DashboardLayout({
   const [adminTheme, setAdminTheme] = useState<"light" | "dark" | "midnight">("light");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
+  const basePath = (p?: string) => String(p || "").split("#")[0];
+
   // Helper for active nav item
-  const isActive = (path: string) => pathname === path;
+  const isActive = (path: string) => pathname === basePath(path);
 
   const applyTheme = (theme: "light" | "dark" | "midnight") => {
     setAdminTheme(theme);
@@ -48,7 +50,7 @@ export default function DashboardLayout({
       icon: '👤',
       dropdown: [
         { name: 'User Accounts', path: '/dashboard/user-accounts' },
-        { name: 'Employee Account', path: '/dashboard/admins' },
+        { name: 'Admin Accounts', path: '/dashboard/admins' },
       ],
     },
     { name: 'Reports', path: '/dashboard/reports', icon: '📑' },
@@ -108,7 +110,7 @@ export default function DashboardLayout({
       dropdown: [
         { name: 'Settings', path: '/dashboard/settings' },
         { name: 'Audit', path: '/dashboard/settings/audit' },
-        { name: 'Roles & Permissions', path: '/dashboard/settings/roles' },
+        { name: 'Access Control', path: '/dashboard/settings/roles' },
       ],
     },
   ];
@@ -292,9 +294,9 @@ export default function DashboardLayout({
   const filteredNav = navStructure
     .map((item) => {
       if (!item.dropdown) {
-        return allowedSet.has(item.path!) ? item : null;
+        return allowedSet.has(basePath(item.path!)) ? item : null;
       }
-      const subs = item.dropdown.filter((sub) => allowedSet.has(sub.path));
+      const subs = item.dropdown.filter((sub) => allowedSet.has(basePath(sub.path)));
       return subs.length ? { ...item, dropdown: subs } : null;
     })
     .filter(Boolean) as typeof navStructure;

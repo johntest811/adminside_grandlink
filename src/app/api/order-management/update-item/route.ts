@@ -75,7 +75,6 @@ export async function POST(req: NextRequest) {
         delete updates.status; // do not break the update on invalid input
       }
       updates.order_status = uiStage;
-      updates.order_progress = progressMap[uiStage] || uiStage;
 
       // Append progress_history atomically (fetch current first)
       const now = new Date().toISOString();

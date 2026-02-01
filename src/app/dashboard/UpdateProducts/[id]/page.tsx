@@ -6,7 +6,24 @@ import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 import { logActivity } from "@/app/lib/activity";
 import { notifyProductUpdated, notifyProductFileUploaded } from "@/app/lib/notifications";
 import * as THREE from "three";
-import { FBXLoader, OrbitControls } from "three-stdlib";
+import { FBXLoader, GLTFLoader, OrbitControls } from "three-stdlib";
+
+const ALLOWED_3D_EXTENSIONS = ["fbx", "glb", "gltf"] as const;
+
+type WeatherKey = "sunny" | "rainy" | "night" | "foggy";
+const WEATHER_KEYS: WeatherKey[] = ["sunny", "rainy", "night", "foggy"];
+
+function getFileExtension(name: string): string {
+  const clean = (name || "").split("?")[0].split("#")[0];
+  const lastDot = clean.lastIndexOf(".");
+  if (lastDot === -1) return "";
+  return clean.slice(lastDot + 1).toLowerCase();
+}
+
+function isAllowed3DFile(file: File): boolean {
+  const ext = getFileExtension(file.name);
+  return (ALLOWED_3D_EXTENSIONS as readonly string[]).includes(ext);
+}
 
 type Product = {
   id: string;
@@ -27,6 +44,7 @@ type Product = {
   thickness?: number;
   fbx_url?: string;
   fbx_urls?: string[];
+  skyboxes?: Partial<Record<WeatherKey, string | null>>;
   fullproductname?: string;
   additionalfeatures?: string;
   inventory?: number;
@@ -46,6 +64,8 @@ export default function EditProductPage() {
   const [currentFbxIndex, setCurrentFbxIndex] = useState(0);
   const [uploadingFbx, setUploadingFbx] = useState(false);
   const [uploadingImages, setUploadingImages] = useState(false);
+  const [uploadingSkyboxes, setUploadingSkyboxes] = useState(false);
+  const [previewWeather, setPreviewWeather] = useState<WeatherKey>("sunny");
 
   // Persist images (already exists)
   const persistImages = async (imgs: string[]) => {
@@ -106,6 +126,33 @@ export default function EditProductPage() {
     } catch (err) {
       console.error('persistFbx error:', err);
       setMessage(`Warning: FBX update saved locally but failed to persist: ${String((err as any)?.message || err)}`);
+    }
+  };
+
+  const persistSkyboxes = async (skyboxes: Partial<Record<WeatherKey, string | null>> | null) => {
+    try {
+      const res = await fetch(`/api/products/${productId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: JSON.stringify(currentAdmin || {})
+        },
+        body: JSON.stringify({ skyboxes: skyboxes || null }),
+      });
+
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error || `Failed to persist skyboxes (${res.status})`);
+      }
+
+      const j = await res.json().catch(() => null);
+      if (j?.product) {
+        setOriginalProduct((prev) => ({ ...(prev || {} as any), ...j.product } as Product));
+        setProduct((prev) => ({ ...(prev || {} as any), ...j.product } as Product));
+      }
+    } catch (err) {
+      console.error('persistSkyboxes error:', err);
+      setMessage(`Warning: skyboxes saved locally but failed to persist: ${String((err as any)?.message || err)}`);
     }
   };
 
@@ -658,33 +705,122 @@ export default function EditProductPage() {
     }
   };
 
+  const getCurrentSkyboxes = (): Partial<Record<WeatherKey, string | null>> => {
+    const raw = (product as any)?.skyboxes;
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw as any;
+    return {};
+  };
+
+  const handleUploadSkybox = async (weather: WeatherKey, file: File) => {
+    if (!currentAdmin || !product) return;
+    setUploadingSkyboxes(true);
+    setMessage(`Uploading ${weather} skybox...`);
+
+    try {
+      const url = await uploadFile(file, `skyboxes/${weather}`, productId);
+      const current = getCurrentSkyboxes();
+      const next = { ...current, [weather]: url };
+
+      await handleChange('skyboxes', next);
+      await persistSkyboxes(next);
+
+      await logActivity({
+        admin_id: currentAdmin.id,
+        admin_name: currentAdmin.username,
+        action: 'upload',
+        entity_type: 'product_skybox',
+        entity_id: product.id,
+        page: 'UpdateProducts',
+        details: `Uploaded ${weather} skybox for "${product.name}": ${file.name}`,
+        metadata: {
+          weather,
+          fileName: file.name,
+          fileSize: file.size,
+          skyboxUrl: url,
+          productName: product.name,
+          productId: product.id,
+          adminAccount: currentAdmin.username,
+          timestamp: new Date().toISOString()
+        }
+      });
+
+      setMessage('Skybox uploaded successfully');
+      setTimeout(() => setMessage(''), 2500);
+    } catch (error) {
+      console.error('Skybox upload error:', error);
+      setMessage('Error uploading skybox');
+    } finally {
+      setUploadingSkyboxes(false);
+    }
+  };
+
+  const handleRemoveSkybox = async (weather: WeatherKey) => {
+    if (!currentAdmin || !product) return;
+    const current = getCurrentSkyboxes();
+    if (!current[weather]) return;
+
+    const next = { ...current, [weather]: null };
+    await handleChange('skyboxes', next);
+    await persistSkyboxes(next);
+
+    await logActivity({
+      admin_id: currentAdmin.id,
+      admin_name: currentAdmin.username,
+      action: 'delete',
+      entity_type: 'product_skybox',
+      entity_id: product.id,
+      page: 'UpdateProducts',
+      details: `Removed ${weather} skybox from "${product.name}"`,
+      metadata: {
+        weather,
+        removedUrl: current[weather],
+        productName: product.name,
+        productId: product.id,
+        adminAccount: currentAdmin.username,
+        timestamp: new Date().toISOString()
+      }
+    });
+  };
+
   // Enhanced FBX file upload handler
   const handleFbxUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (!files.length || !currentAdmin || !product) return;
 
+    const accepted = files.filter(isAllowed3DFile);
+    const rejected = files.filter((f) => !isAllowed3DFile(f));
+    if (rejected.length > 0) {
+      setMessage(
+        `Ignored ${rejected.length} unsupported file(s). Allowed: ${ALLOWED_3D_EXTENSIONS.map((x) => `.${x}`).join(", ")}`
+      );
+    }
+    if (accepted.length === 0) return;
+
     setUploadingFbx(true);
-    setMessage("Uploading FBX files...");
+    setMessage("Uploading 3D model files...");
 
     try {
       const uploadedUrls: string[] = [];
       
-      for (const file of files) {
-        const url = await uploadFile(file, "fbx", productId);
+      for (const file of accepted) {
+        const url = await uploadFile(file, "models", productId);
         uploadedUrls.push(url);
+
+        const fileType = getFileExtension(file.name) || "file";
         
         // Log individual file upload
         await logActivity({
           admin_id: currentAdmin.id,
           admin_name: currentAdmin.username,
           action: "upload",
-          entity_type: "fbx_file",
+          entity_type: "3d_model_file",
           entity_id: product.id,
           page: "UpdateProducts",
-          details: `Admin ${currentAdmin.username} uploaded FBX file: ${file.name} for product "${product.name}"`,
+          details: `Admin ${currentAdmin.username} uploaded 3D model file: ${file.name} for product "${product.name}"`,
           metadata: {
             fileName: file.name,
             fileSize: file.size,
+            fileType,
             productName: product.name,
             productId: product.id,
             adminAccount: currentAdmin.username,
@@ -697,11 +833,11 @@ export default function EditProductPage() {
           await notifyProductFileUploaded(
             product.name, 
             currentAdmin.username, 
-            'fbx', 
+            fileType, 
             file.name
           );
         } catch (notifyError) {
-          console.warn("Failed to create FBX upload notification:", notifyError);
+          console.warn("Failed to create 3D model upload notification:", notifyError);
         }
       }
       
@@ -716,12 +852,12 @@ export default function EditProductPage() {
       // Persist immediately so files don't disappear on refresh
       await persistFbx(newFbxUrls);
       
-      setMessage(`${files.length} FBX file(s) uploaded successfully!`);
+      setMessage(`${accepted.length} 3D model file(s) uploaded successfully!`);
       setTimeout(() => setMessage(""), 3000);
       
     } catch (error) {
       console.error("FBX upload error:", error);
-      setMessage("Error uploading FBX files");
+      setMessage("Error uploading 3D model files");
       
       // Log upload error
       if (currentAdmin) {
@@ -729,13 +865,14 @@ export default function EditProductPage() {
           admin_id: currentAdmin.id,
           admin_name: currentAdmin.username,
           action: "upload",
-          entity_type: "fbx_upload_error",
+          entity_type: "3d_model_upload_error",
           entity_id: product.id,
           page: "UpdateProducts",
-          details: `Admin ${currentAdmin.username} failed to upload FBX files for "${product.name}": ${error}`,
+          details: `Admin ${currentAdmin.username} failed to upload 3D model files for "${product.name}": ${error}`,
           metadata: {
             error: String(error),
-            filesCount: files.length,
+            filesCount: accepted.length,
+            rejectedFileNames: rejected.map((f) => f.name),
             productName: product.name,
             productId: product.id,
             adminAccount: currentAdmin.username,
@@ -769,7 +906,7 @@ export default function EditProductPage() {
       entity_type: "fbx_file",
       entity_id: product.id,
       page: "UpdateProducts",
-      details: `Admin ${currentAdmin.username} removed FBX file (${index + 1}) from product "${product.name}"`,
+      details: `Admin ${currentAdmin.username} removed 3D model file (${index + 1}) from product "${product.name}"`,
       metadata: {
         removedUrl: url,
         fileIndex: index + 1,
@@ -800,6 +937,7 @@ export default function EditProductPage() {
   };
 
   const currentFbxUrls = getCurrentFbxUrls();
+  const previewSkyboxUrl = (product?.skyboxes && (product.skyboxes as any)[previewWeather]) ? (product.skyboxes as any)[previewWeather] : null;
 
   if (loading) {
     return (
@@ -838,9 +976,9 @@ export default function EditProductPage() {
             </button>
 
             <div className="mb-4">
-              <h2 className="text-lg font-bold text-gray-900 mb-2">3D FBX Viewer</h2>
+              <h2 className="text-lg font-bold text-gray-900 mb-2">3D Model Viewer</h2>
               <div className="text-sm text-gray-600 mb-2">
-                Viewing FBX {currentFbxIndex + 1} of {currentFbxUrls.length}
+                Viewing {currentFbxIndex + 1} of {currentFbxUrls.length}
               </div>
 
               {currentFbxUrls.length > 1 && (
@@ -863,10 +1001,27 @@ export default function EditProductPage() {
               <div className="text-xs text-gray-500 mb-2">
                 Use mouse to rotate, zoom, and pan. Background is transparent for clean previews.
               </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="text-xs font-medium text-gray-700">Preview skybox:</label>
+                <select
+                  value={previewWeather}
+                  onChange={(e) => setPreviewWeather(e.target.value as WeatherKey)}
+                  className="border border-gray-300 rounded px-2 py-1 text-xs text-black bg-white"
+                >
+                  <option value="sunny">Sunny</option>
+                  <option value="rainy">Rainy</option>
+                  <option value="night">Night</option>
+                  <option value="foggy">Foggy</option>
+                </select>
+                {!previewSkyboxUrl && (
+                  <span className="text-[11px] text-gray-500">No skybox set for this weather.</span>
+                )}
+              </div>
             </div>
 
             <div className="h-96 w-full">
-              <FBXViewer fbxUrl={currentFbxUrls[currentFbxIndex]} />
+              <FBXViewer fbxUrl={currentFbxUrls[currentFbxIndex]} skyboxUrl={previewSkyboxUrl} />
             </div>
           </div>
         </div>
@@ -1036,17 +1191,17 @@ export default function EditProductPage() {
           </h2>
           
           <div className="mb-4">
-            <label className="block font-medium mb-1 text-black">Upload New FBX Files</label>
+            <label className="block font-medium mb-1 text-black">Upload New 3D Model Files (.fbx, .glb, .gltf)</label>
             <input
               type="file"
-              accept=".fbx"
+              accept=".fbx,.glb,.gltf"
               multiple
               onChange={handleFbxUpload}
               disabled={uploadingFbx}
               className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
             />
             <div className="text-sm text-gray-500 mt-1">
-              Select multiple FBX files to upload. Files will be automatically saved to the product.
+              Select multiple 3D model files to upload. Files will be automatically saved to the product.
             </div>
           </div>
 
@@ -1054,7 +1209,7 @@ export default function EditProductPage() {
             <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-800">
               <div className="flex items-center">
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
-                Uploading FBX files...
+                Uploading 3D model files...
               </div>
             </div>
           )}
@@ -1179,6 +1334,81 @@ export default function EditProductPage() {
           </div>
         </div>
 
+        {/* Skyboxes Management */}
+        <div className="border-b border-gray-200 pb-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-2">Skyboxes by Weather</h2>
+          <div className="text-sm text-gray-500 mb-4">
+            Upload one equirectangular image (JPG/PNG) per weather. This will be used as the 3D background on the website and in the admin preview.
+          </div>
+
+          {uploadingSkyboxes && (
+            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-800">
+              <div className="flex items-center">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                Uploading skybox...
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {WEATHER_KEYS.map((weatherKey) => {
+              const sky = getCurrentSkyboxes();
+              const url = sky?.[weatherKey] || null;
+              return (
+                <div key={weatherKey} className="flex items-center justify-between p-3 bg-gray-100 rounded-lg border">
+                  <div className="flex items-center gap-3 flex-1">
+                    <div className="w-28 h-16 bg-white border rounded overflow-hidden flex items-center justify-center">
+                      {url ? (
+                        <img src={url} alt={`${weatherKey} skybox`} className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="text-xs text-gray-400">No skybox</span>
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <div className="font-medium text-sm capitalize">{weatherKey}</div>
+                      {url ? (
+                        <a
+                          href={url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 underline text-xs break-all"
+                        >
+                          {url.split('/').pop() || url}
+                        </a>
+                      ) : (
+                        <div className="text-xs text-gray-500">Upload an image to enable this weather skybox.</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2 ml-4">
+                    <label className="px-3 py-1 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 transition-colors cursor-pointer">
+                      {url ? 'Replace' : 'Upload'}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) handleUploadSkybox(weatherKey, f);
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveSkybox(weatherKey)}
+                      disabled={!url}
+                      className="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition-colors disabled:opacity-50"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Action Buttons */}
         <div className="flex gap-4 pt-4">
           <button
@@ -1251,7 +1481,7 @@ async function uploadFile(file: File, field: string, productId: string): Promise
 }
 
 // FBX Viewer Component (adapted from products page for consistency)
-function FBXViewer({ fbxUrl }: { fbxUrl: string }) {
+function FBXViewer({ fbxUrl, skyboxUrl }: { fbxUrl: string; skyboxUrl?: string | null }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -1299,8 +1529,43 @@ function FBXViewer({ fbxUrl }: { fbxUrl: string }) {
   const canvasEl = renderer.domElement;
   container.appendChild(canvasEl);
 
-  // Lights (no platform/grid); keep transparent background to focus on model
+  // Lights (no platform/grid)
+  // Default to transparent background; if a skybox is provided, we'll render it.
   scene.background = null;
+
+    let skyTex: THREE.Texture | null = null;
+
+    const setTexColorSpace = (tex: any) => {
+      const anyTHREE: any = THREE;
+      if (!tex) return;
+      if ("colorSpace" in tex && anyTHREE.SRGBColorSpace !== undefined) {
+        tex.colorSpace = anyTHREE.SRGBColorSpace;
+      } else if ("encoding" in tex && anyTHREE.sRGBEncoding !== undefined) {
+        tex.encoding = anyTHREE.sRGBEncoding;
+      }
+    };
+
+    if (skyboxUrl) {
+      const texLoader = new THREE.TextureLoader();
+      texLoader.setCrossOrigin("anonymous");
+      texLoader.load(
+        skyboxUrl,
+        (tex) => {
+          if (disposed) {
+            try { tex.dispose(); } catch {}
+            return;
+          }
+          skyTex = tex;
+          setTexColorSpace(skyTex);
+          skyTex.mapping = THREE.EquirectangularReflectionMapping;
+          scene.background = skyTex;
+        },
+        undefined,
+        () => {
+          if (!disposed) setLoadError("Failed to load skybox image");
+        }
+      );
+    }
     const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.15);
     hemi.position.set(0, 400, 0);
     scene.add(hemi);
@@ -1324,8 +1589,12 @@ function FBXViewer({ fbxUrl }: { fbxUrl: string }) {
 
     const manager = new THREE.LoadingManager();
     manager.onError = (url) => !disposed && setLoadError(`Failed to load: ${url}`);
-    const loader = new FBXLoader(manager);
-    loader.setCrossOrigin("anonymous");
+    const fbxLoader = new FBXLoader(manager);
+    fbxLoader.setCrossOrigin("anonymous");
+    const gltfLoader = new GLTFLoader(manager);
+    (gltfLoader as any).setCrossOrigin?.("anonymous");
+
+    const urlExt = getFileExtension(fbxUrl);
 
     // Try to fetch the file as a Blob first to avoid any CORS/content-type hiccups,
     // then fall back to direct URL if needed.
@@ -1342,9 +1611,7 @@ function FBXViewer({ fbxUrl }: { fbxUrl: string }) {
           objectURLToRevoke = URL.createObjectURL(blob);
 
           return new Promise<void>((resolve, reject) => {
-            loader.load(
-              objectURLToRevoke as string,
-              (object) => {
+            const onLoadedObject = (object: THREE.Object3D) => {
                 if (disposed) return;
                 // attach object to scene with centering, scaling, and camera fit
                 object.traverse((child: any) => {
@@ -1394,12 +1661,30 @@ function FBXViewer({ fbxUrl }: { fbxUrl: string }) {
                 scene.add(object);
                 setIsLoading(false);
                 resolve();
-              },
-              undefined,
-              (err) => {
-                reject(err);
-              }
-            );
+            };
+
+            const onError = (err: unknown) => reject(err);
+
+            if (urlExt === "fbx") {
+              fbxLoader.load(objectURLToRevoke as string, (object) => onLoadedObject(object), undefined, onError);
+              return;
+            }
+
+            if (urlExt === "glb" || urlExt === "gltf") {
+              gltfLoader.load(
+                objectURLToRevoke as string,
+                (gltf: any) => {
+                  const object = gltf?.scene as THREE.Object3D | undefined;
+                  if (!object) return onError(new Error("Missing gltf.scene"));
+                  onLoadedObject(object);
+                },
+                undefined,
+                onError
+              );
+              return;
+            }
+
+            onError(new Error(`Unsupported 3D model type: .${urlExt || "?"}`));
           });
         } catch (e) {
           // Try next variant
@@ -1408,10 +1693,9 @@ function FBXViewer({ fbxUrl }: { fbxUrl: string }) {
       }
       // If all blob attempts failed, try direct URL once
       return new Promise<void>((resolve, reject) => {
-        loader.load(
-          fbxUrl,
-          (object) => {
-        if (disposed) return;
+        const onError = (err: unknown) => reject(err);
+        const onLoadedDirect = (object: THREE.Object3D) => {
+          if (disposed) return;
             object.traverse((child: any) => {
               if (child.isMesh) {
                 child.castShadow = true;
@@ -1457,17 +1741,35 @@ function FBXViewer({ fbxUrl }: { fbxUrl: string }) {
             scene.add(object);
             setIsLoading(false);
             resolve();
-          },
-          undefined,
-          (err) => reject(err)
-        );
+        };
+
+        if (urlExt === "fbx") {
+          fbxLoader.load(fbxUrl, (object) => onLoadedDirect(object), undefined, onError);
+          return;
+        }
+
+        if (urlExt === "glb" || urlExt === "gltf") {
+          gltfLoader.load(
+            fbxUrl,
+            (gltf: any) => {
+              const object = gltf?.scene as THREE.Object3D | undefined;
+              if (!object) return onError(new Error("Missing gltf.scene"));
+              onLoadedDirect(object);
+            },
+            undefined,
+            onError
+          );
+          return;
+        }
+
+        onError(new Error(`Unsupported 3D model type: .${urlExt || "?"}`));
       });
     };
 
     tryLoad().catch((err) => {
       if (disposed) return;
-      console.error("FBX load error:", err);
-      setLoadError("Unable to render 3D model. Re-upload the FBX if the issue persists.");
+      console.error("3D model load error:", err);
+      setLoadError("Unable to render 3D model. Re-upload the model if the issue persists.");
       setIsLoading(false);
     });
 
@@ -1519,8 +1821,10 @@ function FBXViewer({ fbxUrl }: { fbxUrl: string }) {
       });
       renderer.dispose();
       (renderer as any).forceContextLoss?.();
+
+      try { skyTex?.dispose(); } catch {}
     };
-  }, [fbxUrl]);
+  }, [fbxUrl, skyboxUrl]);
 
   return (
     <div ref={mountRef} className="relative h-full w-full rounded-lg bg-transparent">

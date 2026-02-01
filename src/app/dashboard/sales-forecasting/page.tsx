@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Line } from "react-chartjs-2";
 import {
   Chart as ChartJS,
@@ -15,8 +15,15 @@ import {
 
 import * as tf from "@tensorflow/tfjs";
 
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+
 import { RandomForestRegression as RFRegression } from "ml-random-forest";
-import { trainAndForecastDailyRF, type SalesForecastOutput } from "@/app/lib/salesRandomForest";
+import {
+  summarizeForecastDelta,
+  trainAndForecastDailyRF,
+  type SalesForecastOutput,
+} from "@/app/lib/salesRandomForest";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
@@ -182,6 +189,11 @@ export default function SalesForecastingPage() {
   const [revForecast, setRevForecast] = useState<SalesForecastOutput | null>(null);
   const [qtyForecast, setQtyForecast] = useState<SalesForecastOutput | null>(null);
 
+  const revChartRef = useRef<any>(null);
+  const qtyChartRef = useRef<any>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [autoRunDone, setAutoRunDone] = useState(false);
+
   // LSTM: product demand forecasting
   const [lstmDays, setLstmDays] = useState(270);
   const [lstmLimit, setLstmLimit] = useState(10);
@@ -193,10 +205,12 @@ export default function SalesForecastingPage() {
   const [lstmError, setLstmError] = useState<string | null>(null);
   const [lstmResults, setLstmResults] = useState<LstmDemandResult[] | null>(null);
 
+  const [lstmProgress, setLstmProgress] = useState<{ current: number; total: number; label: string } | null>(null);
+
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
-  const run = async () => {
+  const run = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -250,7 +264,7 @@ export default function SalesForecastingPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [backtestDays, horizon, lookback, trainingDays]);
 
   const revenueChartData = useMemo(() => {
     if (!revForecast) return null;
@@ -310,11 +324,12 @@ export default function SalesForecastingPage() {
     };
   }, []);
 
-  const runLstm = async () => {
+  const runLstm = useCallback(async () => {
     try {
       setLstmLoading(true);
       setLstmError(null);
       setLstmResults(null);
+      setLstmProgress(null);
 
       const branchParam = lstmBranch.trim() ? `&branch=${encodeURIComponent(lstmBranch.trim())}` : "";
       const res = await fetch(
@@ -328,7 +343,13 @@ export default function SalesForecastingPage() {
       // Train per-product (sequential to avoid GPU/memory spikes)
       const results: LstmDemandResult[] = [];
       const products = (data.products || []).slice(0, Math.min(12, lstmLimit));
+      setLstmProgress({ current: 0, total: products.length, label: "Preparing…" });
       for (const p of products) {
+        setLstmProgress({
+          current: results.length + 1,
+          total: products.length,
+          label: `Training ${p.product_name}`,
+        });
         const r = await trainAndForecastDemandLSTM({
           labels: p.labels,
           quantities: p.quantities,
@@ -344,6 +365,9 @@ export default function SalesForecastingPage() {
           recent_total_units: r.recent_total,
           delta_pct: delta,
         });
+
+        // Yield to UI + help prevent long-blocking tasks
+        await tf.nextFrame();
       }
 
       results.sort((a, b) => b.predicted_total_units - a.predicted_total_units);
@@ -351,9 +375,152 @@ export default function SalesForecastingPage() {
     } catch (e: unknown) {
       setLstmError(e instanceof Error ? e.message : String(e));
     } finally {
+      setLstmProgress(null);
       setLstmLoading(false);
     }
-  };
+  }, [lstmBranch, lstmDays, lstmEpochs, lstmHorizon, lstmLimit, lstmLookback]);
+
+  useEffect(() => {
+    if (autoRunDone) return;
+    setAutoRunDone(true);
+    void run();
+    void runLstm();
+  }, [autoRunDone, run, runLstm]);
+
+  const exportPdf = useCallback(async () => {
+    try {
+      setPdfLoading(true);
+
+      const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
+      const now = new Date();
+      const fileDate = now.toISOString().slice(0, 10);
+
+      const pageWidth = (pdf as any).internal.pageSize.getWidth();
+      const marginX = 14;
+      let y = 16;
+
+      pdf.setFontSize(16);
+      pdf.setTextColor(17, 24, 39);
+      pdf.text("Sales Forecasting & Demand Report", marginX, y);
+      y += 7;
+
+      pdf.setFontSize(10);
+      pdf.setTextColor(75, 85, 99);
+      pdf.text(`Generated: ${now.toLocaleString()}`, marginX, y);
+      y += 8;
+
+      // Summary table (RF forecast)
+      const revDelta = revForecast
+        ? summarizeForecastDelta({ actual: revForecast.actual, forecast: revForecast.forecast, horizon: revForecast.meta.horizon })
+        : null;
+      const qtyDelta = qtyForecast
+        ? summarizeForecastDelta({ actual: qtyForecast.actual, forecast: qtyForecast.forecast, horizon: qtyForecast.meta.horizon })
+        : null;
+
+      autoTable(pdf, {
+        startY: y,
+        head: [["Section", "Notes"]],
+        body: [
+          [
+            "Random Forest (Sales)",
+            series && revForecast && qtyForecast
+              ? `Range: ${series.startDate} → ${series.endDate}. Revenue MAE: ₱${Math.round(revForecast.maeBacktest).toLocaleString()}. Units MAE: ${qtyForecast.maeBacktest.toFixed(2)}.`
+              : "Not run / no data.",
+          ],
+          [
+            "RF Trend (Next Horizon)",
+            revDelta && qtyDelta
+              ? `Revenue: ${(revDelta.pctChange * 100).toFixed(1)}% vs recent horizon. Units: ${(qtyDelta.pctChange * 100).toFixed(1)}% vs recent horizon.`
+              : "Not available.",
+          ],
+          [
+            "LSTM Demand (Top Products)",
+            lstmResults?.length
+              ? `History: ${lstmDays}d, horizon: ${lstmHorizon}d, lookback: ${lstmLookback}, epochs: ${lstmEpochs}. Branch: ${lstmBranch.trim() || "all"}.`
+              : "Not run / no data.",
+          ],
+        ],
+        theme: "striped",
+        headStyles: { fillColor: [17, 24, 39] },
+        styles: { fontSize: 9 },
+        margin: { left: marginX, right: marginX },
+      });
+
+      y = ((pdf as any).lastAutoTable?.finalY || y) + 8;
+
+      // Add charts as images when available
+      const getChartPng = (ref: any): string | null => {
+        const inst = ref?.current?.chart ?? ref?.current;
+        const toBase64 = inst?.toBase64Image;
+        if (typeof toBase64 === "function") return toBase64.call(inst);
+        return null;
+      };
+
+      const revImg = getChartPng(revChartRef);
+      const qtyImg = getChartPng(qtyChartRef);
+      const imgW = pageWidth - marginX * 2;
+      const imgH = 70;
+
+      if (revImg) {
+        if (y + imgH > 285) {
+          pdf.addPage();
+          y = 16;
+        }
+        pdf.setFontSize(12);
+        pdf.setTextColor(17, 24, 39);
+        pdf.text("Revenue Forecast", marginX, y);
+        y += 4;
+        pdf.addImage(revImg, "PNG", marginX, y, imgW, imgH);
+        y += imgH + 10;
+      }
+
+      if (qtyImg) {
+        if (y + imgH > 285) {
+          pdf.addPage();
+          y = 16;
+        }
+        pdf.setFontSize(12);
+        pdf.setTextColor(17, 24, 39);
+        pdf.text("Units Forecast", marginX, y);
+        y += 4;
+        pdf.addImage(qtyImg, "PNG", marginX, y, imgW, imgH);
+        y += imgH + 8;
+      }
+
+      // LSTM table
+      if (y > 265) {
+        pdf.addPage();
+        y = 16;
+      }
+
+      pdf.setFontSize(12);
+      pdf.setTextColor(17, 24, 39);
+      pdf.text("LSTM Product Demand (Top Products)", marginX, y);
+      y += 4;
+
+      autoTable(pdf, {
+        startY: y,
+        head: [["Product", "Predicted (next)", "Recent (last)", "Δ%"]],
+        body: (lstmResults || []).map((r) => [
+          r.product_name,
+          Math.round(r.predicted_total_units).toLocaleString(),
+          Math.round(r.recent_total_units).toLocaleString(),
+          `${(r.delta_pct * 100).toFixed(1)}%`,
+        ]),
+        theme: "striped",
+        headStyles: { fillColor: [79, 70, 229] },
+        styles: { fontSize: 9 },
+        margin: { left: marginX, right: marginX },
+      });
+
+      pdf.save(`sales-forecast-demand-${fileDate}.pdf`);
+    } catch (e) {
+      console.error("PDF export failed", e);
+      alert(e instanceof Error ? e.message : "PDF export failed");
+    } finally {
+      setPdfLoading(false);
+    }
+  }, [lstmBranch, lstmDays, lstmEpochs, lstmHorizon, lstmLookback, lstmResults, qtyForecast, revForecast, series]);
 
   const syncSalesInventory9Months = async () => {
     try {
@@ -373,10 +540,22 @@ export default function SalesForecastingPage() {
   return (
     <div className="space-y-6">
       <div className="bg-white shadow rounded-lg p-6">
-        <h1 className="text-2xl font-semibold text-black">Sales Forecasting</h1>
-        <p className="mt-2 text-black text-sm">
-          Random Forest forecasting trained on daily sales (from <span className="font-mono">/api/analytics/sales-series</span>).
-        </p>
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h1 className="text-2xl font-semibold text-black">Sales Forecasting</h1>
+            <p className="mt-2 text-black text-sm">
+              Random Forest forecasting trained on daily sales (from <span className="font-mono">/api/analytics/sales-series</span>).
+            </p>
+          </div>
+          <button
+            className="px-3 py-2 rounded bg-black text-white hover:bg-gray-900 disabled:opacity-50"
+            onClick={exportPdf}
+            disabled={pdfLoading || loading || lstmLoading}
+            title={loading || lstmLoading ? "Wait for training to finish" : "Download PDF"}
+          >
+            {pdfLoading ? "Generating PDF…" : "Export PDF"}
+          </button>
+        </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
@@ -479,7 +658,7 @@ export default function SalesForecastingPage() {
             )}
           </div>
           <div className="mt-4">
-            <Line data={revenueChartData} options={chartOptions as any} />
+            <Line ref={revChartRef} data={revenueChartData} options={chartOptions as any} />
           </div>
         </div>
       )}
@@ -495,7 +674,7 @@ export default function SalesForecastingPage() {
             )}
           </div>
           <div className="mt-4">
-            <Line data={qtyChartData} options={chartOptions as any} />
+            <Line ref={qtyChartRef} data={qtyChartData} options={chartOptions as any} />
           </div>
         </div>
       )}
@@ -517,6 +696,20 @@ export default function SalesForecastingPage() {
             {lstmLoading ? "Training…" : "Run LSTM Ranking"}
           </button>
         </div>
+
+        {lstmProgress && (
+          <div className="rounded border bg-gray-50 p-3">
+            <div className="text-sm text-gray-800">
+              {lstmProgress.label} ({lstmProgress.current}/{lstmProgress.total})
+            </div>
+            <div className="mt-2 h-2 w-full rounded bg-gray-200 overflow-hidden">
+              <div
+                className="h-2 bg-indigo-600"
+                style={{ width: `${lstmProgress.total ? (lstmProgress.current / lstmProgress.total) * 100 : 0}%` }}
+              />
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
           <div>

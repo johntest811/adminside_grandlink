@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
              balance_payment_status,balance_payment_id,total_paid,admin_notes,
              estimated_delivery_date,payment_id,price,total_amount,customer_name,
              customer_email,customer_phone,delivery_address,payment_method,
-             order_status,order_progress`)
+             order_status`)
     .in("item_type", ["reservation", "order"]) as any;
 
   // Optional status filter: match either DB status or UI order_status

@@ -73,6 +73,7 @@ export default function RolesAndPermissionsPage() {
   const [adminAccountsLoading, setAdminAccountsLoading] = useState(false);
   const [adminAccountSearch, setAdminAccountSearch] = useState("");
   const [creatingAdminAccount, setCreatingAdminAccount] = useState(false);
+  const [pageSearch, setPageSearch] = useState("");
   const [newAdminAccount, setNewAdminAccount] = useState({
     username: "",
     password: "",
@@ -80,6 +81,19 @@ export default function RolesAndPermissionsPage() {
     position: "Admin",
     full_name: "",
   });
+
+  const hashToMode = (hash: string): typeof mode => {
+    const h = (hash || "").replace(/^#/, "").trim().toLowerCase();
+    if (h === "admin-overrides" || h === "overrides" || h === "admins") return "admins";
+    if (h === "accounts" || h === "admin-accounts") return "accounts";
+    return "positions";
+  };
+
+  const modeToHash = (m: typeof mode) => {
+    if (m === "admins") return "admin-overrides";
+    if (m === "accounts") return "accounts";
+    return "positions";
+  };
 
   const norm = (v?: string) => String(v || "").toLowerCase().replace(/[\s_-]/g, "");
   const isSuperadmin =
@@ -110,6 +124,27 @@ export default function RolesAndPermissionsPage() {
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    try {
+      const initial = hashToMode(window.location.hash);
+      setMode(initial);
+    } catch {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    try {
+      const nextHash = modeToHash(mode);
+      if (window.location.hash.replace(/^#/, "") !== nextHash) {
+        window.history.replaceState(null, "", `#${nextHash}`);
+      }
+    } catch {
+      // ignore
+    }
+  }, [mode]);
 
   useEffect(() => {
     const loadAllowed = async () => {
@@ -419,6 +454,20 @@ export default function RolesAndPermissionsPage() {
     return Array.from(grouped.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   }, [pages]);
 
+  const filteredPagesByGroup = useMemo(() => {
+    const q = pageSearch.trim().toLowerCase();
+    if (!q) return pagesByGroup;
+    return pagesByGroup
+      .map(([group, groupPages]) => {
+        const filtered = groupPages.filter((p) => {
+          const blob = `${p.name} ${p.path} ${p.key} ${p.group_name || ""}`.toLowerCase();
+          return blob.includes(q);
+        });
+        return [group, filtered] as const;
+      })
+      .filter(([, groupPages]) => groupPages.length > 0);
+  }, [pageSearch, pagesByGroup]);
+
   const adminEffectiveComputedKeys = useMemo(() => {
     if (mode !== "admins") return new Set<string>();
     if (adminHasWildcardAccess) return new Set(pages.map((p) => p.key));
@@ -596,7 +645,7 @@ export default function RolesAndPermissionsPage() {
   if (!canViewRoles) {
     return (
       <div className="bg-white border border-gray-200 rounded-lg p-6">
-        <h1 className="text-xl font-semibold text-gray-900">Roles & Permissions</h1>
+        <h1 className="text-xl font-semibold text-gray-900">Access Control</h1>
         <p className="mt-2 text-gray-700">You do not have access to this page.</p>
       </div>
     );
@@ -604,9 +653,29 @@ export default function RolesAndPermissionsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Roles & Permissions</h1>
-        <div className="flex items-center gap-2">
+      <div className="bg-white border border-gray-200 rounded-lg p-6">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Access Control</h1>
+            <p className="mt-1 text-sm text-gray-700">
+              Manage who can access what. Use <span className="font-semibold">Position Permissions</span> as the default,
+              then apply <span className="font-semibold">Admin Overrides</span> for special cases.
+              <span className="font-semibold"> Admin Accounts</span> is where you create/disable admins and assign their position.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              fetchAll().catch((e) => alert(e.message));
+              if (mode === "admins") fetchAdmins().catch((e) => alert(e.message));
+              if (mode === "accounts") fetchAdminAccounts().catch((e) => alert(e.message));
+            }}
+            className="px-3 py-2 bg-black text-white rounded"
+          >
+            Refresh Data
+          </button>
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2">
           <button
             onClick={() => setMode("positions")}
             className={`px-3 py-2 rounded border ${
@@ -637,22 +706,28 @@ export default function RolesAndPermissionsPage() {
           >
             Admin Accounts
           </button>
-          <button
-            onClick={() => {
-              fetchAll().catch((e) => alert(e.message));
-              if (mode === "admins") fetchAdmins().catch((e) => alert(e.message));
-              if (mode === "accounts") fetchAdminAccounts().catch((e) => alert(e.message));
-            }}
-            className="px-3 py-2 bg-black text-white rounded"
-          >
-            Refresh
-          </button>
+
+          <div className="ml-auto flex items-center gap-3 text-sm text-gray-700">
+            <div>
+              Pages: <span className="font-semibold">{pages.length}</span>
+            </div>
+            <div>
+              Positions: <span className="font-semibold">{positions.length}</span>
+            </div>
+            <div>
+              Admins: <span className="font-semibold">{admins.length}</span>
+            </div>
+          </div>
         </div>
       </div>
 
       {mode === "accounts" && (
         <div className="bg-white border border-gray-200 rounded-lg p-6 space-y-4">
           <h2 className="text-xl font-semibold text-black">Admin Accounts</h2>
+          <p className="text-sm text-gray-700">
+            Create admins, assign their <span className="font-semibold">Position</span>, and manage access.
+            Access to this tab is restricted to <span className="font-semibold">Superadmins</span>.
+          </p>
 
           {!isSuperadmin ? (
             <div className="p-4 border rounded bg-gray-50 text-black">
@@ -850,10 +925,131 @@ export default function RolesAndPermissionsPage() {
         </div>
       )}
 
+      {mode === "positions" && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="bg-white border border-gray-200 rounded-lg p-5 space-y-4">
+            <div>
+              <div className="text-sm font-semibold text-gray-800">Create Position</div>
+              <div className="mt-2 space-y-2">
+                <input
+                  className="w-full p-2 border rounded text-black"
+                  placeholder="Position name (e.g. Content Editor)"
+                  value={newPositionName}
+                  onChange={(e) => setNewPositionName(e.target.value)}
+                />
+                <input
+                  className="w-full p-2 border rounded text-black"
+                  placeholder="Description (optional)"
+                  value={newPositionDescription}
+                  onChange={(e) => setNewPositionDescription(e.target.value)}
+                />
+                <button
+                  disabled={creating}
+                  onClick={() => createPosition().catch((e) => alert(e.message))}
+                  className="w-full px-3 py-2 bg-indigo-600 text-white rounded disabled:opacity-60"
+                >
+                  {creating ? "Creating..." : "Create"}
+                </button>
+              </div>
+            </div>
+
+            <hr />
+
+            <div>
+              <div className="text-sm font-semibold text-gray-800">Select Position</div>
+              <select
+                className="mt-2 w-full p-2 border rounded text-black"
+                value={selectedPosition}
+                onChange={(e) => setSelectedPosition(e.target.value)}
+              >
+                {positions.map((p) => (
+                  <option key={p.name} value={p.name}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <div className="mt-2 text-xs text-gray-600">
+                This is the default set of pages a position can access.
+              </div>
+            </div>
+
+            <button
+              disabled={deleting || !selectedPosition}
+              onClick={() => deleteSelectedPosition().catch((e) => alert(e.message))}
+              className="px-3 py-2 border border-red-300 text-red-700 rounded disabled:opacity-60"
+            >
+              {deleting ? "Deleting..." : "Delete Position"}
+            </button>
+
+            <button
+              disabled={saving || !selectedPosition}
+              onClick={() => saveAssignments().catch((e) => alert(e.message))}
+              className="px-3 py-2 bg-black text-white rounded disabled:opacity-60"
+            >
+              {saving ? "Saving..." : "Save Position Permissions"}
+            </button>
+          </div>
+
+          <div className="lg:col-span-2 bg-white border border-gray-200 rounded-lg p-5">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <div className="text-sm text-gray-600">Editing position</div>
+                <div className="text-lg font-semibold text-gray-900">{selectedPosition || "—"}</div>
+              </div>
+              <div className="text-sm text-gray-600">
+                Selected: <span className="font-semibold">{selectedPageKeys.size}</span>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <input
+                className="w-full p-2 border rounded text-black"
+                placeholder="Search pages (name/path)"
+                value={pageSearch}
+                onChange={(e) => setPageSearch(e.target.value)}
+              />
+            </div>
+
+            <div className="mt-4 space-y-4">
+              {filteredPagesByGroup.map(([group, groupPages]) => (
+                <div key={group} className="border border-gray-100 rounded p-3">
+                  <div className="text-sm font-semibold text-gray-800 mb-2">{group}</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {groupPages.map((p) => (
+                      <label
+                        key={p.key}
+                        className="flex items-start gap-2 p-2 rounded hover:bg-gray-50 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-1"
+                          checked={selectedPageKeys.has(p.key)}
+                          onChange={() => toggle(p.key)}
+                        />
+                        <div>
+                          <div className="text-sm text-gray-900">{p.name}</div>
+                          <div className="text-xs text-gray-500">{p.path}</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+
+              {pages.length === 0 && (
+                <div className="text-sm text-gray-600">
+                  No pages found. Seed your RBAC pages table first.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {mode === "admins" && (
-        <div className="bg-white border border-gray-200 rounded-lg p-5 space-y-4">
-          <div className="flex flex-col md:flex-row md:items-end gap-3">
-            <div className="flex-1">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="bg-white border border-gray-200 rounded-lg p-5 space-y-4">
+            <div>
               <div className="text-sm font-semibold text-gray-800">Select Admin Account</div>
               <select
                 className="mt-2 w-full p-2 border rounded text-black"
@@ -866,206 +1062,125 @@ export default function RolesAndPermissionsPage() {
                   </option>
                 ))}
               </select>
-              <div className="mt-1 text-xs text-gray-600">
-                Effective permissions include the admin’s position permissions + any overrides.
+              <div className="mt-2 text-xs text-gray-600">
+                Overrides add extra access on top of the admin’s position permissions.
               </div>
             </div>
 
-            <div className="min-w-[240px]">
-              <div className="text-sm text-gray-700">
+            <div className="rounded border border-gray-200 p-3 bg-gray-50 text-sm text-gray-700">
+              <div>
                 Effective: <span className="font-semibold">{adminEffectiveComputedKeys.size}</span>
               </div>
-              <div className="text-sm text-gray-700">
+              <div>
                 Overrides: <span className="font-semibold">{adminOverrideKeys.size}</span>
               </div>
-              <button
-                disabled={!canManageAdminOverrides || savingAdminOverrides || !selectedAdminId}
-                onClick={() => saveAdminOverrides().catch((e) => alert(e.message))}
-                className="mt-2 w-full px-3 py-2 bg-indigo-600 text-white rounded disabled:opacity-60"
-              >
-                {savingAdminOverrides ? "Saving..." : "Save Admin Overrides"}
-              </button>
-              {adminHasWildcardAccess && (
-                <div className="mt-2 text-xs text-gray-600">
-                  This admin has full access. Checkboxes reflect “Admin Overrides” only.
-                </div>
-              )}
-              {!canManageAdminOverrides && (
-                <div className="mt-2 text-xs text-gray-600">
-                  Read-only: you don’t have the “Roles - Admin Overrides” permission.
-                </div>
-              )}
+              <div>
+                From position: <span className="font-semibold">{adminPositionKeys.size}</span>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
 
-      {mode !== "accounts" && (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Create + select position */}
-        <div
-          className={`bg-white border border-gray-200 rounded-lg p-5 space-y-4 ${
-            mode === "admins" ? "opacity-60 pointer-events-none" : ""
-          }`}
-        >
-          <div>
-            <div className="text-sm font-semibold text-gray-800">Create Position</div>
-            <div className="mt-2 space-y-2">
-              <input
-                className="w-full p-2 border rounded text-black"
-                placeholder="Position name (e.g. Content Editor)"
-                value={newPositionName}
-                onChange={(e) => setNewPositionName(e.target.value)}
-              />
-              <input
-                className="w-full p-2 border rounded text-black"
-                placeholder="Description (optional)"
-                value={newPositionDescription}
-                onChange={(e) => setNewPositionDescription(e.target.value)}
-              />
-              <button
-                disabled={creating}
-                onClick={() => createPosition().catch((e) => alert(e.message))}
-                className="w-full px-3 py-2 bg-indigo-600 text-white rounded disabled:opacity-60"
-              >
-                {creating ? "Creating..." : "Create"}
-              </button>
-            </div>
-          </div>
-
-          <hr />
-
-          <div>
-            <div className="text-sm font-semibold text-gray-800">Select Position</div>
-            <select
-              className="mt-2 w-full p-2 border rounded text-black"
-              value={selectedPosition}
-              onChange={(e) => setSelectedPosition(e.target.value)}
+            <button
+              disabled={!canManageAdminOverrides || savingAdminOverrides || !selectedAdminId}
+              onClick={() => saveAdminOverrides().catch((e) => alert(e.message))}
+              className="w-full px-3 py-2 bg-indigo-600 text-white rounded disabled:opacity-60"
             >
-              {positions.map((p) => (
-                <option key={p.name} value={p.name}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <div className="mt-2 text-xs text-gray-600">
-              Assign which pages this position can access.
-            </div>
-          </div>
+              {savingAdminOverrides ? "Saving..." : "Save Admin Overrides"}
+            </button>
 
-          <button
-            disabled={deleting || !selectedPosition}
-            onClick={() => deleteSelectedPosition().catch((e) => alert(e.message))}
-            className="px-3 py-2 border border-red-300 text-red-700 rounded disabled:opacity-60"
-          >
-            {deleting ? "Deleting..." : "Delete Position"}
-          </button>
-
-          <button
-            disabled={saving || !selectedPosition}
-            onClick={() => saveAssignments().catch((e) => alert(e.message))}
-            className="px-3 py-2 bg-black text-white rounded disabled:opacity-60"
-          >
-            {saving ? "Saving..." : "Save Permissions"}
-          </button>
-        </div>
-
-        {/* Right: Permissions matrix */}
-        <div className="lg:col-span-2 bg-white border border-gray-200 rounded-lg p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm text-gray-600">
-                {mode === "admins" ? "Admin override editor" : "Editing position"}
+            {adminHasWildcardAccess && (
+              <div className="text-xs text-gray-600">
+                This admin currently has full access. Checkboxes represent explicit overrides only.
               </div>
-              <div className="text-lg font-semibold text-gray-900">
-                {mode === "admins"
-                  ? admins.find((a) => a.id === selectedAdminId)?.username || "—"
-                  : selectedPosition || "—"}
+            )}
+            {!canManageAdminOverrides && (
+              <div className="text-xs text-gray-600">
+                Read-only: you don’t have the “Admin Overrides” permission.
               </div>
-            </div>
-            <div className="text-sm text-gray-600">
-              {mode === "admins" ? (
-                <>
-                  Overrides selected: <span className="font-semibold">{adminOverrideKeys.size}</span>
-                </>
-              ) : (
-                <>
-                  Selected: <span className="font-semibold">{selectedPageKeys.size}</span>
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="mt-4 space-y-4">
-            {pagesByGroup.map(([group, groupPages]) => (
-              <div key={group} className="border border-gray-100 rounded p-3">
-                <div className="text-sm font-semibold text-gray-800 mb-2">{group}</div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {groupPages.map((p) => (
-                    (() => {
-                      const isPositionGranted = mode === "admins" && adminPositionKeys.has(p.key);
-                      const isOverrideGranted = mode === "admins" && adminOverrideKeys.has(p.key);
-                      const isEffectiveGranted =
-                        mode === "admins" && adminEffectiveComputedKeys.has(p.key);
-
-                      // In wildcard/full-access mode, show only explicit overrides as checked so they can be removed.
-                      const isChecked =
-                        mode === "admins"
-                          ? adminHasWildcardAccess
-                            ? isOverrideGranted
-                            : isPositionGranted || isOverrideGranted
-                          : selectedPageKeys.has(p.key);
-
-                      // Overrides are additive; you can't remove position-granted access via overrides.
-                      const isDisabled =
-                        mode === "admins" ? !canManageAdminOverrides || (!adminHasWildcardAccess && isPositionGranted) : false;
-
-                      return (
-                    <label
-                      key={p.key}
-                      className="flex items-start gap-2 p-2 rounded hover:bg-gray-50 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        className="mt-1"
-                        checked={isChecked}
-                        disabled={isDisabled}
-                        onChange={() => {
-                          if (mode !== "admins") {
-                            toggle(p.key);
-                            return;
-                          }
-                          if (!adminHasWildcardAccess && isPositionGranted) return;
-                          toggleAdminOverride(p.key);
-                        }}
-                      />
-                      <div>
-                        <div className="text-sm text-gray-900">{p.name}</div>
-                        <div className="text-xs text-gray-500">{p.path}</div>
-                        {mode === "admins" && (isPositionGranted || isOverrideGranted || isEffectiveGranted) && (
-                          <div className="text-xs text-green-700">
-                            {isPositionGranted
-                              ? "Granted by position"
-                              : isOverrideGranted
-                                ? "Granted by override"
-                                : "Effective for this admin"}
-                          </div>
-                        )}
-                      </div>
-                    </label>
-                      );
-                    })()
-                  ))}
-                </div>
-              </div>
-            ))}
-
-            {pages.length === 0 && (
-              <div className="text-sm text-gray-600">No pages found. Apply the SQL seed first.</div>
             )}
           </div>
+
+          <div className="lg:col-span-2 bg-white border border-gray-200 rounded-lg p-5">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <div className="text-sm text-gray-600">Admin override editor</div>
+                <div className="text-lg font-semibold text-gray-900">
+                  {admins.find((a) => a.id === selectedAdminId)?.username || "—"}
+                </div>
+              </div>
+              <div className="text-sm text-gray-600">
+                Overrides selected: <span className="font-semibold">{adminOverrideKeys.size}</span>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <input
+                className="w-full p-2 border rounded text-black"
+                placeholder="Search pages (name/path)"
+                value={pageSearch}
+                onChange={(e) => setPageSearch(e.target.value)}
+              />
+            </div>
+
+            <div className="mt-4 space-y-4">
+              {filteredPagesByGroup.map(([group, groupPages]) => (
+                <div key={group} className="border border-gray-100 rounded p-3">
+                  <div className="text-sm font-semibold text-gray-800 mb-2">{group}</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {groupPages.map((p) => {
+                      const isPositionGranted = adminPositionKeys.has(p.key);
+                      const isOverrideGranted = adminOverrideKeys.has(p.key);
+                      const isEffectiveGranted = adminEffectiveComputedKeys.has(p.key);
+
+                      const isChecked = adminHasWildcardAccess
+                        ? isOverrideGranted
+                        : isPositionGranted || isOverrideGranted;
+
+                      const isDisabled =
+                        !canManageAdminOverrides || (!adminHasWildcardAccess && isPositionGranted);
+
+                      return (
+                        <label
+                          key={p.key}
+                          className="flex items-start gap-2 p-2 rounded hover:bg-gray-50 cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            className="mt-1"
+                            checked={isChecked}
+                            disabled={isDisabled}
+                            onChange={() => {
+                              if (!adminHasWildcardAccess && isPositionGranted) return;
+                              toggleAdminOverride(p.key);
+                            }}
+                          />
+                          <div>
+                            <div className="text-sm text-gray-900">{p.name}</div>
+                            <div className="text-xs text-gray-500">{p.path}</div>
+                            {(isPositionGranted || isOverrideGranted || isEffectiveGranted) && (
+                              <div className="text-xs text-green-700">
+                                {isPositionGranted
+                                  ? "Granted by position"
+                                  : isOverrideGranted
+                                    ? "Granted by override"
+                                    : "Effective for this admin"}
+                              </div>
+                            )}
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+
+              {pages.length === 0 && (
+                <div className="text-sm text-gray-600">
+                  No pages found. Seed your RBAC pages table first.
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
       )}
     </div>
   );
