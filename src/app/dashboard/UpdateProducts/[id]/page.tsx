@@ -966,7 +966,7 @@ export default function EditProductPage() {
       {/* 3D Viewer Modal */}
       {show3DViewer && currentFbxUrls.length > 0 && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.8)" }}>
-          <div className="bg-white rounded-lg p-6 shadow-lg relative max-w-4xl w-full mx-4">
+          <div className="bg-white rounded-lg p-6 shadow-lg relative w-[95vw] max-w-7xl h-[90vh] mx-4 flex flex-col">
             <button
               onClick={() => setShow3DViewer(false)}
               className="absolute top-3 right-3 text-gray-600 hover:text-gray-900 text-2xl z-20"
@@ -974,28 +974,12 @@ export default function EditProductPage() {
               ×
             </button>
 
-            <div className="mb-4">
+            <div className="mb-4 flex-none">
               <h2 className="text-lg font-bold text-gray-900 mb-2">3D Model Viewer</h2>
               <div className="text-sm text-gray-600 mb-2">
                 Viewing {currentFbxIndex + 1} of {currentFbxUrls.length}
               </div>
 
-              {currentFbxUrls.length > 1 && (
-                <div className="flex gap-2 mb-2">
-                  <button
-                    onClick={() => setCurrentFbxIndex((i) => (i > 0 ? i - 1 : currentFbxUrls.length - 1))}
-                    className="px-3 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
-                  >
-                    Previous
-                  </button>
-                  <button
-                    onClick={() => setCurrentFbxIndex((i) => (i < currentFbxUrls.length - 1 ? i + 1 : 0))}
-                    className="px-3 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
-                  >
-                    Next
-                  </button>
-                </div>
-              )}
 
               <div className="text-xs text-gray-500 mb-2">Use mouse to rotate, zoom, and pan.</div>
 
@@ -1021,7 +1005,7 @@ export default function EditProductPage() {
               </div>
             </div>
 
-            <div className="h-96 w-full">
+            <div className="flex-1 min-h-0 w-full">
               <ThreeDModelViewer
                 modelUrls={currentFbxUrls}
                 initialIndex={currentFbxIndex}

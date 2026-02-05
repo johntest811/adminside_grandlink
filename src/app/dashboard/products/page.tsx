@@ -633,7 +633,7 @@ export default function ProductsAdminPage() {
         {/* 3D Viewer Modal */}
         {show3DViewer && modelPreviewUrls.length > 0 && (
           <div className="fixed inset-0 flex items-center justify-center z-50 bg-transparent">
-            <div className="bg-white/95 backdrop-blur-md rounded-xl p-6 shadow-2xl relative max-w-7xl w-[95vw] h-[85vh] mx-4">
+            <div className="bg-white/95 backdrop-blur-md rounded-xl p-6 shadow-2xl relative w-[98vw] max-w-[1600px] h-[90vh] mx-2 flex flex-col">
               <button
                 onClick={() => setShow3DViewer(false)}
                 className="absolute top-3 right-3 text-gray-700 hover:text-black text-2xl font-bold z-10 bg-white rounded-full w-10 h-10 flex items-center justify-center shadow-md"
@@ -641,7 +641,7 @@ export default function ProductsAdminPage() {
                 ×
               </button>
               
-              <div className="mb-4">
+              <div className="mb-4 flex-none">
                 <h2 className="text-lg font-bold text-[#233a5e] mb-2">3D Model Viewer</h2>
                 <div className="text-sm text-gray-600 mb-2">Models: {modelPreviewUrls.length}</div>
 
@@ -668,7 +668,7 @@ export default function ProductsAdminPage() {
                   )}
                 </div>
               </div>
-              <div className="h-[70vh]">
+              <div className="flex-1 min-h-0">
                 <ThreeDModelViewer
                   modelUrls={modelPreviewUrls}
                   initialIndex={currentFbxIndex}

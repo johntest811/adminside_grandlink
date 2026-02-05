@@ -1151,9 +1151,6 @@ export default function ThreeDModelViewer({
               </button>
             </div>
 
-            <div className="text-center mt-2">
-              <div className="text-gray-400 text-xs">Use navigation buttons or dots to switch</div>
-            </div>
           </div>
         </div>
       )}

@@ -336,7 +336,11 @@ export default function EmployeeTasksPage() {
       setProgressText("");
       setProgressFiles([]);
       setProgressModal(null);
-      await fetchTasks();
+      if (isLeader) {
+        await fetchOrderGroups();
+      } else {
+        await fetchMyTasks();
+      }
       alert("✅ Progress submitted! Awaiting approval.");
     } catch (e: any) {
       console.error("submitProgress error", e);
@@ -356,7 +360,11 @@ export default function EmployeeTasksPage() {
     try {
       const { error } = await supabase.from("tasks").update({ status }).eq("id", taskId);
       if (error) throw error;
-      await fetchTasks();
+      if (isLeader) {
+        await fetchOrderGroups();
+      } else {
+        await fetchMyTasks();
+      }
     } catch (e: any) {
       console.error("updateTaskStatus error", e);
       alert("❌ Failed to update task status: " + (e?.message || "Unknown error"));
