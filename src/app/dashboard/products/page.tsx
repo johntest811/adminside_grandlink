@@ -5,8 +5,7 @@ import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 import { v4 as uuidv4 } from 'uuid';
 import { logActivity } from "@/app/lib/activity";
 import { createNotification } from "@/app/lib/notifications";
-import * as THREE from "three";
-import { FBXLoader, GLTFLoader, OrbitControls } from "three-stdlib";
+import ThreeDModelViewer from "@/components/ThreeDModelViewer";
 
 const ALLOWED_3D_EXTENSIONS = ["fbx", "glb", "gltf"] as const;
 
@@ -45,6 +44,7 @@ export default function ProductsAdminPage() {
   const [inventory, setInventory] = useState("");
   const [images, setImages] = useState<File[]>([]);
   const [fbxFiles, setFbxFiles] = useState<File[]>([]);
+  const [modelPreviewUrls, setModelPreviewUrls] = useState<string[]>([]);
   const [skyboxFiles, setSkyboxFiles] = useState<Partial<Record<WeatherKey, File | null>>>({});
   const [skyboxPreviewUrls, setSkyboxPreviewUrls] = useState<Partial<Record<WeatherKey, string>>>({});
   const [previewWeather, setPreviewWeather] = useState<WeatherKey>("sunny");
@@ -74,6 +74,17 @@ export default function ProductsAdminPage() {
       } catch {}
     };
   }, []);
+
+  useEffect(() => {
+    const urls = fbxFiles.map((f) => URL.createObjectURL(f));
+    setModelPreviewUrls(urls);
+
+    return () => {
+      try {
+        urls.forEach((u) => URL.revokeObjectURL(u));
+      } catch {}
+    };
+  }, [fbxFiles]);
 
   // Show popup for 3 seconds when product is added
   useEffect(() => {
@@ -171,268 +182,6 @@ export default function ProductsAdminPage() {
 
     loadAdmin();
   }, []);
-
-  // FBX Viewer component (robust: camera, lights, scaling, resize, color space)
-  function FBXViewer({ file, skyboxUrl }: { file: File; skyboxUrl?: string | null }) {
-    const mountRef = useRef<HTMLDivElement | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
-    const [loadError, setLoadError] = useState<string | null>(null);
-
-    useEffect(() => {
-      const container = mountRef.current;
-      if (!container || !file) return;
-
-      setIsLoading(true);
-      setLoadError(null);
-
-      let disposed = false;
-      let frameId = 0;
-
-      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-      const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(
-        45,
-        (container.clientWidth || 800) / (container.clientHeight || 480),
-        0.1,
-        4000
-      );
-      camera.position.set(0, 160, 260);
-
-      // Color management across Three.js versions
-      const setOutputCS = (r: any) => {
-        const anyTHREE: any = THREE;
-        if ("outputColorSpace" in r && anyTHREE.SRGBColorSpace !== undefined) {
-          r.outputColorSpace = anyTHREE.SRGBColorSpace;
-        } else if ("outputEncoding" in r && anyTHREE.sRGBEncoding !== undefined) {
-          r.outputEncoding = anyTHREE.sRGBEncoding;
-        }
-      };
-      setOutputCS(renderer);
-
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-      renderer.setSize(container.clientWidth || 800, container.clientHeight || 480);
-      renderer.shadowMap.enabled = true;
-      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-      renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.1;
-
-  // Mount canvas safely without disturbing React's child tracking
-  // Avoid replaceChildren to prevent React NotFoundError during unmount
-  const canvasEl = renderer.domElement;
-  container.appendChild(canvasEl);
-
-      // Lights (no platform/grid)
-      // Default to transparent background; if a skybox is provided, we'll render it.
-      scene.background = null;
-
-      let skyTex: THREE.Texture | null = null;
-
-      const setTexColorSpace = (tex: any) => {
-        const anyTHREE: any = THREE;
-        if (!tex) return;
-        if ("colorSpace" in tex && anyTHREE.SRGBColorSpace !== undefined) {
-          tex.colorSpace = anyTHREE.SRGBColorSpace;
-        } else if ("encoding" in tex && anyTHREE.sRGBEncoding !== undefined) {
-          tex.encoding = anyTHREE.sRGBEncoding;
-        }
-      };
-
-      if (skyboxUrl) {
-        const texLoader = new THREE.TextureLoader();
-        texLoader.setCrossOrigin("anonymous");
-        texLoader.load(
-          skyboxUrl,
-          (tex) => {
-            if (disposed) {
-              try { tex.dispose(); } catch {}
-              return;
-            }
-            skyTex = tex;
-            setTexColorSpace(skyTex);
-            skyTex.mapping = THREE.EquirectangularReflectionMapping;
-            scene.background = skyTex;
-          },
-          undefined,
-          () => {
-            if (!disposed) setLoadError("Failed to load skybox image");
-          }
-        );
-      }
-      const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.15);
-      hemi.position.set(0, 400, 0);
-      scene.add(hemi);
-
-      const dir = new THREE.DirectionalLight(0xffffff, 0.9);
-      dir.position.set(180, 240, 200);
-      dir.castShadow = true;
-      scene.add(dir);
-
-      const fill = new THREE.DirectionalLight(0xffffff, 0.6);
-      fill.position.set(-160, 160, -180);
-      scene.add(fill);
-
-      const controls = new OrbitControls(camera, renderer.domElement);
-      controls.enableDamping = true;
-      controls.dampingFactor = 0.08;
-      controls.minDistance = 20;
-      controls.maxDistance = 800;
-      controls.target.set(0, 0, 0);
-      controls.update();
-
-      // Load 3D model from local file using Blob URL
-      const url = URL.createObjectURL(file);
-      const ext = getFileExtension(file.name);
-
-      const onLoadedObject = (object: THREE.Object3D) => {
-        if (disposed) return;
-
-          object.traverse((child: any) => {
-            if (child.isMesh) {
-              child.castShadow = true;
-              child.receiveShadow = true;
-              if (Array.isArray(child.material)) {
-                child.material.forEach((m: any) => {
-                  m.side = THREE.DoubleSide;
-                  m.needsUpdate = true;
-                });
-              } else if (child.material) {
-                child.material.side = THREE.DoubleSide;
-                child.material.needsUpdate = true;
-              }
-            }
-          });
-
-          // Center model at origin
-          const box1 = new THREE.Box3().setFromObject(object);
-          const center1 = box1.getCenter(new THREE.Vector3());
-          object.position.sub(center1);
-
-          // Uniformly scale model to a target size
-          const size1 = box1.getSize(new THREE.Vector3());
-          const maxAxis1 = Math.max(size1.x, size1.y, size1.z) || 1;
-          const targetSize = 200; // desired max dimension in world units
-          object.scale.setScalar(targetSize / maxAxis1);
-
-          // Recompute bounds after scaling
-          const box2 = new THREE.Box3().setFromObject(object);
-          const size2 = box2.getSize(new THREE.Vector3());
-          const maxDim = Math.max(size2.x, size2.y, size2.z) || 1;
-          const center2 = box2.getCenter(new THREE.Vector3());
-
-          // Fit camera using FOV/aspect so model fills the view and stays centered
-          const fov = THREE.MathUtils.degToRad(camera.fov);
-          const fitHeightDistance = maxDim / (2 * Math.tan(fov / 2));
-          const fitWidthDistance = fitHeightDistance / camera.aspect;
-          const distance = 1.15 * Math.max(fitHeightDistance, fitWidthDistance); // 15% padding
-
-          camera.near = Math.max(0.1, maxDim / 100);
-          camera.far = Math.max(1000, maxDim * 100);
-          camera.updateProjectionMatrix();
-
-          // Place camera for a pleasant 3/4 view, centered on the object
-          camera.position.set(center2.x + distance, center2.y + distance * 0.2, center2.z + distance);
-          controls.target.copy(center2);
-          controls.minDistance = distance * 0.1;
-          controls.maxDistance = distance * 8;
-          controls.update();
-
-        scene.add(object);
-        setIsLoading(false);
-      };
-
-      const onLoadError = (err: unknown) => {
-        if (disposed) return;
-        console.error("3D model load error (local file):", err);
-        setLoadError(
-          `Unable to render 3D model. Allowed types: ${ALLOWED_3D_EXTENSIONS.map((x) => `.${x}`).join(", ")}`
-        );
-        setIsLoading(false);
-      };
-
-      if (ext === "fbx") {
-        const loader = new FBXLoader();
-        loader.load(url, (object) => onLoadedObject(object), undefined, onLoadError);
-      } else if (ext === "glb" || ext === "gltf") {
-        const loader = new GLTFLoader();
-        loader.load(
-          url,
-          (gltf: any) => {
-            const object = gltf?.scene as THREE.Object3D | undefined;
-            if (!object) return onLoadError(new Error("Missing gltf.scene"));
-            onLoadedObject(object);
-          },
-          undefined,
-          onLoadError
-        );
-      } else {
-        onLoadError(new Error(`Unsupported extension: ${ext}`));
-      }
-
-      const handleResize = () => {
-        if (disposed) return;
-        const w = container.clientWidth || 800;
-        const h = container.clientHeight || 480;
-        camera.aspect = w / h;
-        camera.updateProjectionMatrix();
-        renderer.setSize(w, h);
-      };
-
-      const ro = new ResizeObserver(handleResize);
-      ro.observe(container);
-
-      const animate = () => {
-        if (disposed) return;
-        frameId = requestAnimationFrame(animate);
-        controls.update();
-        renderer.render(scene, camera);
-      };
-      animate();
-
-      return () => {
-        disposed = true;
-        cancelAnimationFrame(frameId);
-        ro.disconnect();
-        controls.dispose();
-        try {
-          if (canvasEl?.parentNode === container) container.removeChild(canvasEl);
-        } catch {}
-
-        // Dispose WebGL resources
-        scene.traverse((child) => {
-          const m = child as any;
-          if (m.isMesh) {
-            m.geometry?.dispose();
-            const mat = m.material;
-            if (Array.isArray(mat)) mat.forEach((mm: any) => mm?.dispose?.());
-            else mat?.dispose?.();
-          }
-        });
-        renderer.dispose();
-        (renderer as any).forceContextLoss?.();
-
-        try { skyTex?.dispose(); } catch {}
-
-        try {
-          URL.revokeObjectURL(url);
-        } catch {}
-      };
-    }, [file, skyboxUrl]);
-
-    return (
-      <div ref={mountRef} className="relative h-96 w-full">
-        {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-white/80 text-sm text-gray-600">
-            Loading 3D model…
-          </div>
-        )}
-        {loadError && (
-          <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-white/90 px-4 text-center text-sm text-red-600">
-            {loadError}
-          </div>
-        )}
-      </div>
-    );
-  }
 
   const handleSingleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -882,7 +631,7 @@ export default function ProductsAdminPage() {
         )}
 
         {/* 3D Viewer Modal */}
-        {show3DViewer && fbxFiles.length > 0 && (
+        {show3DViewer && modelPreviewUrls.length > 0 && (
           <div className="fixed inset-0 flex items-center justify-center z-50 bg-transparent">
             <div className="bg-white/95 backdrop-blur-md rounded-xl p-6 shadow-2xl relative max-w-7xl w-[95vw] h-[85vh] mx-4">
               <button
@@ -894,66 +643,44 @@ export default function ProductsAdminPage() {
               
               <div className="mb-4">
                 <h2 className="text-lg font-bold text-[#233a5e] mb-2">3D Model Viewer</h2>
-                <div className="text-sm text-gray-600 mb-2">
-                  Viewing: {fbxFiles[currentFbxIndex]?.name} ({currentFbxIndex + 1} of {fbxFiles.length})
-                </div>
-                
-                {fbxFiles.length > 1 && (
-                  <div className="flex justify-center items-center gap-4 mb-4">
-                    <button
-                      onClick={() => setCurrentFbxIndex(Math.max(0, currentFbxIndex - 1))}
-                      disabled={currentFbxIndex === 0}
-                      className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700"
-                    >
-                      ← Previous
-                    </button>
-                    
-                    <div className="flex space-x-1">
-                      {fbxFiles.map((_, index) => (
-                        <button
-                          key={index}
-                          onClick={() => setCurrentFbxIndex(index)}
-                          className={`w-8 h-8 rounded-full text-xs font-bold transition-colors ${
-                            index === currentFbxIndex 
-                              ? 'bg-blue-600 text-white' 
-                              : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
-                          }`}
-                        >
-                          {index + 1}
-                        </button>
-                      ))}
-                    </div>
-                    
-                    <button
-                      onClick={() => setCurrentFbxIndex(Math.min(fbxFiles.length - 1, currentFbxIndex + 1))}
-                      disabled={currentFbxIndex === fbxFiles.length - 1}
-                      className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700"
-                    >
-                      Next →
-                    </button>
-                  </div>
-                )}
-                
-                <div className="text-xs text-gray-500 mb-2">Use mouse to rotate, zoom, and pan. Background is transparent for clean previews.</div>
+                <div className="text-sm text-gray-600 mb-2">Models: {modelPreviewUrls.length}</div>
+
+                <div className="text-xs text-gray-500 mb-2">Use mouse to rotate, zoom, and pan.</div>
+
                 <div className="flex flex-wrap items-center gap-2">
-                  <label className="text-xs font-medium text-gray-700">Preview skybox:</label>
-                  <select
-                    value={previewWeather}
-                    onChange={(e) => setPreviewWeather(e.target.value as WeatherKey)}
-                    className="border border-gray-300 rounded px-2 py-1 text-xs text-black bg-white"
-                  >
-                    <option value="sunny">Sunny</option>
-                    <option value="rainy">Rainy</option>
-                    <option value="night">Night</option>
-                    <option value="foggy">Foggy</option>
-                  </select>
+                  <span className="text-xs font-medium text-gray-700">Weather:</span>
+                  {WEATHER_KEYS.map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => setPreviewWeather(k)}
+                      className={`px-3 py-1 rounded text-xs border transition-colors ${
+                        previewWeather === k
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                      }`}
+                    >
+                      {k.charAt(0).toUpperCase() + k.slice(1)}
+                    </button>
+                  ))}
                   {!skyboxPreviewUrls[previewWeather] && (
                     <span className="text-[11px] text-gray-500">No skybox selected for this weather.</span>
                   )}
                 </div>
               </div>
               <div className="h-[70vh]">
-                <FBXViewer file={fbxFiles[currentFbxIndex]} skyboxUrl={skyboxPreviewUrls[previewWeather] || null} />
+                <ThreeDModelViewer
+                  modelUrls={modelPreviewUrls}
+                  initialIndex={currentFbxIndex}
+                  weather={previewWeather}
+                  skyboxes={skyboxPreviewUrls}
+                  productDimensions={{
+                    width: width || null,
+                    height: height || null,
+                    thickness: thickness || null,
+                    units: "cm",
+                  }}
+                />
               </div>
             </div>
           </div>

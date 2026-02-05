@@ -2,6 +2,23 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
+## Environment Variables (Required)
+
+This app requires Supabase environment variables to run locally.
+
+1) Create a local env file:
+
+- Copy `.env.local.example` → `.env.local`
+
+2) Fill in these required values (Supabase Dashboard → Project Settings → API):
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+
+Optional (server-side/admin only):
+
+- `SUPABASE_SERVICE_ROLE_KEY`
+
 First, run the development server:
 
 ```bash

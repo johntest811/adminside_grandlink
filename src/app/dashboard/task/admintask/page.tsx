@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "../../../Clients/Supabase/SupabaseClients";
 import { Eye, Pencil, ArrowRight } from "lucide-react";
 
@@ -59,6 +60,7 @@ type UserItemLite = {
 };
 
 export default function AdminTasksPage() {
+  const searchParams = useSearchParams();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [mode, setMode] = useState<"view" | "edit" | null>(null);
@@ -72,6 +74,7 @@ export default function AdminTasksPage() {
   const [markFinalQc, setMarkFinalQc] = useState(false);
   const [orders, setOrders] = useState<OrderOption[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<string>("");
+  const [selectedOrderStage, setSelectedOrderStage] = useState<string | null>(null);
 
   const isLeader = useMemo(() => {
     const r = adminSession?.role;
@@ -94,6 +97,33 @@ export default function AdminTasksPage() {
     fetchTasks();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedOrderId]);
+
+  useEffect(() => {
+    const orderId = searchParams?.get("orderId") || "";
+    if (!orderId) return;
+    setSelectedOrderId(orderId);
+  }, [searchParams]);
+
+  useEffect(() => {
+    const auto = (searchParams?.get("auto") || "").toLowerCase();
+    if (!auto) return;
+    if (selectedTask) return;
+
+    const wantsEdit = auto === "edit";
+    const wantsView = auto === "view";
+    if (!wantsEdit && !wantsView) return;
+
+    const orderId = searchParams?.get("orderId") || "";
+    if (!orderId || !selectedOrderId) return;
+    if (orderId !== selectedOrderId) return;
+    if (!tasks.length) return;
+
+    const first = tasks[0];
+    setSelectedTask(first);
+    setMode(wantsEdit ? "edit" : "view");
+    setMarkFinalQc(false);
+    void loadTaskContext(first);
+  }, [tasks, selectedOrderId, searchParams, selectedTask]);
 
   useEffect(() => {
     (async () => {
@@ -169,16 +199,60 @@ export default function AdminTasksPage() {
           const ui = uiData as UserItemLite;
           const pct = Number(ui?.meta?.production_percent ?? 0);
           setOrderProgress(Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0);
+          setSelectedOrderStage((ui as any)?.order_status || null);
         }
       } else {
         setOrderProgress(0);
+        setSelectedOrderStage(null);
       }
     } catch (e) {
       console.error("Failed to load task updates", e);
       setUpdates([]);
       setOrderProgress(0);
+      setSelectedOrderStage(null);
     } finally {
       setLoadingUpdates(false);
+    }
+  };
+
+  const moveSelectedOrderToPackaging = async () => {
+    if (!isLeader) {
+      alert("Only team leaders/superadmins can update order stage.");
+      return;
+    }
+    if (!selectedTask?.user_item_id) {
+      alert("This task is not linked to an order.");
+      return;
+    }
+
+    try {
+      const { data: uiData, error: uiErr } = await supabase
+        .from("user_items")
+        .select("id, progress_history, order_status, status")
+        .eq("id", selectedTask.user_item_id)
+        .single();
+      if (uiErr || !uiData) throw uiErr;
+
+      const ui = uiData as any;
+      const history = Array.isArray(ui.progress_history) ? ui.progress_history : [];
+      const nowIso = new Date().toISOString();
+
+      const { error: updErr } = await supabase
+        .from("user_items")
+        .update({
+          order_status: "packaging",
+          status: "packaging",
+          progress_history: [{ status: "packaging", updated_at: nowIso }, ...history],
+          updated_at: nowIso,
+        })
+        .eq("id", selectedTask.user_item_id);
+      if (updErr) throw updErr;
+
+      setSelectedOrderStage("packaging");
+      alert("✅ Moved to Packaging. Next step is Ready for delivery in Order Management.");
+    } catch (e: any) {
+      console.error("moveSelectedOrderToPackaging error", e);
+      alert("❌ Failed to move to Packaging: " + (e?.message || "Unknown error"));
     }
   };
 
@@ -191,24 +265,39 @@ export default function AdminTasksPage() {
     try {
       const { data: uiData, error: uiErr } = await supabase
         .from("user_items")
-        .select("id, meta")
+        .select("id, meta, progress_history, order_status, status")
         .eq("id", selectedTask.user_item_id)
         .single();
       if (uiErr || !uiData) throw uiErr;
       const meta = (uiData as any).meta || {};
+      const history = Array.isArray((uiData as any).progress_history) ? (uiData as any).progress_history : [];
+      const currentStage = String((uiData as any).order_status || (uiData as any).status || "");
+
+      const nextPct = Math.max(0, Math.min(100, Number(orderProgress) || 0));
+      const nowIso = new Date().toISOString();
+
+      const patch: any = {
+        meta: {
+          ...meta,
+          production_percent: nextPct,
+        },
+        updated_at: nowIso,
+      };
+
+      // Automation: once progress hits 100%, move to Quality Check.
+      if (nextPct >= 100 && currentStage !== "quality_check") {
+        patch.order_status = "quality_check";
+        patch.status = "quality_check";
+        patch.progress_history = [{ status: "quality_check", updated_at: nowIso }, ...history];
+      }
 
       const { error } = await supabase
         .from("user_items")
-        .update({
-          meta: {
-            ...meta,
-            production_percent: Math.max(0, Math.min(100, Number(orderProgress) || 0)),
-          },
-          updated_at: new Date().toISOString(),
-        })
+        .update(patch)
         .eq("id", selectedTask.user_item_id);
       if (error) throw error;
-      alert("✅ Order progress updated.");
+      setSelectedOrderStage(patch.order_status || selectedOrderStage);
+      alert(nextPct >= 100 ? "✅ Order progress updated. Moved to Quality Check." : "✅ Order progress updated.");
     } catch (e: any) {
       console.error("saveOrderProgress error", e);
       alert("❌ Failed to update order progress: " + (e?.message || "Unknown error"));
@@ -225,7 +314,7 @@ export default function AdminTasksPage() {
 
     const msg = String((error as any)?.message || "");
     if (msg.toLowerCase().includes("column") && msg.toLowerCase().includes("visible_to_customer")) {
-      const { visible_to_customer, ...rest } = patch as any;
+      const { visible_to_customer: _visibleToCustomer, ...rest } = patch as any;
       const { error: retryErr } = await supabase.from("task_updates").update(rest).eq("id", id);
       if (retryErr) throw retryErr;
       return;
@@ -576,6 +665,28 @@ export default function AdminTasksPage() {
                     >
                       {savingOrderProgress ? "Saving…" : "Save Order Progress"}
                     </button>
+
+                    <div className="mt-4 rounded border p-3">
+                      <div className="text-xs text-gray-500">Order Stage</div>
+                      <div className="text-sm font-semibold text-gray-900 mt-1">
+                        {selectedOrderStage || "—"}
+                      </div>
+                      {isLeader && selectedTask.user_item_id ? (
+                        <div className="mt-2 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={moveSelectedOrderToPackaging}
+                            disabled={selectedOrderStage !== "quality_check"}
+                            className="px-3 py-2 rounded bg-green-700 text-white text-xs disabled:opacity-50"
+                          >
+                            Move to Packaging
+                          </button>
+                          <span className="text-[11px] text-gray-500">
+                            Enabled only for <span className="font-semibold">quality_check</span>.
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
 
                   <div>

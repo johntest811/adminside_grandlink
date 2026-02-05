@@ -1,30 +1,38 @@
-import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-// Validate required environment variables
-if (!supabaseUrl) {
-  throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL environment variable');
+function requireEnv(name: string, value: string | undefined): string {
+  if (value && value.trim().length > 0) return value;
+  throw new Error(
+    `[Supabase] Missing ${name}. Create adminside_grandlink/.env.local (copy from .env.local.example) and set ${name}.`,
+  );
 }
 
-if (!supabaseAnonKey) {
-  throw new Error('Missing NEXT_PUBLIC_SUPABASE_ANON_KEY environment variable');
-}
+const resolvedSupabaseUrl = requireEnv("NEXT_PUBLIC_SUPABASE_URL", supabaseUrl);
+const resolvedSupabaseAnonKey = requireEnv(
+  "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+  supabaseAnonKey,
+);
 
 // Regular client for frontend operations
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+export const supabase = createClient(
+  resolvedSupabaseUrl,
+  resolvedSupabaseAnonKey,
+  {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
   },
-});
+  },
+);
 
 // Function to create admin client - only call this client-side for admin dashboards
 export function createAdminClient() {
   // Use service role key for admin operations
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseServiceKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY || resolvedSupabaseAnonKey;
   
   if (!supabaseServiceKey) {
     console.error('❌ No service role key found, using anon key');
@@ -33,7 +41,7 @@ export function createAdminClient() {
 
   console.log('✅ Creating admin client with service role key');
 
-  return createClient(supabaseUrl, supabaseServiceKey, {
+  return createClient(resolvedSupabaseUrl, supabaseServiceKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
@@ -48,12 +56,3 @@ export const getAdminClient = () => {
   }
   return createAdminClient();
 };
-
-export async function GET() {
-  const adminClient = createAdminClient();
-  const { data, error } = await adminClient.auth.admin.listUsers();
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-  return NextResponse.json({ users: data.users });
-}

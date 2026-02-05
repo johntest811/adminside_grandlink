@@ -1,12 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 import { logActivity } from "@/app/lib/activity";
 import { notifyProductUpdated, notifyProductFileUploaded } from "@/app/lib/notifications";
-import * as THREE from "three";
-import { FBXLoader, GLTFLoader, OrbitControls } from "three-stdlib";
+import ThreeDModelViewer from "@/components/ThreeDModelViewer";
 
 const ALLOWED_3D_EXTENSIONS = ["fbx", "glb", "gltf"] as const;
 
@@ -998,22 +997,24 @@ export default function EditProductPage() {
                 </div>
               )}
 
-              <div className="text-xs text-gray-500 mb-2">
-                Use mouse to rotate, zoom, and pan. Background is transparent for clean previews.
-              </div>
+              <div className="text-xs text-gray-500 mb-2">Use mouse to rotate, zoom, and pan.</div>
 
               <div className="flex flex-wrap items-center gap-2">
-                <label className="text-xs font-medium text-gray-700">Preview skybox:</label>
-                <select
-                  value={previewWeather}
-                  onChange={(e) => setPreviewWeather(e.target.value as WeatherKey)}
-                  className="border border-gray-300 rounded px-2 py-1 text-xs text-black bg-white"
-                >
-                  <option value="sunny">Sunny</option>
-                  <option value="rainy">Rainy</option>
-                  <option value="night">Night</option>
-                  <option value="foggy">Foggy</option>
-                </select>
+                <span className="text-xs font-medium text-gray-700">Weather:</span>
+                {WEATHER_KEYS.map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setPreviewWeather(k)}
+                    className={`px-3 py-1 rounded text-xs border transition-colors ${
+                      previewWeather === k
+                        ? "bg-indigo-600 text-white border-indigo-600"
+                        : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                    }`}
+                  >
+                    {k.charAt(0).toUpperCase() + k.slice(1)}
+                  </button>
+                ))}
                 {!previewSkyboxUrl && (
                   <span className="text-[11px] text-gray-500">No skybox set for this weather.</span>
                 )}
@@ -1021,7 +1022,18 @@ export default function EditProductPage() {
             </div>
 
             <div className="h-96 w-full">
-              <FBXViewer fbxUrl={currentFbxUrls[currentFbxIndex]} skyboxUrl={previewSkyboxUrl} />
+              <ThreeDModelViewer
+                modelUrls={currentFbxUrls}
+                initialIndex={currentFbxIndex}
+                weather={previewWeather}
+                skyboxes={product.skyboxes || null}
+                productDimensions={{
+                  width: product.width ?? null,
+                  height: product.height ?? null,
+                  thickness: product.thickness ?? null,
+                  units: "cm",
+                }}
+              />
             </div>
           </div>
         </div>
@@ -1478,366 +1490,4 @@ async function uploadFile(file: File, field: string, productId: string): Promise
     .getPublicUrl(data.path);
 
   return urlData.publicUrl;
-}
-
-// FBX Viewer Component (adapted from products page for consistency)
-function FBXViewer({ fbxUrl, skyboxUrl }: { fbxUrl: string; skyboxUrl?: string | null }) {
-  const mountRef = useRef<HTMLDivElement | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const container = mountRef.current;
-    if (!container || !fbxUrl) return;
-
-    setIsLoading(true);
-    setLoadError(null);
-
-    let disposed = false;
-    let frameId = 0;
-    let objectURLToRevoke: string | null = null;
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(
-      45,
-      (container.clientWidth || 800) / (container.clientHeight || 480),
-      0.1,
-      4000
-    );
-    camera.position.set(0, 160, 260);
-
-    // Color management (r152+ and <=r151)
-    const setOutputCS = (r: any) => {
-      const anyTHREE: any = THREE;
-      if ("outputColorSpace" in r && anyTHREE.SRGBColorSpace !== undefined) {
-        r.outputColorSpace = anyTHREE.SRGBColorSpace;
-      } else if ("outputEncoding" in r && anyTHREE.sRGBEncoding !== undefined) {
-        r.outputEncoding = anyTHREE.sRGBEncoding;
-      }
-    };
-    setOutputCS(renderer);
-
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setSize(container.clientWidth || 800, container.clientHeight || 480);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.1;
-
-  // Mount canvas safely without disturbing React's DOM tracking
-  const canvasEl = renderer.domElement;
-  container.appendChild(canvasEl);
-
-  // Lights (no platform/grid)
-  // Default to transparent background; if a skybox is provided, we'll render it.
-  scene.background = null;
-
-    let skyTex: THREE.Texture | null = null;
-
-    const setTexColorSpace = (tex: any) => {
-      const anyTHREE: any = THREE;
-      if (!tex) return;
-      if ("colorSpace" in tex && anyTHREE.SRGBColorSpace !== undefined) {
-        tex.colorSpace = anyTHREE.SRGBColorSpace;
-      } else if ("encoding" in tex && anyTHREE.sRGBEncoding !== undefined) {
-        tex.encoding = anyTHREE.sRGBEncoding;
-      }
-    };
-
-    if (skyboxUrl) {
-      const texLoader = new THREE.TextureLoader();
-      texLoader.setCrossOrigin("anonymous");
-      texLoader.load(
-        skyboxUrl,
-        (tex) => {
-          if (disposed) {
-            try { tex.dispose(); } catch {}
-            return;
-          }
-          skyTex = tex;
-          setTexColorSpace(skyTex);
-          skyTex.mapping = THREE.EquirectangularReflectionMapping;
-          scene.background = skyTex;
-        },
-        undefined,
-        () => {
-          if (!disposed) setLoadError("Failed to load skybox image");
-        }
-      );
-    }
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.15);
-    hemi.position.set(0, 400, 0);
-    scene.add(hemi);
-
-    const dir = new THREE.DirectionalLight(0xffffff, 0.9);
-    dir.position.set(180, 240, 200);
-    dir.castShadow = true;
-    scene.add(dir);
-
-    const fill = new THREE.DirectionalLight(0xffffff, 0.6);
-    fill.position.set(-160, 160, -180);
-    scene.add(fill);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
-    controls.minDistance = 20;
-    controls.maxDistance = 800;
-    controls.target.set(0, 0, 0);
-    controls.update();
-
-    const manager = new THREE.LoadingManager();
-    manager.onError = (url) => !disposed && setLoadError(`Failed to load: ${url}`);
-    const fbxLoader = new FBXLoader(manager);
-    fbxLoader.setCrossOrigin("anonymous");
-    const gltfLoader = new GLTFLoader(manager);
-    (gltfLoader as any).setCrossOrigin?.("anonymous");
-
-    const urlExt = getFileExtension(fbxUrl);
-
-    // Try to fetch the file as a Blob first to avoid any CORS/content-type hiccups,
-    // then fall back to direct URL if needed.
-    const tryLoad = async () => {
-      const tryUrls: string[] = [fbxUrl];
-      // If the URL might contain spaces, also try an encoded version
-      if (fbxUrl.includes(" ")) tryUrls.push(encodeURI(fbxUrl));
-
-      for (const url of tryUrls) {
-        try {
-          const res = await fetch(url, { mode: "cors" });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const blob = await res.blob();
-          objectURLToRevoke = URL.createObjectURL(blob);
-
-          return new Promise<void>((resolve, reject) => {
-            const onLoadedObject = (object: THREE.Object3D) => {
-                if (disposed) return;
-                // attach object to scene with centering, scaling, and camera fit
-                object.traverse((child: any) => {
-                  if (child.isMesh) {
-                    child.castShadow = true;
-                    child.receiveShadow = true;
-                    if (Array.isArray(child.material)) {
-                      child.material.forEach((m: any) => {
-                        m.side = THREE.DoubleSide;
-                        m.needsUpdate = true;
-                      });
-                    } else if (child.material) {
-                      child.material.side = THREE.DoubleSide;
-                      child.material.needsUpdate = true;
-                    }
-                  }
-                });
-
-                // Center and scale
-                const box1 = new THREE.Box3().setFromObject(object);
-                const center1 = box1.getCenter(new THREE.Vector3());
-                object.position.sub(center1);
-                const size1 = box1.getSize(new THREE.Vector3());
-                const maxAxis1 = Math.max(size1.x, size1.y, size1.z) || 1;
-                const targetSize = 200;
-                object.scale.setScalar(targetSize / maxAxis1);
-
-                // Fit camera
-                const box2 = new THREE.Box3().setFromObject(object);
-                const size2 = box2.getSize(new THREE.Vector3());
-                const maxDim = Math.max(size2.x, size2.y, size2.z) || 1;
-                const center2 = box2.getCenter(new THREE.Vector3());
-                const fov = THREE.MathUtils.degToRad(camera.fov);
-                const fitHeightDistance = maxDim / (2 * Math.tan(fov / 2));
-                const fitWidthDistance = fitHeightDistance / camera.aspect;
-                const distance = 1.15 * Math.max(fitHeightDistance, fitWidthDistance);
-
-                camera.near = Math.max(0.1, maxDim / 100);
-                camera.far = Math.max(1000, maxDim * 100);
-                camera.updateProjectionMatrix();
-                camera.position.set(center2.x + distance, center2.y + distance * 0.2, center2.z + distance);
-                controls.target.copy(center2);
-                controls.minDistance = distance * 0.1;
-                controls.maxDistance = distance * 8;
-                controls.update();
-
-                scene.add(object);
-                setIsLoading(false);
-                resolve();
-            };
-
-            const onError = (err: unknown) => reject(err);
-
-            if (urlExt === "fbx") {
-              fbxLoader.load(objectURLToRevoke as string, (object) => onLoadedObject(object), undefined, onError);
-              return;
-            }
-
-            if (urlExt === "glb" || urlExt === "gltf") {
-              gltfLoader.load(
-                objectURLToRevoke as string,
-                (gltf: any) => {
-                  const object = gltf?.scene as THREE.Object3D | undefined;
-                  if (!object) return onError(new Error("Missing gltf.scene"));
-                  onLoadedObject(object);
-                },
-                undefined,
-                onError
-              );
-              return;
-            }
-
-            onError(new Error(`Unsupported 3D model type: .${urlExt || "?"}`));
-          });
-        } catch (e) {
-          // Try next variant
-          continue;
-        }
-      }
-      // If all blob attempts failed, try direct URL once
-      return new Promise<void>((resolve, reject) => {
-        const onError = (err: unknown) => reject(err);
-        const onLoadedDirect = (object: THREE.Object3D) => {
-          if (disposed) return;
-            object.traverse((child: any) => {
-              if (child.isMesh) {
-                child.castShadow = true;
-                child.receiveShadow = true;
-                if (Array.isArray(child.material)) {
-                  child.material.forEach((m: any) => {
-                    m.side = THREE.DoubleSide;
-                    m.needsUpdate = true;
-                  });
-                } else if (child.material) {
-                  child.material.side = THREE.DoubleSide;
-                  child.material.needsUpdate = true;
-                }
-              }
-            });
-
-            const box1 = new THREE.Box3().setFromObject(object);
-            const center1 = box1.getCenter(new THREE.Vector3());
-            object.position.sub(center1);
-            const size1 = box1.getSize(new THREE.Vector3());
-            const maxAxis1 = Math.max(size1.x, size1.y, size1.z) || 1;
-            const targetSize = 200;
-            object.scale.setScalar(targetSize / maxAxis1);
-
-            const box2 = new THREE.Box3().setFromObject(object);
-            const size2 = box2.getSize(new THREE.Vector3());
-            const maxDim = Math.max(size2.x, size2.y, size2.z) || 1;
-            const center2 = box2.getCenter(new THREE.Vector3());
-            const fov = THREE.MathUtils.degToRad(camera.fov);
-            const fitHeightDistance = maxDim / (2 * Math.tan(fov / 2));
-            const fitWidthDistance = fitHeightDistance / camera.aspect;
-            const distance = 1.15 * Math.max(fitHeightDistance, fitWidthDistance);
-
-            camera.near = Math.max(0.1, maxDim / 100);
-            camera.far = Math.max(1000, maxDim * 100);
-            camera.updateProjectionMatrix();
-            camera.position.set(center2.x + distance, center2.y + distance * 0.2, center2.z + distance);
-            controls.target.copy(center2);
-            controls.minDistance = distance * 0.1;
-            controls.maxDistance = distance * 8;
-            controls.update();
-
-            scene.add(object);
-            setIsLoading(false);
-            resolve();
-        };
-
-        if (urlExt === "fbx") {
-          fbxLoader.load(fbxUrl, (object) => onLoadedDirect(object), undefined, onError);
-          return;
-        }
-
-        if (urlExt === "glb" || urlExt === "gltf") {
-          gltfLoader.load(
-            fbxUrl,
-            (gltf: any) => {
-              const object = gltf?.scene as THREE.Object3D | undefined;
-              if (!object) return onError(new Error("Missing gltf.scene"));
-              onLoadedDirect(object);
-            },
-            undefined,
-            onError
-          );
-          return;
-        }
-
-        onError(new Error(`Unsupported 3D model type: .${urlExt || "?"}`));
-      });
-    };
-
-    tryLoad().catch((err) => {
-      if (disposed) return;
-      console.error("3D model load error:", err);
-      setLoadError("Unable to render 3D model. Re-upload the model if the issue persists.");
-      setIsLoading(false);
-    });
-
-    const handleResize = () => {
-      if (disposed) return;
-      const w = container.clientWidth || 800;
-      const h = container.clientHeight || 480;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
-    };
-
-    const ro = new ResizeObserver(handleResize);
-    ro.observe(container);
-
-    const animate = () => {
-      if (disposed) return;
-      frameId = requestAnimationFrame(animate);
-      controls.update();
-      renderer.render(scene, camera);
-    };
-    animate();
-
-    return () => {
-      disposed = true;
-      cancelAnimationFrame(frameId);
-      ro.disconnect();
-      controls.dispose();
-
-      // Safe DOM removal (no NotFoundError)
-      try {
-        if (canvasEl?.parentNode === container) container.removeChild(canvasEl);
-      } catch {}
-
-      if (objectURLToRevoke) {
-        try { URL.revokeObjectURL(objectURLToRevoke); } catch {}
-        objectURLToRevoke = null;
-      }
-
-      // Dispose WebGL resources
-      scene.traverse((child) => {
-        const m = child as any;
-        if (m.isMesh) {
-          m.geometry?.dispose();
-          const mat = m.material;
-          if (Array.isArray(mat)) mat.forEach((mm: any) => mm?.dispose?.());
-          else mat?.dispose?.();
-        }
-      });
-      renderer.dispose();
-      (renderer as any).forceContextLoss?.();
-
-      try { skyTex?.dispose(); } catch {}
-    };
-  }, [fbxUrl, skyboxUrl]);
-
-  return (
-    <div ref={mountRef} className="relative h-full w-full rounded-lg bg-transparent">
-      {isLoading && (
-        <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-white/80 text-sm text-gray-600">
-          Loading 3D model…
-        </div>
-      )}
-      {loadError && (
-        <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-white/90 px-4 text-center text-sm text-red-600">
-          {loadError}
-        </div>
-      )}
-    </div>
-  );
 }
