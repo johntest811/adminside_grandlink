@@ -541,6 +541,7 @@ export default function OrdersPage() {
               <th className="px-4 py-2 text-left text-xs font-medium text-black">Order</th>
               <th className="px-4 py-2 text-left text-xs font-medium text-black">Delivery Address</th>
               <th className="px-4 py-2 text-left text-xs font-medium text-black">Payment</th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-black">Production Progress</th>
               <th className="px-4 py-2 text-left text-xs font-medium text-black">Status</th>
               <th className="px-4 py-2 text-left text-xs font-medium text-black">Actions</th>
             </tr>
@@ -578,6 +579,10 @@ export default function OrdersPage() {
               
               const stage = getStage(r);
               // inline payment editing removed; we now use a modal
+
+              const rawPct = (r as any)?.meta?.production_percent;
+              const pctNum = Number(rawPct);
+              const pct = Number.isFinite(pctNum) ? Math.max(0, Math.min(100, pctNum)) : null;
               
               return (
                 <tr key={r.id} className="hover:bg-gray-50">
@@ -639,6 +644,26 @@ export default function OrdersPage() {
                       Edit Payment
                     </button>
                   </td>
+
+                  <td className="px-4 py-3 align-top">
+                    {pct === null ? (
+                      <span className="text-xs text-gray-500">—</span>
+                    ) : (
+                      <div className="min-w-[160px]">
+                        <div className="flex items-center justify-between text-xs text-black mb-1">
+                          <span>{pct}%</span>
+                          <span className="text-[11px] text-gray-600">{pct >= 100 ? "Complete" : "In progress"}</span>
+                        </div>
+                        <div className="h-2 w-full bg-gray-200 rounded">
+                          <div
+                            className="h-2 bg-green-600 rounded"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </td>
+
                   <td className="px-4 py-3">
                     <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${getStatusColor(stage)}`}>
                       {(stage || "").replace(/_/g, " ").toUpperCase()}

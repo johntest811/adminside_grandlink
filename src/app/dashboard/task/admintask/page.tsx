@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "../../../Clients/Supabase/SupabaseClients";
 import { Eye, Pencil, ArrowRight } from "lucide-react";
+import ImageLightbox from "@/components/ui/ImageLightbox";
 
 type Task = {
   id: number;
@@ -76,12 +77,26 @@ export default function AdminTasksPage() {
   const [selectedOrderId, setSelectedOrderId] = useState<string>("");
   const [selectedOrderStage, setSelectedOrderStage] = useState<string | null>(null);
 
+  const [lightbox, setLightbox] = useState<{ urls: string[]; index: number; title?: string } | null>(null);
+  const openLightbox = (urls: string[], index: number, title?: string) => {
+    if (!Array.isArray(urls) || urls.length === 0) return;
+    setLightbox({ urls, index: Math.max(0, Math.min(urls.length - 1, index)), title });
+  };
+
   const isLeader = useMemo(() => {
     const r = adminSession?.role;
     const p = (adminSession?.position || "").toLowerCase();
     if (r === "superadmin") return true;
     if (r === "manager") return true;
     return p.includes("super") || p.includes("manager") || r === "admin";
+  }, [adminSession?.role, adminSession?.position]);
+
+  const canEditOrderProgress = useMemo(() => {
+    const r = String(adminSession?.role || "").toLowerCase();
+    const p = String(adminSession?.position || "").toLowerCase();
+    if (r === "superadmin") return true;
+    if (r === "team_leader" || r === "team leader") return true;
+    return p.includes("team leader") || p.includes("team_leader") || p.includes("teamlead");
   }, [adminSession?.role, adminSession?.position]);
 
   // Fetch tasks
@@ -257,6 +272,10 @@ export default function AdminTasksPage() {
   };
 
   const saveOrderProgress = async () => {
+    if (!canEditOrderProgress) {
+      alert("Only Superadmin / Team Leader can update the order progress percentage.");
+      return;
+    }
     if (!selectedTask?.user_item_id) {
       alert("This task is not linked to an order.");
       return;
@@ -343,9 +362,13 @@ export default function AdminTasksPage() {
       task_id: task.id,
       task_name: task.task_name,
       employee_name: task.employee_name,
+      submitted_by_admin_id: update.submitted_by_admin_id || null,
+      submitted_by_name: update.submitted_by_name || task.employee_name || null,
       description: update.description,
       image_urls: update.image_urls || [],
       approved_at: nowIso,
+      approved_by_admin_id: adminSession?.id || null,
+      approved_by_name: adminSession?.username || null,
       is_final_qc: !!markFinalQc,
     };
 
@@ -456,7 +479,7 @@ export default function AdminTasksPage() {
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-semibold">Production Review</h1>
+            <h1 className="text-3xl font-bold text-green-700">Production Review</h1>
             <div className="text-sm text-gray-500">Approve employee progress to publish it to the customer's Order Progress page.</div>
           </div>
 
@@ -486,7 +509,7 @@ export default function AdminTasksPage() {
         {/* TABLE */}
         <div className="bg-white rounded-lg shadow border overflow-x-auto">
           <table className="w-full text-sm text-left">
-            <thead className="bg-gray-100 text-gray-600">
+            <thead className="bg-gradient-to-r from-green-700 to-green-600 text-white">
               <tr>
                 <th className="px-6 py-3">Task#</th>
                 <th className="px-6 py-3">Product</th>
@@ -625,7 +648,15 @@ export default function AdminTasksPage() {
                           {Array.isArray(u.image_urls) && u.image_urls.length > 0 && (
                             <div className="mt-2 grid grid-cols-3 gap-2">
                               {u.image_urls.map((url, idx) => (
-                                <img key={idx} src={url} alt="" className="h-24 w-full object-cover rounded border" />
+                                <button
+                                  key={url + idx}
+                                  type="button"
+                                  onClick={() => openLightbox(u.image_urls || [], idx, "Update Images")}
+                                  className="block"
+                                  aria-label="Open image"
+                                >
+                                  <img src={url} alt="Update" className="h-24 w-full object-cover rounded border" />
+                                </button>
                               ))}
                             </div>
                           )}
@@ -653,18 +684,34 @@ export default function AdminTasksPage() {
                       type="number"
                       min={0}
                       max={100}
+                      step={1}
                       value={orderProgress}
-                      onChange={(e) => setOrderProgress(Number(e.target.value))}
-                      className="w-full mt-1 px-3 py-2 border rounded-md"
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === "") {
+                          setOrderProgress(0);
+                          return;
+                        }
+                        setOrderProgress(Number(v));
+                      }}
+                      disabled={!canEditOrderProgress}
+                      className="w-full mt-1 px-3 py-2 border rounded-md disabled:bg-gray-100 disabled:text-gray-500"
                     />
-                    <button
-                      onClick={saveOrderProgress}
-                      disabled={savingOrderProgress || !selectedTask.user_item_id}
-                      className="mt-2 px-3 py-2 rounded bg-black text-white text-xs disabled:opacity-50"
-                      type="button"
-                    >
-                      {savingOrderProgress ? "Saving…" : "Save Order Progress"}
-                    </button>
+
+                    {canEditOrderProgress ? (
+                      <button
+                        onClick={saveOrderProgress}
+                        disabled={savingOrderProgress || !selectedTask.user_item_id}
+                        className="mt-2 px-3 py-2 rounded bg-black text-white text-xs disabled:opacity-50"
+                        type="button"
+                      >
+                        {savingOrderProgress ? "Saving…" : "Save Order Progress"}
+                      </button>
+                    ) : (
+                      <div className="mt-2 text-[11px] text-gray-500">
+                        Only Superadmin / Team Leader can edit this.
+                      </div>
+                    )}
 
                     <div className="mt-4 rounded border p-3">
                       <div className="text-xs text-gray-500">Order Stage</div>
@@ -731,7 +778,15 @@ export default function AdminTasksPage() {
                           {Array.isArray(u.image_urls) && u.image_urls.length > 0 && (
                             <div className="mt-2 grid grid-cols-3 gap-2">
                               {u.image_urls.map((url, idx) => (
-                                <img key={idx} src={url} alt="" className="h-24 w-full object-cover rounded border" />
+                                <button
+                                  key={url + idx}
+                                  type="button"
+                                  onClick={() => openLightbox(u.image_urls || [], idx, "Update Images")}
+                                  className="block"
+                                  aria-label="Open image"
+                                >
+                                  <img src={url} alt="Update" className="h-24 w-full object-cover rounded border" />
+                                </button>
                               ))}
                             </div>
                           )}
@@ -789,6 +844,15 @@ export default function AdminTasksPage() {
           </div>
         </div>
       )}
+
+      <ImageLightbox
+        open={!!lightbox}
+        urls={lightbox?.urls || []}
+        index={lightbox?.index || 0}
+        title={lightbox?.title}
+        onClose={() => setLightbox(null)}
+        onIndexChange={(next) => setLightbox((p) => (p ? { ...p, index: next } : p))}
+      />
     </>
   );
 }
