@@ -352,7 +352,6 @@ CREATE TABLE public.products (
   fullproductname text,
   additionalfeatures text,
   inventory integer DEFAULT 0,
-  reserved_stock integer DEFAULT 0,
   fbx_urls ARRAY DEFAULT '{}'::text[],
   last_stock_update timestamp with time zone DEFAULT now(),
   stock_notification_sent boolean DEFAULT false,

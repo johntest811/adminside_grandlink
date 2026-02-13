@@ -659,8 +659,8 @@ export default function RolesAndPermissionsPage() {
             <h1 className="text-2xl font-bold text-gray-900">Access Control</h1>
             <p className="mt-1 text-sm text-gray-700">
               Manage who can access what. Use <span className="font-semibold">Position Permissions</span> as the default,
-              then apply <span className="font-semibold">Admin Overrides</span> for special cases.
-              <span className="font-semibold"> Admin Accounts</span> is where you create/disable admins and assign their position.
+              then apply <span className="font-semibold">Give Additional permissions</span> for special cases.
+              <span className="font-semibold"> Admin assign roles</span> is where you create/disable admins and assign their position.
             </p>
           </div>
           <button
@@ -694,7 +694,7 @@ export default function RolesAndPermissionsPage() {
                 : "bg-white text-gray-900 border-gray-300"
             }`}
           >
-            Admin Overrides
+            Give Additional permissions
           </button>
           <button
             onClick={() => setMode("accounts")}
@@ -704,7 +704,7 @@ export default function RolesAndPermissionsPage() {
                 : "bg-white text-gray-900 border-gray-300"
             }`}
           >
-            Admin Accounts
+            Admin assign roles
           </button>
 
           <div className="ml-auto flex items-center gap-3 text-sm text-gray-700">
@@ -723,7 +723,7 @@ export default function RolesAndPermissionsPage() {
 
       {mode === "accounts" && (
         <div className="bg-white border border-gray-200 rounded-lg p-6 space-y-4">
-          <h2 className="text-xl font-semibold text-black">Admin Accounts</h2>
+          <h2 className="text-xl font-semibold text-black">Admin assign roles</h2>
           <p className="text-sm text-gray-700">
             Create admins, assign their <span className="font-semibold">Position</span>, and manage access.
             Access to this tab is restricted to <span className="font-semibold">Superadmins</span>.
@@ -1063,7 +1063,7 @@ export default function RolesAndPermissionsPage() {
                 ))}
               </select>
               <div className="mt-2 text-xs text-gray-600">
-                Overrides add extra access on top of the admin’s position permissions.
+                  Additional permissions add extra access on top of the admin’s position permissions.
               </div>
             </div>
 
@@ -1084,7 +1084,7 @@ export default function RolesAndPermissionsPage() {
               onClick={() => saveAdminOverrides().catch((e) => alert(e.message))}
               className="w-full px-3 py-2 bg-indigo-600 text-white rounded disabled:opacity-60"
             >
-              {savingAdminOverrides ? "Saving..." : "Save Admin Overrides"}
+              {savingAdminOverrides ? "Saving..." : "Save Additional permissions"}
             </button>
 
             {adminHasWildcardAccess && (
@@ -1094,7 +1094,7 @@ export default function RolesAndPermissionsPage() {
             )}
             {!canManageAdminOverrides && (
               <div className="text-xs text-gray-600">
-                Read-only: you don’t have the “Admin Overrides” permission.
+                Read-only: you don’t have the “Give Additional permissions” permission.
               </div>
             )}
           </div>
@@ -1102,13 +1102,13 @@ export default function RolesAndPermissionsPage() {
           <div className="lg:col-span-2 bg-white border border-gray-200 rounded-lg p-5">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
-                <div className="text-sm text-gray-600">Admin override editor</div>
+                <div className="text-sm text-gray-600">Additional permissions editor</div>
                 <div className="text-lg font-semibold text-gray-900">
                   {admins.find((a) => a.id === selectedAdminId)?.username || "—"}
                 </div>
               </div>
               <div className="text-sm text-gray-600">
-                Overrides selected: <span className="font-semibold">{adminOverrideKeys.size}</span>
+                Additional permissions selected: <span className="font-semibold">{adminOverrideKeys.size}</span>
               </div>
             </div>
 

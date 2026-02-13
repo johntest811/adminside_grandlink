@@ -2,12 +2,14 @@
 
 import React, { useEffect, useState } from "react";
 import { supabase } from "../../../Clients/Supabase/SupabaseClients";
-import { logActivity, autoLogActivity } from "@/app/lib/activity";
+import { logActivity } from "@/app/lib/activity";
 
 type HomeContent = {
   carousel?: Array<{ image?: string; youtube_url?: string; title?: string; buttonText?: string; buttonLink?: string }>;
   explore?: Array<{ image?: string; title?: string; buttonText?: string; buttonLink?: string }>;
   featured_projects?: Array<{ image?: string; title?: string; description?: string; youtube_url?: string }>;
+  featured_long_images?: Array<{ image?: string; title?: string; description?: string }>;
+  payment?: { payrex_phone?: string; payrex_number?: string };
   services?: { images?: string[]; title?: string; description?: string; buttonText?: string; buttonLink?: string };
   about?: { logo?: string; title?: string; description?: string; buttonText?: string; buttonLink?: string };
   [k: string]: any;
@@ -117,8 +119,10 @@ export default function HomeEditor() {
                 carouselSlides: loadedContent.carousel?.length || 0,
                 exploreItems: loadedContent.explore?.length || 0,
                 featuredProjects: loadedContent.featured_projects?.length || 0,
+                featuredLongImages: loadedContent.featured_long_images?.length || 0,
                 hasServices: !!loadedContent.services,
                 hasAbout: !!loadedContent.about,
+                payrexPhoneConfigured: !!(loadedContent.payment?.payrex_phone || loadedContent.payment?.payrex_number),
                 adminAccount: currentAdmin.username,
                 adminId: currentAdmin.id,
                 timestamp: new Date().toISOString()
@@ -133,7 +137,7 @@ export default function HomeEditor() {
             const loadedContent = parsed?.content ?? parsed ?? {};
             setContent(loadedContent);
             setOriginalContent(JSON.parse(JSON.stringify(loadedContent)));
-          } catch (err) {
+          } catch {
             console.error("Invalid JSON from /api/home:", txt);
             setError("Invalid JSON response from /api/home");
           }
@@ -235,7 +239,7 @@ export default function HomeEditor() {
       const safeName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
       const filePath = `${Date.now()}_${safeName}`;
 
-      const { data: uploadData, error: uploadError } = await supabase.storage
+      const { error: uploadError } = await supabase.storage
         .from(BUCKET_NAME)
         .upload(filePath, file, { upsert: true, contentType: file.type });
 
@@ -351,6 +355,17 @@ export default function HomeEditor() {
         });
       }
 
+      const originalLongImages = originalContent.featured_long_images || [];
+      const currentLongImages = content.featured_long_images || [];
+      if (originalLongImages.length !== currentLongImages.length) {
+        changes.push({
+          section: 'featured_long_images',
+          field: 'images',
+          type: 'count_change',
+          details: `Featured long images: ${originalLongImages.length} → ${currentLongImages.length}`
+        });
+      }
+
       const res = await fetch("/api/home", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -389,6 +404,13 @@ export default function HomeEditor() {
             featured_projects: {
               projects: content.featured_projects?.length || 0,
               changed: originalProjects.length !== currentProjects.length
+            },
+            featured_long_images: {
+              images: content.featured_long_images?.length || 0,
+              changed: originalLongImages.length !== currentLongImages.length
+            },
+            payment: {
+              payrex_phone: content.payment?.payrex_phone || content.payment?.payrex_number || ''
             },
             services: {
               configured: !!content.services,
@@ -626,6 +648,24 @@ export default function HomeEditor() {
     await logContentChange('featured_projects', field, oldValue, value, index);
   };
 
+  const handleFeaturedLongImagesChange = async (index: number, field: string, value: string) => {
+    const oldValue = content.featured_long_images?.[index]?.[field as keyof typeof content.featured_long_images[0]] || '';
+
+    const arr = content.featured_long_images || [];
+    arr[index] = { ...(arr[index] || {}), [field]: value };
+    setContent({ ...content, featured_long_images: arr });
+
+    await logContentChange('featured_long_images', field, oldValue, value, index);
+  };
+
+  const handlePaymentChange = async (field: string, value: string) => {
+    const oldValue = content.payment?.[field as keyof typeof content.payment] || '';
+
+    setContent({ ...content, payment: { ...(content.payment || {}), [field]: value } });
+
+    await logContentChange('payment', field, oldValue, value);
+  };
+
   const handleServicesChange = async (field: string, value: string) => {
     const oldValue = content.services?.[field as keyof typeof content.services] || '';
     
@@ -808,6 +848,55 @@ export default function HomeEditor() {
             <button className="text-black" onClick={() => removeArrayItem("featured_projects", i)}>Remove</button>
           </div>
         ))}
+      </section>
+
+      {/* Featured Long Images */}
+      <section className="mb-6 border p-4 rounded">
+        <div className="flex justify-between items-center">
+          <h2 className="font-semibold text-black">Featured Products Long Images</h2>
+          <button onClick={() => addArrayItem("featured_long_images", {})} className="text-sm px-2 py-1 bg-gray-100 rounded text-black">Add Image</button>
+        </div>
+        <p className="text-xs text-gray-500 mt-2">Recommended: keep 3 long images for homepage popup gallery.</p>
+        {(content.featured_long_images || []).map((imgItem, i) => (
+          <div key={i} className="mt-3 border-t pt-3">
+            <div className="flex gap-2 mb-2">
+              <input
+                className={`flex-1 ${formControlSmall}`}
+                placeholder="Image URL"
+                value={imgItem.image || ""}
+                onChange={(e) => handleFeaturedLongImagesChange(i, 'image', e.target.value)}
+              />
+              <button className="px-2 bg-gray-100 text-black" onClick={() => openImagePicker("featured_long_images", i)}>Choose</button>
+            </div>
+            <input
+              className={`${formControl} mb-2`}
+              placeholder="Title"
+              value={imgItem.title || ""}
+              onChange={(e) => handleFeaturedLongImagesChange(i, 'title', e.target.value)}
+            />
+            <textarea
+              className={`${formControl} mb-2`}
+              placeholder="Description"
+              value={imgItem.description || ""}
+              onChange={(e) => handleFeaturedLongImagesChange(i, 'description', e.target.value)}
+            />
+            <button className="text-black" onClick={() => removeArrayItem("featured_long_images", i)}>Remove</button>
+          </div>
+        ))}
+      </section>
+
+      {/* Payment Settings */}
+      <section className="mb-6 border p-4 rounded">
+        <h2 className="font-semibold text-black">Payment Settings</h2>
+        <div className="mt-3">
+          <label className="block text-sm mb-1">PayRex Phone Number</label>
+          <input
+            className={formControl}
+            placeholder="e.g. 0917xxxxxxx"
+            value={content.payment?.payrex_phone || content.payment?.payrex_number || ""}
+            onChange={(e) => handlePaymentChange('payrex_phone', e.target.value)}
+          />
+        </div>
       </section>
 
       {/* Services */}

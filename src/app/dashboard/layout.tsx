@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import Logo from '../../components/Logo';
@@ -8,6 +8,26 @@ import NotificationBell from "../../components/NotificationBell";
 import RecentActivity from "../../components/RecentActivity";
 import { logLogoutActivity } from "@/app/lib/activity"; // ADD
 import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
+import {
+  BarChart3,
+  Megaphone,
+  Users,
+  FileBarChart2,
+  Boxes,
+  ListChecks,
+  ClipboardList,
+  CalendarDays,
+  Mail,
+  MessageSquare,
+  FolderKanban,
+  Sparkles,
+  CreditCard,
+  Settings,
+  ChevronDown,
+  ChevronRight,
+  LogOut,
+  CheckSquare,
+} from "lucide-react";
 
 export default function DashboardLayout({
   children,
@@ -23,6 +43,12 @@ export default function DashboardLayout({
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false); // NEW
   const [adminTheme, setAdminTheme] = useState<"light" | "dark" | "midnight">("light");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [showTaskDropdown, setShowTaskDropdown] = useState(false);
+  const [myTasks, setMyTasks] = useState<any[]>([]);
+  const [loadingMyTasks, setLoadingMyTasks] = useState(false);
+  const taskDropdownRef = useRef<HTMLDivElement | null>(null);
+  const navButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [collapsedFlyout, setCollapsedFlyout] = useState<{ name: string; top: number } | null>(null);
 
   const basePath = (p?: string) => String(p || "").split("#")[0];
 
@@ -41,22 +67,30 @@ export default function DashboardLayout({
   // Dropdown state
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
 
+  type NavSubItem = { name: string; path: string; icon?: React.ReactNode };
+  type NavItem = {
+    name: string;
+    path?: string;
+    icon: React.ReactNode;
+    dropdown?: NavSubItem[];
+  };
+
   // Sidebar navigation structure
-  const navStructure = [
-    { name: 'Dashboard', path: '/dashboard', icon: '📊' },
-    { name: 'Announcement', path: '/dashboard/announcement', icon: '📢' },
+  const navStructure: NavItem[] = [
+    { name: 'Dashboard', path: '/dashboard', icon: <BarChart3 className="h-4 w-4" /> },
+    { name: 'Announcement', path: '/dashboard/announcement', icon: <Megaphone className="h-4 w-4" /> },
     {
       name: 'Accounts',
-      icon: '👤',
+      icon: <Users className="h-4 w-4" />,
       dropdown: [
         { name: 'User Accounts', path: '/dashboard/user-accounts' },
         { name: 'Admin Accounts', path: '/dashboard/admins' },
       ],
     },
-    { name: 'Reports', path: '/dashboard/reports', icon: '📑' },
+    { name: 'Reports', path: '/dashboard/reports', icon: <FileBarChart2 className="h-4 w-4" /> },
     {
       name: 'Inventory',
-      icon: '📦',
+      icon: <Boxes className="h-4 w-4" />,
       dropdown: [
         { name: 'Update Products', path: '/dashboard/UpdateProducts' },
         { name: 'Add Products', path: '/dashboard/products' },
@@ -67,7 +101,7 @@ export default function DashboardLayout({
     },
     {
       name: 'Task',
-      icon: '📝',
+      icon: <ListChecks className="h-4 w-4" />,
       dropdown: [
         { name: 'Assigned Task', path: '/dashboard/task/assigntask' },
         { name: 'Employee Task', path: '/dashboard/task/employeetask' },
@@ -75,13 +109,13 @@ export default function DashboardLayout({
       ],
     },
     // { name: 'Orders', path: '/dashboard/orders', icon: '🛒' },
-    { name: 'Order Management', path: '/dashboard/order_management', icon: '📋' },
-    { name: 'Calendar', path: '/dashboard/calendar', icon: '📅' },
-    { name: 'User Inquiries', path: '/dashboard/inquiries', icon: '📨' },
-    { name: 'Chat Inbox', path: '/dashboard/chat', icon: '💬' },
+    { name: 'Order Management', path: '/dashboard/order_management', icon: <ClipboardList className="h-4 w-4" /> },
+    { name: 'Calendar', path: '/dashboard/calendar', icon: <CalendarDays className="h-4 w-4" /> },
+    { name: 'User Inquiries', path: '/dashboard/inquiries', icon: <Mail className="h-4 w-4" /> },
+    { name: 'Chat Inbox', path: '/dashboard/chat', icon: <MessageSquare className="h-4 w-4" /> },
     {
       name: 'Content Management',
-      icon: '🗂️',
+      icon: <FolderKanban className="h-4 w-4" />,
       dropdown: [
         { name: 'Home', path: '/dashboard/Content_management/home' },
         { name: 'About Us', path: '/dashboard/Content_management/about' },
@@ -94,19 +128,19 @@ export default function DashboardLayout({
         { name: 'Inquire Page Editor', path: '/dashboard/inquiries/editor', icon: '📝' },
       ],
     },
-    { name: 'Predictive', path: '/dashboard/predictive', icon: '🔮' },
+    { name: 'Predictive', path: '/dashboard/predictive', icon: <Sparkles className="h-4 w-4" /> },
     {
       name: 'Sales',
-      icon: '💳',
+      icon: <CreditCard className="h-4 w-4" />,
       dropdown: [
         { name: 'Invoices', path: '/dashboard/sales/invoices' },
         { name: 'Quotations', path: '/dashboard/sales/quotations' },
-        { name: 'Sales Forecasting', path: '/dashboard/sales-forecasting', icon: '📈' },
+        { name: 'Sales Forecasting', path: '/dashboard/sales-forecasting' },
       ],
     },
     {
       name: 'Settings',
-      icon: '⚙️',
+      icon: <Settings className="h-4 w-4" />,
       dropdown: [
         { name: 'Settings', path: '/dashboard/settings' },
         { name: 'Audit', path: '/dashboard/settings/audit' },
@@ -116,8 +150,65 @@ export default function DashboardLayout({
   ];
 
   useEffect(() => {
-    checkAuthAndLoadAdmin();
+    try {
+      console.log("🔍 Checking admin session...");
+
+      const sessionData = localStorage.getItem('adminSession');
+      if (!sessionData) {
+        console.warn("⚠️ No admin session found");
+        router.push('/login');
+        setLoading(false);
+        return;
+      }
+
+      const adminSession = JSON.parse(sessionData);
+      console.log("✅ Admin session found:", adminSession);
+
+      setCurrentAdmin(adminSession);
+      setLoading(false);
+    } catch (error) {
+      console.error("💥 Error checking admin session:", error);
+      router.push('/login');
+      setLoading(false);
+    }
+  }, [router]);
+
+  useEffect(() => {
+    const onClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (taskDropdownRef.current && !taskDropdownRef.current.contains(target)) {
+        setShowTaskDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
+
+  useEffect(() => {
+    const loadMyTasks = async () => {
+      if (!currentAdmin?.id) return;
+      setLoadingMyTasks(true);
+      try {
+        const { data, error } = await supabase
+          .from("tasks")
+          .select("id, task_name, status, due_date, product_name")
+          .eq("assigned_admin_id", currentAdmin.id)
+          .neq("status", "completed")
+          .order("due_date", { ascending: true })
+          .limit(8);
+
+        if (error) throw error;
+        setMyTasks(data || []);
+      } catch (e) {
+        console.error("Failed to load my tasks", e);
+        setMyTasks([]);
+      } finally {
+        setLoadingMyTasks(false);
+      }
+    };
+
+    loadMyTasks();
+  }, [currentAdmin?.id]);
 
   useEffect(() => {
     try {
@@ -134,6 +225,7 @@ export default function DashboardLayout({
     } catch {
       // ignore
     }
+    setCollapsedFlyout(null);
   }, [isSidebarCollapsed]);
 
   useEffect(() => {
@@ -232,31 +324,6 @@ export default function DashboardLayout({
     }
   }, [pathname, allowedPaths, router]);
 
-  const checkAuthAndLoadAdmin = () => {
-    try {
-      console.log("🔍 Checking admin session...");
-      
-      // Get admin session from localStorage
-      const sessionData = localStorage.getItem('adminSession');
-      if (!sessionData) {
-        console.warn("⚠️ No admin session found");
-        router.push('/login');
-        setLoading(false);
-        return;
-      }
-
-      const adminSession = JSON.parse(sessionData);
-      console.log("✅ Admin session found:", adminSession);
-      
-      setCurrentAdmin(adminSession);
-      setLoading(false);
-    } catch (error) {
-      console.error("💥 Error checking admin session:", error);
-      router.push('/login');
-      setLoading(false);
-    }
-  };
-
   const handleLogout = async () => { // make async
     try {
       const sessionData = localStorage.getItem('adminSession');
@@ -301,6 +368,11 @@ export default function DashboardLayout({
     })
     .filter(Boolean) as typeof navStructure;
 
+  const activeFlyoutItem =
+    collapsedFlyout && isSidebarCollapsed
+      ? (filteredNav.find((item) => item.name === collapsedFlyout.name && item.dropdown) as any)
+      : null;
+
   return (
     <div className="admin-app min-h-screen">
       <header className="flex items-center justify-between px-6 py-3 bg-white border-b border-gray-200 shadow-sm">
@@ -321,6 +393,53 @@ export default function DashboardLayout({
         </div>
 
         <div className="flex items-center gap-2">
+          <div className="relative" ref={taskDropdownRef}>
+            <button
+              type="button"
+              className="relative rounded-lg border border-gray-200 px-3 py-2 text-gray-700 hover:bg-gray-50"
+              onClick={() => setShowTaskDropdown((v) => !v)}
+              aria-label="My tasks"
+              title="My Tasks"
+            >
+              <CheckSquare className="h-4 w-4" />
+              {myTasks.length > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-red-600 text-white text-[10px] flex items-center justify-center">
+                  {myTasks.length}
+                </span>
+              )}
+            </button>
+
+            {showTaskDropdown && (
+              <div className="absolute right-0 mt-2 w-80 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+                <div className="px-3 py-2 border-b text-sm font-semibold text-black">My Tasks</div>
+                <div className="max-h-72 overflow-y-auto">
+                  {loadingMyTasks ? (
+                    <div className="px-3 py-3 text-sm text-gray-600">Loading tasks...</div>
+                  ) : myTasks.length === 0 ? (
+                    <div className="px-3 py-3 text-sm text-gray-600">No active tasks assigned.</div>
+                  ) : (
+                    myTasks.map((task) => (
+                      <Link
+                        key={task.id}
+                        href="/dashboard/task/employeetask"
+                        className="block px-3 py-2 border-b last:border-b-0 hover:bg-gray-50"
+                        onClick={() => setShowTaskDropdown(false)}
+                      >
+                        <div className="text-sm font-medium text-black truncate">{task.task_name || task.product_name || `Task #${task.id}`}</div>
+                        <div className="text-xs text-gray-600 mt-0.5">{task.status || "pending"}{task.due_date ? ` • Due ${new Date(task.due_date).toLocaleDateString()}` : ""}</div>
+                      </Link>
+                    ))
+                  )}
+                </div>
+                <div className="px-3 py-2 border-t">
+                  <Link href="/dashboard/task/employeetask" className="text-xs text-indigo-700 hover:underline" onClick={() => setShowTaskDropdown(false)}>
+                    Open Employee Task Page
+                  </Link>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Recent Activity - Popup Style */}
           <RecentActivity
             adminId={currentAdmin?.id}
@@ -389,43 +508,37 @@ export default function DashboardLayout({
                   <button
                     type="button"
                     className={`flex items-center w-full ${isSidebarCollapsed ? "justify-center px-2" : "px-4"} py-3 text-sm font-medium rounded-md transition-colors ${openDropdown === item.name ? 'bg-gray-900 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
-                    onClick={() => setOpenDropdown(openDropdown === item.name ? null : item.name)}
+                    onClick={(event) => {
+                      const target = event.currentTarget as HTMLButtonElement;
+                      navButtonRefs.current[item.name] = target;
+
+                      if (isSidebarCollapsed) {
+                        if (collapsedFlyout?.name === item.name) {
+                          setCollapsedFlyout(null);
+                          setOpenDropdown(null);
+                        } else {
+                          const rect = target.getBoundingClientRect();
+                          setCollapsedFlyout({ name: item.name, top: rect.top });
+                          setOpenDropdown(item.name);
+                        }
+                        return;
+                      }
+
+                      setCollapsedFlyout(null);
+                      setOpenDropdown(openDropdown === item.name ? null : item.name);
+                    }}
                     title={item.name}
                   >
                     <span className={isSidebarCollapsed ? "" : "mr-3"}>{item.icon}</span>
                     {!isSidebarCollapsed && (
                       <>
                         {item.name}
-                        <span className="ml-auto">{openDropdown === item.name ? '▲' : '▼'}</span>
+                        <span className="ml-auto">{openDropdown === item.name ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</span>
                       </>
                     )}
                   </button>
                   {openDropdown === item.name && (
-                    isSidebarCollapsed ? (
-                      <div className="absolute left-full top-0 ml-2 w-56 rounded-md border border-white/10 bg-gray-800 p-2 shadow-lg z-40">
-                        <div className="text-xs text-gray-300 px-2 pb-1">{item.name}</div>
-                        <div className="flex flex-col gap-1">
-                          {item.dropdown.map((sub) => (
-                            <Link
-                              key={sub.path}
-                              href={sub.path}
-                              className={`px-3 py-2 text-xs rounded-md transition-colors ${isActive(sub.path) ? 'bg-gray-900 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
-                              onClick={() => {
-                                setIsMobileSidebarOpen(false);
-                                setOpenDropdown(null);
-                              }}
-                            >
-                              <span className="inline-flex items-center gap-2">
-                                <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-white/10 text-white text-[10px]">
-                                  {String((sub as any).icon || sub.name?.charAt(0)?.toUpperCase() || "•")}
-                                </span>
-                                <span>{sub.name}</span>
-                              </span>
-                            </Link>
-                          ))}
-                        </div>
-                      </div>
-                    ) : (
+                    isSidebarCollapsed ? null : (
                       <div className="ml-8 mt-1 flex flex-col gap-1">
                         {item.dropdown.map((sub) => (
                           <Link
@@ -448,9 +561,9 @@ export default function DashboardLayout({
                 </div>
               ) : (
                 <Link
-                  key={item.path}
-                  href={item.path}
-                  className={`flex items-center ${isSidebarCollapsed ? "justify-center px-2" : "px-4"} py-3 text-sm font-medium rounded-md transition-colors ${isActive(item.path) ? 'bg-gray-900 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
+                  key={item.path || item.name}
+                  href={item.path || "/dashboard"}
+                  className={`flex items-center ${isSidebarCollapsed ? "justify-center px-2" : "px-4"} py-3 text-sm font-medium rounded-md transition-colors ${isActive(item.path || "") ? 'bg-gray-900 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
                   onClick={() => setIsMobileSidebarOpen(false)}
                   title={item.name}
                 >
@@ -469,11 +582,40 @@ export default function DashboardLayout({
             className={`flex items-center w-full ${isSidebarCollapsed ? "justify-center px-2" : "px-4"} py-3 text-sm font-medium text-gray-300 rounded-md hover:bg-gray-700 hover:text-white`}
             title="Logout"
           >
-            <span className={isSidebarCollapsed ? "" : "mr-3"}>🚪</span>
+            <span className={isSidebarCollapsed ? "" : "mr-3"}><LogOut className="h-4 w-4" /></span>
             {!isSidebarCollapsed && "Logout"}
           </button>
         </div>
       </aside>
+
+      {activeFlyoutItem && (
+        <div
+          className="fixed z-[70] w-56 rounded-md border border-white/10 bg-gray-800 p-2 shadow-lg"
+          style={{ left: 84, top: Math.max(72, collapsedFlyout?.top || 72) }}
+          onMouseLeave={() => setCollapsedFlyout(null)}
+        >
+          <div className="text-xs text-gray-300 px-2 pb-1">{activeFlyoutItem.name}</div>
+          <div className="flex flex-col gap-1">
+            {activeFlyoutItem.dropdown.map((sub: any) => (
+              <Link
+                key={sub.path}
+                href={sub.path}
+                className={`px-3 py-2 text-xs rounded-md transition-colors ${isActive(sub.path) ? 'bg-gray-900 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
+                onClick={() => {
+                  setIsMobileSidebarOpen(false);
+                  setOpenDropdown(null);
+                  setCollapsedFlyout(null);
+                }}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-white/10 text-white text-[9px]">•</span>
+                  <span>{sub.name}</span>
+                </span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
       <div className={`flex-1 ${isSidebarCollapsed ? "lg:ml-20" : "lg:ml-64"}`}>

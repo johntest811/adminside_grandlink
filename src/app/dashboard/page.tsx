@@ -6,6 +6,7 @@ import { logActivity } from "@/app/lib/activity";
 // charts
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, PointElement, LineElement, Tooltip, Legend } from "chart.js";
 import { Bar, Line } from "react-chartjs-2";
+import { CalendarDays, CheckSquare } from "lucide-react";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, PointElement, LineElement, Tooltip, Legend);
 
@@ -151,6 +152,8 @@ export default function DashboardPage() {
   const [activeUsersWeek, setActiveUsersWeek] = useState<{ label: string; count: number }[]>([]);
   const [activeUsersMonth, setActiveUsersMonth] = useState<{ label: string; count: number }[]>([]);
   const [announcements, setAnnouncements] = useState<any[]>([]);
+  const [upcomingEvents, setUpcomingEvents] = useState<any[]>([]);
+  const [myTasks, setMyTasks] = useState<any[]>([]);
 
   useEffect(() => {
     // Load current admin from localStorage
@@ -227,6 +230,45 @@ export default function DashboardPage() {
   useEffect(() => {
     fetchMetrics();
   }, []);
+
+  useEffect(() => {
+    const fetchDashboardExtras = async () => {
+      try {
+        const nowIso = new Date().toISOString();
+        const { data: eventsData } = await supabase
+          .from("calendar_events")
+          .select("id, title, start, end, location")
+          .gte("start", nowIso)
+          .order("start", { ascending: true })
+          .limit(6);
+        setUpcomingEvents(eventsData || []);
+      } catch (e) {
+        console.error("Failed to fetch calendar events for dashboard", e);
+        setUpcomingEvents([]);
+      }
+
+      if (!currentAdmin?.id) {
+        setMyTasks([]);
+        return;
+      }
+
+      try {
+        const { data: tasksData } = await supabase
+          .from("tasks")
+          .select("id, task_name, status, due_date, product_name")
+          .eq("assigned_admin_id", currentAdmin.id)
+          .neq("status", "completed")
+          .order("due_date", { ascending: true })
+          .limit(6);
+        setMyTasks(tasksData || []);
+      } catch (e) {
+        console.error("Failed to fetch current admin tasks", e);
+        setMyTasks([]);
+      }
+    };
+
+    fetchDashboardExtras();
+  }, [currentAdmin?.id]);
 
   const fetchMetrics = async () => {
     try {
@@ -518,6 +560,56 @@ export default function DashboardPage() {
     };
   }, [ordersStatusTab, ordersStatusDay, ordersStatusWeek, ordersStatusMonth]);
 
+  const miniCalendarData = useMemo(() => {
+    const today = new Date();
+    const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const startOffset = firstOfMonth.getDay();
+    const gridStart = new Date(firstOfMonth);
+    gridStart.setDate(firstOfMonth.getDate() - startOffset);
+
+    const toLocalDateKey = (date: Date) =>
+      `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+        date.getDate()
+      ).padStart(2, "0")}`;
+
+    const eventsByDate = new Map<string, any[]>();
+    upcomingEvents.forEach((event) => {
+      if (!event?.start) return;
+      const eventDate = new Date(event.start);
+      if (Number.isNaN(eventDate.getTime())) return;
+      const key = toLocalDateKey(eventDate);
+      const existing = eventsByDate.get(key) || [];
+      existing.push(event);
+      eventsByDate.set(key, existing);
+    });
+
+    const days = Array.from({ length: 42 }, (_, index) => {
+      const date = new Date(gridStart);
+      date.setDate(gridStart.getDate() + index);
+      const key = toLocalDateKey(date);
+      const isCurrentMonth = date.getMonth() === today.getMonth();
+      const isToday =
+        date.getDate() === today.getDate() &&
+        date.getMonth() === today.getMonth() &&
+        date.getFullYear() === today.getFullYear();
+
+      return {
+        key,
+        date,
+        dayNumber: date.getDate(),
+        isCurrentMonth,
+        isToday,
+        events: eventsByDate.get(key) || [],
+      };
+    });
+
+    return {
+      monthLabel: today.toLocaleString(undefined, { month: "long", year: "numeric" }),
+      weekDays: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+      days,
+    };
+  }, [upcomingEvents]);
+
   // ADD: test helpers to avoid runtime ReferenceError
   const testActivityLogging = async () => {
     try {
@@ -717,6 +809,86 @@ export default function DashboardPage() {
               },
             }}
           />
+        </div>
+      </div>
+
+      {/* Dashboard quick panels: Calendar + My Tasks */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <CalendarDays className="h-5 w-5 text-red-700" />
+              <h2 className="text-lg font-semibold text-black">Upcoming Calendar</h2>
+            </div>
+            <a href="/dashboard/calendar" className="text-sm text-black underline">Open Calendar</a>
+          </div>
+
+          <div className="rounded border p-3">
+            <div className="text-sm font-semibold text-black mb-2">{miniCalendarData.monthLabel}</div>
+            <div className="grid grid-cols-7 gap-1 text-[11px] text-gray-600 mb-1">
+              {miniCalendarData.weekDays.map((day) => (
+                <div key={day} className="text-center font-medium">{day}</div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 gap-1">
+              {miniCalendarData.days.map((day) => (
+                <div
+                  key={day.key}
+                  className={`h-10 rounded border p-1 text-xs flex flex-col items-center justify-between ${
+                    day.isCurrentMonth ? "bg-white text-black" : "bg-gray-50 text-gray-400"
+                  } ${day.isToday ? "border-red-500" : "border-gray-200"}`}
+                  title={
+                    day.events.length
+                      ? `${day.events.length} event${day.events.length > 1 ? "s" : ""}`
+                      : "No events"
+                  }
+                >
+                  <span className="leading-none">{day.dayNumber}</span>
+                  {day.events.length > 0 ? (
+                    <span className="w-2 h-2 rounded-full bg-red-600" />
+                  ) : (
+                    <span className="w-2 h-2" />
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {upcomingEvents.length === 0 ? (
+            <div className="text-sm text-gray-600 mt-3">No upcoming events.</div>
+          ) : (
+            <div className="space-y-2 mt-3">
+              {upcomingEvents.slice(0, 3).map((event) => (
+                <div key={event.id} className="rounded border p-2">
+                  <div className="text-sm font-semibold text-black">{event.title}</div>
+                  <div className="text-xs text-gray-600 mt-0.5">{event.start ? new Date(event.start).toLocaleString() : "No date"}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <CheckSquare className="h-5 w-5 text-indigo-700" />
+              <h2 className="text-lg font-semibold text-black">My Tasks</h2>
+            </div>
+            <a href="/dashboard/task/employeetask" className="text-sm text-black underline">Open Tasks</a>
+          </div>
+
+          {myTasks.length === 0 ? (
+            <div className="text-sm text-gray-600">No active tasks assigned to this account.</div>
+          ) : (
+            <div className="space-y-3">
+              {myTasks.map((task) => (
+                <div key={task.id} className="rounded border p-3">
+                  <div className="text-sm font-semibold text-black">{task.task_name || task.product_name || `Task #${task.id}`}</div>
+                  <div className="text-xs text-gray-600 mt-0.5">{task.status || "pending"}{task.due_date ? ` • Due ${new Date(task.due_date).toLocaleDateString()}` : ""}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

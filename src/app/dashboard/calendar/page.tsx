@@ -29,18 +29,38 @@ export default function CalendarPage() {
     location: "",
   });
 
+  const fetchEvents = async () => {
+    const { data, error } = await supabase.from("calendar_events").select("*").order("start", { ascending: true });
+    if (error) {
+      console.error("Error fetching events:", error);
+    } else {
+      setEvents(data || []);
+    }
+  };
+
   // ✅ Load events from Supabase
   useEffect(() => {
-    const fetchEvents = async () => {
-      const { data, error } = await supabase.from("calendar_events").select("*");
-      if (error) {
-        console.error("Error fetching events:", error);
-      } else {
-        setEvents(data || []);
-      }
-    };
     fetchEvents();
   }, []);
+
+  const openCreateModal = () => {
+    const now = new Date();
+    const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
+    const toLocalInput = (d: Date) => {
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+
+    setFormData({
+      title: "",
+      description: "",
+      start: toLocalInput(now),
+      end: toLocalInput(oneHourLater),
+      location: "",
+    });
+    setSelectedEvent(null);
+    setIsModalOpen(true);
+  };
 
   // ✅ Open modal to create new event
   const handleDateClick = (arg: any) => {
@@ -94,7 +114,7 @@ export default function CalendarPage() {
     }
 
     setIsModalOpen(false);
-    window.location.reload(); // refresh events
+    await fetchEvents();
   };
 
   // ✅ Delete event
@@ -107,13 +127,22 @@ export default function CalendarPage() {
       if (error) console.error(error);
 
       setIsModalOpen(false);
-      window.location.reload();
+      await fetchEvents();
     }
   };
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold text-red-700 mb-4">📅 Calendar & Scheduling</h1>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-2xl font-bold text-red-700">📅 Calendar & Scheduling</h1>
+        <button
+          type="button"
+          onClick={openCreateModal}
+          className="px-4 py-2 rounded-lg bg-red-700 text-white hover:bg-red-800"
+        >
+          + Add Event
+        </button>
+      </div>
 
       <FullCalendar
         plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
