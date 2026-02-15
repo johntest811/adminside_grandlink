@@ -54,6 +54,10 @@ type LstmDemandResult = {
   predicted_total_units: number;
   recent_total_units: number;
   delta_pct: number;
+  mae_backtest: number;
+  rmse_backtest: number;
+  mape_backtest: number;
+  confidence_score: number;
 };
 
 function addDaysISO(dateISO: string, days: number) {
@@ -82,6 +86,48 @@ function zNormalize(values: number[]) {
     std,
     norm: (v: number) => (v - mean) / std,
     denorm: (v: number) => v * std + mean,
+  };
+}
+
+function computeRegressionMetrics(actual: number[], predicted: number[]) {
+  const n = Math.min(actual.length, predicted.length);
+  if (!n) {
+    return {
+      mae: 0,
+      rmse: 0,
+      mape: 0,
+      bias: 0,
+      sampleSize: 0,
+    };
+  }
+
+  let absErrorSum = 0;
+  let squaredErrorSum = 0;
+  let pctErrorSum = 0;
+  let pctCount = 0;
+  let biasSum = 0;
+
+  for (let index = 0; index < n; index += 1) {
+    const actualValue = Number(actual[index] || 0);
+    const predictedValue = Number(predicted[index] || 0);
+    const error = predictedValue - actualValue;
+
+    absErrorSum += Math.abs(error);
+    squaredErrorSum += error * error;
+    biasSum += error;
+
+    if (Math.abs(actualValue) > 1e-6) {
+      pctErrorSum += Math.abs(error) / Math.abs(actualValue);
+      pctCount += 1;
+    }
+  }
+
+  return {
+    mae: absErrorSum / n,
+    rmse: Math.sqrt(squaredErrorSum / n),
+    mape: pctCount > 0 ? (pctErrorSum / pctCount) * 100 : 0,
+    bias: biasSum / n,
+    sampleSize: n,
   };
 }
 
@@ -117,9 +163,15 @@ async function trainAndForecastDemandLSTM(params: {
     y.push(norm[t]);
   }
 
-  const trainSize = Math.max(1, Math.floor(X.length * 0.9));
+  const desiredTestSize = Math.max(7, Math.floor(X.length * 0.15));
+  const testSize = Math.max(1, Math.min(desiredTestSize, Math.max(1, X.length - 5)));
+  const trainSize = X.length - testSize;
+  if (trainSize < 5) throw new Error("Not enough training samples for LSTM");
+
   const XTrain = X.slice(0, trainSize);
   const yTrain = y.slice(0, trainSize);
+  const XTest = X.slice(trainSize);
+  const yTest = y.slice(trainSize);
 
   const model = tf.sequential();
   model.add(
@@ -139,12 +191,25 @@ async function trainAndForecastDemandLSTM(params: {
     epochs,
     batchSize: 32,
     shuffle: true,
-    validationSplit: 0.1,
+    validationSplit: XTrain.length > 12 ? 0.1 : 0,
     verbose: 0,
   });
 
   XTrainTensor.dispose();
   yTrainTensor.dispose();
+
+  let metrics = { mae: 0, rmse: 0, mape: 0, bias: 0, sampleSize: 0 };
+  if (XTest.length) {
+    const XTestTensor = tf.tensor3d(XTest, [XTest.length, lookback, 3]);
+    const yPredTensor = model.predict(XTestTensor) as tf.Tensor;
+    const yPredNorm = Array.from(await yPredTensor.data());
+    XTestTensor.dispose();
+    yPredTensor.dispose();
+
+    const actualDenorm = yTest.map((value) => Math.max(0, zn.denorm(value)));
+    const predDenorm = yPredNorm.map((value) => Math.max(0, zn.denorm(value)));
+    metrics = computeRegressionMetrics(actualDenorm, predDenorm);
+  }
 
   // Forecast horizon iteratively
   let windowValues = norm.slice(norm.length - lookback);
@@ -171,10 +236,21 @@ async function trainAndForecastDemandLSTM(params: {
 
   model.dispose();
 
+  const baseline = values.slice(Math.max(0, values.length - horizon));
+  const baselineMean = baseline.length
+    ? baseline.reduce((sum, value) => sum + value, 0) / baseline.length
+    : 1;
+  const errorRatio = metrics.mae / Math.max(1, baselineMean);
+  const confidenceScore = Math.max(5, Math.min(99, 100 - metrics.mape * 0.8 - errorRatio * 60));
+
   return {
     horizon,
     predicted_total: preds.reduce((a, b) => a + b, 0),
     recent_total: values.slice(Math.max(0, values.length - horizon)).reduce((a, b) => a + b, 0),
+    mae_backtest: metrics.mae,
+    rmse_backtest: metrics.rmse,
+    mape_backtest: metrics.mape,
+    confidence_score: confidenceScore,
   };
 }
 
@@ -324,6 +400,86 @@ export default function SalesForecastingPage() {
     };
   }, []);
 
+  const rfAnalytics = useMemo(() => {
+    if (!revForecast || !qtyForecast) return null;
+
+    const buildSeriesAnalytics = (forecast: SalesForecastOutput) => {
+      const actualOverlap: number[] = [];
+      const forecastOverlap: number[] = [];
+      for (let index = 0; index < forecast.actual.length; index += 1) {
+        const actualValue = forecast.actual[index];
+        const forecastValue = forecast.forecast[index];
+        if (Number.isFinite(actualValue) && Number.isFinite(forecastValue)) {
+          actualOverlap.push(Number(actualValue));
+          forecastOverlap.push(Number(forecastValue));
+        }
+      }
+
+      const metrics = computeRegressionMetrics(actualOverlap, forecastOverlap);
+      const delta = summarizeForecastDelta({
+        actual: forecast.actual,
+        forecast: forecast.forecast,
+        horizon: forecast.meta.horizon,
+      });
+
+      const futureValues = forecast.forecast
+        .slice(Math.max(0, forecast.forecast.length - forecast.meta.horizon))
+        .filter((value) => Number.isFinite(value));
+      const futureMean = futureValues.length
+        ? futureValues.reduce((sum, value) => sum + value, 0) / futureValues.length
+        : 0;
+      const futureVariance = futureValues.length > 1
+        ? futureValues.reduce((sum, value) => sum + (value - futureMean) ** 2, 0) / (futureValues.length - 1)
+        : 0;
+      const volatilityPct = futureMean > 0 ? (Math.sqrt(futureVariance) / futureMean) * 100 : 0;
+
+      return {
+        ...metrics,
+        trendPct: delta.pctChange * 100,
+        recentSum: delta.recentSum,
+        futureSum: delta.futureSum,
+        volatilityPct,
+      };
+    };
+
+    return {
+      revenue: buildSeriesAnalytics(revForecast),
+      units: buildSeriesAnalytics(qtyForecast),
+    };
+  }, [qtyForecast, revForecast]);
+
+  const lstmAnalytics = useMemo(() => {
+    if (!lstmResults || lstmResults.length === 0) return null;
+
+    const count = lstmResults.length;
+    const risingCount = lstmResults.filter((result) => result.delta_pct >= 0).length;
+    const avgDeltaPct =
+      lstmResults.reduce((sum, result) => sum + result.delta_pct, 0) / count;
+    const avgMae =
+      lstmResults.reduce((sum, result) => sum + result.mae_backtest, 0) / count;
+    const avgRmse =
+      lstmResults.reduce((sum, result) => sum + result.rmse_backtest, 0) / count;
+    const avgMape =
+      lstmResults.reduce((sum, result) => sum + result.mape_backtest, 0) / count;
+    const avgConfidence =
+      lstmResults.reduce((sum, result) => sum + result.confidence_score, 0) / count;
+
+    const strongestGrowth = [...lstmResults].sort((a, b) => b.delta_pct - a.delta_pct)[0];
+    const weakestGrowth = [...lstmResults].sort((a, b) => a.delta_pct - b.delta_pct)[0];
+
+    return {
+      count,
+      risingCount,
+      avgDeltaPct,
+      avgMae,
+      avgRmse,
+      avgMape,
+      avgConfidence,
+      strongestGrowth,
+      weakestGrowth,
+    };
+  }, [lstmResults]);
+
   const runLstm = useCallback(async () => {
     try {
       setLstmLoading(true);
@@ -364,6 +520,10 @@ export default function SalesForecastingPage() {
           predicted_total_units: r.predicted_total,
           recent_total_units: r.recent_total,
           delta_pct: delta,
+          mae_backtest: r.mae_backtest,
+          rmse_backtest: r.rmse_backtest,
+          mape_backtest: r.mape_backtest,
+          confidence_score: r.confidence_score,
         });
 
         // Yield to UI + help prevent long-blocking tasks
@@ -645,6 +805,29 @@ export default function SalesForecastingPage() {
             </div>
           </div>
         )}
+
+        {rfAnalytics && (
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
+            <div className="p-3 rounded border bg-indigo-50 text-black">
+              <div className="font-semibold">Revenue RMSE / MAPE</div>
+              <div className="mt-1">₱{Math.round(rfAnalytics.revenue.rmse).toLocaleString()} / {rfAnalytics.revenue.mape.toFixed(1)}%</div>
+            </div>
+            <div className="p-3 rounded border bg-blue-50 text-black">
+              <div className="font-semibold">Units RMSE / MAPE</div>
+              <div className="mt-1">{rfAnalytics.units.rmse.toFixed(2)} / {rfAnalytics.units.mape.toFixed(1)}%</div>
+            </div>
+            <div className="p-3 rounded border bg-green-50 text-black">
+              <div className="font-semibold">Forecast Trend (horizon)</div>
+              <div className="mt-1">
+                Revenue <span className={rfAnalytics.revenue.trendPct >= 0 ? "text-green-700" : "text-red-700"}>{rfAnalytics.revenue.trendPct.toFixed(1)}%</span> · Units <span className={rfAnalytics.units.trendPct >= 0 ? "text-green-700" : "text-red-700"}>{rfAnalytics.units.trendPct.toFixed(1)}%</span>
+              </div>
+            </div>
+            <div className="p-3 rounded border bg-amber-50 text-black">
+              <div className="font-semibold">Forecast Volatility</div>
+              <div className="mt-1">Revenue {rfAnalytics.revenue.volatilityPct.toFixed(1)}% · Units {rfAnalytics.units.volatilityPct.toFixed(1)}%</div>
+            </div>
+          </div>
+        )}
       </div>
 
       {revenueChartData && (
@@ -780,6 +963,29 @@ export default function SalesForecastingPage() {
 
         {lstmError && <div className="text-sm text-red-700">{lstmError}</div>}
 
+        {lstmAnalytics && (
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
+            <div className="p-3 rounded border bg-gray-50 text-black">
+              <div className="font-semibold">Avg LSTM Error</div>
+              <div className="mt-1">MAE {lstmAnalytics.avgMae.toFixed(2)} · RMSE {lstmAnalytics.avgRmse.toFixed(2)} · MAPE {lstmAnalytics.avgMape.toFixed(1)}%</div>
+            </div>
+            <div className="p-3 rounded border bg-indigo-50 text-black">
+              <div className="font-semibold">Avg Confidence</div>
+              <div className="mt-1">{lstmAnalytics.avgConfidence.toFixed(1)} / 100</div>
+            </div>
+            <div className="p-3 rounded border bg-green-50 text-black">
+              <div className="font-semibold">Demand Direction</div>
+              <div className="mt-1">{lstmAnalytics.risingCount}/{lstmAnalytics.count} products rising · Avg Δ { (lstmAnalytics.avgDeltaPct * 100).toFixed(1)}%</div>
+            </div>
+            <div className="p-3 rounded border bg-amber-50 text-black">
+              <div className="font-semibold">Outlier Watch</div>
+              <div className="mt-1">
+                ↑ {lstmAnalytics.strongestGrowth?.product_name || "-"} · ↓ {lstmAnalytics.weakestGrowth?.product_name || "-"}
+              </div>
+            </div>
+          </div>
+        )}
+
         {lstmResults && (
           <div className="overflow-x-auto border rounded">
             <table className="min-w-full text-sm">
@@ -789,6 +995,10 @@ export default function SalesForecastingPage() {
                   <th className="px-4 py-3 text-right">Predicted units (next)</th>
                   <th className="px-4 py-3 text-right">Recent units (last)</th>
                   <th className="px-4 py-3 text-right">Δ%</th>
+                  <th className="px-4 py-3 text-right">MAE</th>
+                  <th className="px-4 py-3 text-right">RMSE</th>
+                  <th className="px-4 py-3 text-right">MAPE</th>
+                  <th className="px-4 py-3 text-right">Confidence</th>
                 </tr>
               </thead>
               <tbody>
@@ -802,6 +1012,10 @@ export default function SalesForecastingPage() {
                         {(r.delta_pct * 100).toFixed(1)}%
                       </span>
                     </td>
+                    <td className="px-4 py-3 text-right text-gray-700">{r.mae_backtest.toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right text-gray-700">{r.rmse_backtest.toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right text-gray-700">{r.mape_backtest.toFixed(1)}%</td>
+                    <td className="px-4 py-3 text-right text-gray-700">{r.confidence_score.toFixed(0)}</td>
                   </tr>
                 ))}
               </tbody>
