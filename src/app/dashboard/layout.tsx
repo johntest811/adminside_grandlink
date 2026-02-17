@@ -50,6 +50,8 @@ export default function DashboardLayout({
   const navButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [collapsedFlyout, setCollapsedFlyout] = useState<{ name: string; top: number } | null>(null);
 
+  const [flyoutViewportHeight, setFlyoutViewportHeight] = useState<number>(0);
+
   const basePath = (p?: string) => String(p || "").split("#")[0];
 
   // Helper for active nav item
@@ -227,6 +229,13 @@ export default function DashboardLayout({
     }
     setCollapsedFlyout(null);
   }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    const update = () => setFlyoutViewportHeight(window.innerHeight || 0);
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
 
   useEffect(() => {
     const load = () => {
@@ -590,8 +599,17 @@ export default function DashboardLayout({
 
       {activeFlyoutItem && (
         <div
-          className="fixed z-[70] w-56 rounded-md border border-white/10 bg-gray-800 p-2 shadow-lg"
-          style={{ left: 84, top: Math.max(72, collapsedFlyout?.top || 72) }}
+          className="fixed z-[70] w-56 rounded-md border border-white/10 bg-gray-800 p-2 shadow-lg max-h-[calc(100vh-96px)] overflow-y-auto"
+          style={{
+            left: 84,
+            top: (() => {
+              const preferredTop = Math.max(72, collapsedFlyout?.top || 72);
+              const viewport = flyoutViewportHeight || 0;
+              if (!viewport) return preferredTop;
+              const maxTop = Math.max(72, viewport - 96);
+              return Math.min(preferredTop, maxTop);
+            })(),
+          }}
           onMouseLeave={() => setCollapsedFlyout(null)}
         >
           <div className="text-xs text-gray-300 px-2 pb-1">{activeFlyoutItem.name}</div>

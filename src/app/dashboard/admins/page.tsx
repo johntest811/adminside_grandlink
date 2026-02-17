@@ -39,6 +39,7 @@ export default function AdminsPage() {
 
   // Positions list (for dropdowns)
   const [positionsList, setPositionsList] = useState<string[]>(DEFAULT_POSITIONS);
+  const [positionFilter, setPositionFilter] = useState<string>('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [selectedAdminForPassword, setSelectedAdminForPassword] = useState<AdminUser | null>(null);
@@ -80,6 +81,29 @@ export default function AdminsPage() {
   };
 
   const norm = (v?: string) => String(v || '').toLowerCase().replace(/[\s_-]/g, '');
+
+  const positionFilterOptions = useMemo(() => {
+    const unique = new Set<string>();
+
+    for (const p of positionsList) {
+      const v = String(p || '').trim();
+      if (v) unique.add(v);
+    }
+
+    for (const a of admins) {
+      const v = String(a.position || '').trim();
+      if (v) unique.add(v);
+    }
+
+    return Array.from(unique).sort((a, b) => a.localeCompare(b));
+  }, [admins, positionsList]);
+
+  const filteredAdmins = useMemo(() => {
+    const f = String(positionFilter || '').trim();
+    if (!f) return admins;
+    const fNorm = norm(f);
+    return admins.filter((a) => norm(a.position || '') === fNorm);
+  }, [admins, positionFilter]);
   const isSuperadmin = useMemo(() => {
     const roleNorm = norm(currentAdmin?.role);
     const posNorm = norm(currentAdmin?.position);
@@ -364,20 +388,37 @@ export default function AdminsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
         <h1 className="text-3xl font-bold text-gray-900">Admin & Employee Accounts</h1>
-        <button
-          onClick={() => setShowAddModal(true)}
-          disabled={!isSuperadmin}
-          className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors"
-        >
-          Add New Account
-        </button>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-gray-700">Position</label>
+            <select
+              value={positionFilter}
+              onChange={(e) => setPositionFilter(e.target.value)}
+              className="bg-white border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+            >
+              <option value="">All</option>
+              {positionFilterOptions.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={() => setShowAddModal(true)}
+            disabled={!isSuperadmin}
+            className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors"
+          >
+            Add New Account
+          </button>
+        </div>
       </div>
 
       {/* Admin Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {admins.map((admin) => (
+        {filteredAdmins.map((admin) => (
           <div key={admin.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center space-x-3">
