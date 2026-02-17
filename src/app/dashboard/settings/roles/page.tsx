@@ -1008,6 +1008,9 @@ export default function RolesAndPermissionsPage() {
                 value={pageSearch}
                 onChange={(e) => setPageSearch(e.target.value)}
               />
+              <div className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                Hint: <span className="font-semibold">User Accounts Delete</span> (key: <span className="font-mono">user_accounts_delete</span>) controls permanent user deletion.
+              </div>
             </div>
 
             <div className="mt-4 space-y-4">
@@ -1119,6 +1122,9 @@ export default function RolesAndPermissionsPage() {
                 value={pageSearch}
                 onChange={(e) => setPageSearch(e.target.value)}
               />
+              <div className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                Hint: <span className="font-semibold">User Accounts Delete</span> (key: <span className="font-mono">user_accounts_delete</span>) controls permanent user deletion.
+              </div>
             </div>
 
             <div className="mt-4 space-y-4">

@@ -4,9 +4,13 @@ import { supabase } from "../../../Clients/Supabase/SupabaseClients";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Loader2, Edit3 } from "lucide-react";
 import { logActivity } from "@/app/lib/activity";
+import dynamic from "next/dynamic";
+
+const RichTextEditor = dynamic(() => import("../blogs_editor/RichTextEditor"), {
+  ssr: false,
+});
 
 interface About {
   id: number;
@@ -376,17 +380,17 @@ export default function AdminAboutPage() {
 
               <div>
                 <h2 className="text-xl font-semibold text-black mb-2">Description</h2>
-                <p className="text-black">{about.description}</p>
+                <div className="blog-content text-black" dangerouslySetInnerHTML={{ __html: about.description || "" }} />
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <h2 className="text-xl font-semibold text-black mb-2">Mission</h2>
-                  <p className="text-black">{about.mission}</p>
+                  <div className="blog-content text-black" dangerouslySetInnerHTML={{ __html: about.mission || "" }} />
                 </div>
                 <div>
                   <h2 className="text-xl font-semibold text-black mb-2">Vision</h2>
-                  <p className="text-black">{about.vision}</p>
+                  <div className="blog-content text-black" dangerouslySetInnerHTML={{ __html: about.vision || "" }} />
                 </div>
               </div>
             </>
@@ -404,34 +408,25 @@ export default function AdminAboutPage() {
               
               <div>
                 <label className="block text-sm font-medium text-black mb-1">Description</label>
-                <Textarea
-                  placeholder="Description"
-                  rows={3}
-                  value={form.description || ""}
-                  onChange={(e) => handleFormChange('description', e.target.value)}
-                  className="text-black placeholder:text-gray-500"
+                <RichTextEditor
+                  value={String(form.description || "")}
+                  onChange={(next) => handleFormChange('description', next)}
                 />
               </div>
               
               <div>
                 <label className="block text-sm font-medium text-black mb-1">Mission</label>
-                <Textarea
-                  placeholder="Mission"
-                  rows={3}
-                  value={form.mission || ""}
-                  onChange={(e) => handleFormChange('mission', e.target.value)}
-                  className="text-black placeholder:text-gray-500"
+                <RichTextEditor
+                  value={String(form.mission || "")}
+                  onChange={(next) => handleFormChange('mission', next)}
                 />
               </div>
               
               <div>
                 <label className="block text-sm font-medium text-black mb-1">Vision</label>
-                <Textarea
-                  placeholder="Vision"
-                  rows={3}
-                  value={form.vision || ""}
-                  onChange={(e) => handleFormChange('vision', e.target.value)}
-                  className="text-black placeholder:text-gray-500"
+                <RichTextEditor
+                  value={String(form.vision || "")}
+                  onChange={(next) => handleFormChange('vision', next)}
                 />
               </div>
             </div>

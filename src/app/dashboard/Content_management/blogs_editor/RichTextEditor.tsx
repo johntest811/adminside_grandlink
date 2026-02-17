@@ -6,7 +6,7 @@ import Image from "@tiptap/extension-image";
 import { TextStyle } from "@tiptap/extension-text-style";
 import TextAlign from "@tiptap/extension-text-align";
 import { Extension } from "@tiptap/core";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const FontSize = Extension.create({
   name: "fontSize",
@@ -69,6 +69,15 @@ export default function RichTextEditor({
       },
     },
   });
+
+  useEffect(() => {
+    if (!editor) return;
+    const incoming = typeof value === "string" ? value : "";
+    const current = editor.getHTML();
+    if (incoming !== current) {
+      editor.commands.setContent(incoming || "", { emitUpdate: false });
+    }
+  }, [editor, value]);
 
   const isActive = (name: string, attrs?: Record<string, any>) => {
     if (!editor) return false;

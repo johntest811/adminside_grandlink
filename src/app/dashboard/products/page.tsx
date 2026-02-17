@@ -6,6 +6,11 @@ import { v4 as uuidv4 } from 'uuid';
 import { logActivity } from "@/app/lib/activity";
 import { createNotification } from "@/app/lib/notifications";
 import ThreeDModelViewer from "@/components/ThreeDModelViewer";
+import dynamic from "next/dynamic";
+
+const RichTextEditor = dynamic(() => import("../Content_management/blogs_editor/RichTextEditor"), {
+  ssr: false,
+});
 
 const ALLOWED_3D_EXTENSIONS = ["fbx", "glb", "gltf"] as const;
 
@@ -713,22 +718,11 @@ export default function ProductsAdminPage() {
               </div>
 
               <label className="block text-[#233a5e] font-semibold mb-1">Product Description</label>
-              <textarea
-                placeholder="Product Description"
-                value={description}
-                onChange={e => setDescription(e.target.value)}
-                className="w-full border border-gray-300 p-2 rounded bg-white text-black"
-              />
+              <RichTextEditor value={description} onChange={setDescription} />
 
               <div className="mt-4">
                 <label className="block text-[#233a5e] font-semibold mb-1">Additional Features</label>
-                <textarea
-                  placeholder="One feature per line or free text"
-                  value={additionalFeatures}
-                  onChange={e => setAdditionalFeatures(e.target.value)}
-                  className="w-full border border-gray-300 p-2 rounded bg-white text-black"
-                  rows={3}
-                />
+                <RichTextEditor value={additionalFeatures} onChange={setAdditionalFeatures} />
               </div>
             </div>
 

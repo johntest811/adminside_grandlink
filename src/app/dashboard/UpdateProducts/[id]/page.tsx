@@ -6,6 +6,11 @@ import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 import { logActivity } from "@/app/lib/activity";
 import { notifyProductUpdated, notifyProductFileUploaded } from "@/app/lib/notifications";
 import ThreeDModelViewer from "@/components/ThreeDModelViewer";
+import dynamic from "next/dynamic";
+
+const RichTextEditor = dynamic(() => import("../../Content_management/blogs_editor/RichTextEditor"), {
+  ssr: false,
+});
 
 const ALLOWED_3D_EXTENSIONS = ["fbx", "glb", "gltf"] as const;
 
@@ -1065,22 +1070,17 @@ export default function EditProductPage() {
 
           <div className="mt-4">
             <label className="block font-medium mb-1 text-black">Description</label>
-            <textarea
-              value={product.description}
-              onChange={e => handleChange("description", e.target.value)}
-              className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500"
-              rows={3}
+            <RichTextEditor
+              value={String(product.description || "")}
+              onChange={(next) => handleChange("description", next)}
             />
           </div>
 
           <div className="mt-4">
             <label className="block font-medium mb-1 text-black">Additional Features</label>
-            <textarea
-              value={product.additionalfeatures || ""}
-              onChange={e => handleChange("additionalfeatures", e.target.value)}
-              className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500"
-              rows={4}
-              placeholder="Enter additional features (one per line or free text)"
+            <RichTextEditor
+              value={String(product.additionalfeatures || "")}
+              onChange={(next) => handleChange("additionalfeatures", next)}
             />
           </div>
         </div>
