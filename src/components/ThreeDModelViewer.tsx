@@ -340,6 +340,10 @@ export default function ThreeDModelViewer({
     let rainVelY: Float32Array | null = null;
     let rainVelX: Float32Array | null = null;
     let rainLen: Float32Array | null = null;
+    let rainSwirlPhase: Float32Array | null = null;
+    let rainSwirlRadius: Float32Array | null = null;
+    let rainBaseX: Float32Array | null = null;
+    let rainBaseZ: Float32Array | null = null;
     let rainArea:
       | {
           minX: number;
@@ -500,6 +504,10 @@ export default function ThreeDModelViewer({
         rainVelY = null;
         rainVelX = null;
         rainLen = null;
+        rainSwirlPhase = null;
+        rainSwirlRadius = null;
+        rainBaseX = null;
+        rainBaseZ = null;
         rainArea = null;
       }
       scene.fog = null;
@@ -592,12 +600,18 @@ export default function ThreeDModelViewer({
         rainVelY = new Float32Array(rainCount);
         rainVelX = new Float32Array(rainCount);
         rainLen = new Float32Array(rainCount);
+        rainSwirlPhase = new Float32Array(rainCount);
+        rainSwirlRadius = new Float32Array(rainCount);
+        rainBaseX = new Float32Array(rainCount);
+        rainBaseZ = new Float32Array(rainCount);
 
         const spawnOne = (i: number) => {
           if (!rainArea) return;
           const headX = rainArea.minX + Math.random() * (rainArea.maxX - rainArea.minX);
           const headY = rainArea.minY + Math.random() * (rainArea.maxY - rainArea.minY);
           const headZ = rainArea.minZ + Math.random() * (rainArea.maxZ - rainArea.minZ);
+          rainBaseX![i] = headX;
+          rainBaseZ![i] = headZ;
 
           const baseLen = 7 + Math.random() * 12;
           const len = baseLen * (0.85 + Math.min(1, performanceFactor) * 0.25);
@@ -605,6 +619,8 @@ export default function ThreeDModelViewer({
 
           rainVelY![i] = (44 + Math.random() * 34) * (1 + (0.75 - performanceFactor) * 0.2);
           rainVelX![i] = (Math.random() - 0.5) * (6 + Math.random() * 10);
+          rainSwirlPhase![i] = Math.random() * Math.PI * 2;
+          rainSwirlRadius![i] = 0.35 + Math.random() * 1.8;
 
           const idx = i * 6;
           positions[idx + 0] = headX;
@@ -849,6 +865,37 @@ export default function ThreeDModelViewer({
     const loadModel = async () => {
       const ext = modelExt;
 
+      const loadAsGLTF = (url: string) =>
+        new Promise<void>((resolve, reject) => {
+          gltfLoader.load(
+            url,
+            (gltf: any) => {
+              const object = gltf?.scene as THREE.Object3D | undefined;
+              if (!object) {
+                reject(new Error("Missing gltf.scene"));
+                return;
+              }
+              handleLoaded(object);
+              resolve();
+            },
+            undefined,
+            reject
+          );
+        });
+
+      const loadAsFBX = (url: string) =>
+        new Promise<void>((resolve, reject) => {
+          fbxLoader.load(
+            url,
+            (object) => {
+              handleLoaded(object);
+              resolve();
+            },
+            undefined,
+            reject
+          );
+        });
+
       if (ext === "gltf") {
         try {
           const base = new URL(currentUrl, window.location.href);
@@ -873,16 +920,11 @@ export default function ThreeDModelViewer({
           });
         } catch {}
 
-        gltfLoader.load(
-          currentUrl,
-          (gltf: any) => {
-            const object = gltf?.scene as THREE.Object3D | undefined;
-            if (!object) return handleError(new Error("Missing gltf.scene"));
-            handleLoaded(object);
-          },
-          undefined,
-          handleError
-        );
+        try {
+          await loadAsGLTF(currentUrl);
+        } catch (err) {
+          handleError(err);
+        }
         return;
       }
 
@@ -893,25 +935,36 @@ export default function ThreeDModelViewer({
       }
 
       if (ext === "fbx") {
-        fbxLoader.load(loadUrl, (object) => handleLoaded(object), undefined, handleError);
+        try {
+          await loadAsFBX(loadUrl);
+        } catch (err) {
+          handleError(err);
+        }
         return;
       }
 
       if (ext === "glb") {
-        gltfLoader.load(
-          loadUrl,
-          (gltf: any) => {
-            const object = gltf?.scene as THREE.Object3D | undefined;
-            if (!object) return handleError(new Error("Missing gltf.scene"));
-            handleLoaded(object);
-          },
-          undefined,
-          handleError
-        );
+        try {
+          await loadAsGLTF(loadUrl);
+        } catch (err) {
+          handleError(err);
+        }
         return;
       }
 
-      handleError(new Error(`Unsupported 3D model type: .${ext || "?"}`));
+      try {
+        const objUrl = await tryFetchAsObjectUrl(currentUrl);
+        const candidate = objUrl || currentUrl;
+        await loadAsFBX(candidate);
+      } catch {
+        try {
+          const objUrl = await tryFetchAsObjectUrl(currentUrl);
+          const candidate = objUrl || currentUrl;
+          await loadAsGLTF(candidate);
+        } catch (err) {
+          handleError(err instanceof Error ? err : new Error(`Unsupported 3D model type: .${ext || "?"}`));
+        }
+      }
     };
 
     void loadModel();
@@ -928,7 +981,7 @@ export default function ThreeDModelViewer({
       if (measurementGroup) measurementGroup.visible = !!showMeasurementsRef.current;
 
       const shouldUpdateRain = !isLowEnd || heavyStep;
-      if (shouldUpdateRain && rainSystem && rainVelY && rainVelX && rainLen) {
+      if (shouldUpdateRain && rainSystem && rainVelY && rainVelX && rainLen && rainSwirlPhase && rainSwirlRadius && rainBaseX && rainBaseZ) {
         if (!rainArea || modelBounds) {
           rainArea = computeRainArea();
         }
@@ -941,17 +994,26 @@ export default function ThreeDModelViewer({
         for (let i = 0; i < count; i++) {
           const idx = i * 6;
           const gust = Math.sin(i * 0.013 + t * 1.7) * 0.4;
+          rainSwirlPhase[i] += dt * (1.6 + i * 0.0007);
+          const swirlX = Math.cos(rainSwirlPhase[i]) * rainSwirlRadius[i];
+          const swirlZ = Math.sin(rainSwirlPhase[i]) * rainSwirlRadius[i];
 
-          let headX = arr[idx + 0] + (rainVelX[i] + gust) * dt;
+          let headX = arr[idx + 0] + (rainVelX[i] + gust) * dt + swirlX * dt * 6;
           let headY = arr[idx + 1] - rainVelY[i] * dt;
-          let headZ = arr[idx + 2];
+          let headZ = arr[idx + 2] + swirlZ * dt * 5;
 
           const bounds = rainArea;
           if (bounds) {
             if (headY < bounds.minY) {
-              headX = bounds.minX + Math.random() * (bounds.maxX - bounds.minX);
+              const resetX = bounds.minX + Math.random() * (bounds.maxX - bounds.minX);
+              const resetZ = bounds.minZ + Math.random() * (bounds.maxZ - bounds.minZ);
+              rainBaseX[i] = resetX;
+              rainBaseZ[i] = resetZ;
+              rainSwirlPhase[i] = Math.random() * Math.PI * 2;
+              rainSwirlRadius[i] = 0.35 + Math.random() * 1.8;
+              headX = resetX;
               headY = bounds.maxY + Math.random() * (bounds.maxY - bounds.minY) * 0.25;
-              headZ = bounds.minZ + Math.random() * (bounds.maxZ - bounds.minZ);
+              headZ = resetZ;
             }
 
             if (headX < bounds.minX) headX = bounds.maxX;

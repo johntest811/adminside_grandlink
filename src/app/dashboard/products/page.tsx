@@ -6,11 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { logActivity } from "@/app/lib/activity";
 import { createNotification } from "@/app/lib/notifications";
 import ThreeDModelViewer from "@/components/ThreeDModelViewer";
-import dynamic from "next/dynamic";
-
-const RichTextEditor = dynamic(() => import("../Content_management/blogs_editor/RichTextEditor"), {
-  ssr: false,
-});
+import RichTextEditor from "@/components/RichTextEditor";
 
 const ALLOWED_3D_EXTENSIONS = ["fbx", "glb", "gltf"] as const;
 
@@ -63,8 +59,6 @@ export default function ProductsAdminPage() {
   const [height, setHeight] = useState("");
   const [width, setWidth] = useState("");
   const [thickness, setThickness] = useState("");
-  const [material, setMaterial] = useState("Glass");
-  const [type, setType] = useState("Tinted");
   const [showPopup, setShowPopup] = useState(false);
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
 
@@ -482,8 +476,6 @@ export default function ProductsAdminPage() {
         height: height ? Number(height) : null,
         width: width ? Number(width) : null,
         thickness: thickness ? Number(thickness) : null,
-        material: material || 'Glass',
-        type: type || 'Tinted',
         images: imageUrls,
         fbx_url: fbxUploadedUrls.length > 0 ? fbxUploadedUrls[0] : null,
         fbx_urls: fbxUploadedUrls.length > 0 ? fbxUploadedUrls : null,
@@ -580,8 +572,6 @@ export default function ProductsAdminPage() {
       setHeight("");
       setWidth("");
       setThickness("");
-      setMaterial("Glass");
-      setType("Tinted");
       setCategory("");
       setCarouselIndex(0);
       
@@ -778,33 +768,8 @@ export default function ProductsAdminPage() {
                   />
                 </div>
               </div>
-              <div className="flex space-x-4">
-                <div>
-                  <label className="block text-[#233a5e] font-semibold mb-1">Material:</label>
-                  <select
-                    className="border border-gray-300 p-1 rounded bg-white text-black"
-                    value={material}
-                    onChange={e => setMaterial(e.target.value)}
-                  >
-                    <option value="Glass">Glass</option>
-                    <option value="Wood">Wood</option>
-                    <option value="Metal">Metal</option>
-                    <option value="Aluminum">Aluminum</option>
-                    <option value="Steel">Steel</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[#233a5e] font-semibold mb-1">Type:</label>
-                  <select
-                    className="border border-gray-300 p-1 rounded bg-white text-black"
-                    value={type}
-                    onChange={e => setType(e.target.value)}
-                  >
-                    <option value="Tinted">Tinted</option>
-                    <option value="Clear">Clear</option>
-                    <option value="Frosted">Frosted</option>
-                  </select>
-                </div>
+              <div className="text-xs text-gray-600">
+                Material and type are now managed in product updates when needed.
               </div>
             </div>
           </div>

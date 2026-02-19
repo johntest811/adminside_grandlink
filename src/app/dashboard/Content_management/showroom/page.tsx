@@ -2,10 +2,8 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../../../Clients/Supabase/SupabaseClients";
 import { logActivity, autoLogActivity } from "@/app/lib/activity";
-import dynamic from "next/dynamic";
 import React from "react";
-
-const RichTextEditor = dynamic(() => import("./RichTextEditor"), { ssr: false });
+import RichTextEditor from "@/components/RichTextEditor";
 
 type Showroom = {
   id: number;

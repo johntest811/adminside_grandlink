@@ -6,11 +6,7 @@ import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 import { logActivity } from "@/app/lib/activity";
 import { notifyProductUpdated, notifyProductFileUploaded } from "@/app/lib/notifications";
 import ThreeDModelViewer from "@/components/ThreeDModelViewer";
-import dynamic from "next/dynamic";
-
-const RichTextEditor = dynamic(() => import("../../Content_management/blogs_editor/RichTextEditor"), {
-  ssr: false,
-});
+import RichTextEditor from "@/components/RichTextEditor";
 
 const ALLOWED_3D_EXTENSIONS = ["fbx", "glb", "gltf"] as const;
 
@@ -970,11 +966,11 @@ export default function EditProductPage() {
       
       {/* 3D Viewer Modal */}
       {show3DViewer && currentFbxUrls.length > 0 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.8)" }}>
-          <div className="bg-white rounded-lg p-6 shadow-lg relative w-[95vw] max-w-7xl h-[90vh] mx-4 flex flex-col">
+        <div className="fixed inset-0 flex items-center justify-center z-50 bg-transparent">
+          <div className="bg-white/95 backdrop-blur-md rounded-xl p-6 shadow-2xl relative w-[98vw] max-w-[1600px] h-[90vh] mx-2 flex flex-col">
             <button
               onClick={() => setShow3DViewer(false)}
-              className="absolute top-3 right-3 text-gray-600 hover:text-gray-900 text-2xl z-20"
+              className="absolute top-3 right-3 text-gray-700 hover:text-black text-2xl font-bold z-10 bg-white rounded-full w-10 h-10 flex items-center justify-center shadow-md"
             >
               ×
             </button>

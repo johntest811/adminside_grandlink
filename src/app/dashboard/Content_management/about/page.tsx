@@ -6,11 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, Edit3 } from "lucide-react";
 import { logActivity } from "@/app/lib/activity";
-import dynamic from "next/dynamic";
 
-const RichTextEditor = dynamic(() => import("../blogs_editor/RichTextEditor"), {
-  ssr: false,
-});
+import RichTextEditor from "@/components/RichTextEditor";
 
 interface About {
   id: number;

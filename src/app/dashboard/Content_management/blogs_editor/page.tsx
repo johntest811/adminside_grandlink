@@ -1,10 +1,8 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { logActivity } from "@/app/lib/activity";
-
-const RichTextEditor = dynamic(() => import("./RichTextEditor"), { ssr: false });
+import RichTextEditor from "@/components/RichTextEditor";
 
 type BlogRow = {
   id: string;
