@@ -296,7 +296,7 @@ export default function SalesForecastingPage() {
 
       const end = new Date();
       const start = new Date(end);
-      start.setDate(end.getDate() - Math.max(30, Math.min(365, trainingDays)));
+      start.setDate(end.getDate() - Math.max(30, Math.min(1825, trainingDays)));
       const startISO = start.toISOString().slice(0, 10);
       const endISO = end.toISOString().slice(0, 10);
 
@@ -686,10 +686,10 @@ export default function SalesForecastingPage() {
     try {
       setSyncLoading(true);
       setSyncMessage(null);
-      const res = await fetch(`/api/analytics/sales-inventory-9months?months=9`, { cache: "no-store" });
+      const res = await fetch(`/api/analytics/sales-inventory-9months?months=60`, { cache: "no-store" });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error || "Failed to build sales_inventory_9months");
-      setSyncMessage(`Upserted ${json?.rowsUpserted || 0} rows into sales_inventory_9months`);
+      if (!res.ok) throw new Error(json?.error || "Failed to build sales_inventory_data");
+      setSyncMessage(`Upserted ${json?.rowsUpserted || 0} rows into sales_inventory_data`);
     } catch (e: unknown) {
       setSyncMessage(e instanceof Error ? e.message : String(e));
     } finally {
@@ -723,11 +723,11 @@ export default function SalesForecastingPage() {
             onClick={syncSalesInventory9Months}
             disabled={syncLoading}
           >
-            {syncLoading ? "Syncing…" : "Sync sales_inventory_9months"}
+            {syncLoading ? "Syncing…" : "Sync sales_inventory_data (5 years)"}
           </button>
           {syncMessage && <div className="text-sm text-gray-700">{syncMessage}</div>}
           <div className="text-xs text-gray-500">
-            Requires running <span className="font-mono">SUPABASE_SALES_INVENTORY_9MONTHS.sql</span> in Supabase.
+            Requires running <span className="font-mono">SUPABASE_SALES_INVENTORY_DATA.sql</span> in Supabase.
           </div>
         </div>
 
@@ -738,7 +738,7 @@ export default function SalesForecastingPage() {
               className="w-full px-3 py-2 border rounded text-black"
               type="number"
               min={30}
-              max={365}
+              max={1825}
               value={trainingDays}
               onChange={(e) => setTrainingDays(Number(e.target.value || 180))}
             />
@@ -901,7 +901,7 @@ export default function SalesForecastingPage() {
               className="w-full px-3 py-2 border rounded text-black"
               type="number"
               min={30}
-              max={365}
+              max={1825}
               value={lstmDays}
               onChange={(e) => setLstmDays(Number(e.target.value || 270))}
             />

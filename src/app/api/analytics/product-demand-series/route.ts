@@ -33,7 +33,7 @@ function enumerateDates(startISO: string, endISO: string) {
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
-    const days = Math.max(30, Math.min(365, Number(url.searchParams.get("days") || 270)));
+    const days = Math.max(30, Math.min(1825, Number(url.searchParams.get("days") || 270)));
     const limit = Math.max(3, Math.min(50, Number(url.searchParams.get("limit") || 12)));
     const branch = (url.searchParams.get("branch") || "").trim();
 

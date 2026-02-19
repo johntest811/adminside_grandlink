@@ -22,7 +22,7 @@ function monthKey(iso: string) {
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
-    const months = Math.max(1, Math.min(18, Number(url.searchParams.get("months") || 9)));
+    const months = Math.max(1, Math.min(60, Number(url.searchParams.get("months") || 60)));
 
     const end = new Date();
     const start = new Date(end);
@@ -70,16 +70,38 @@ export async function GET(req: NextRequest) {
     );
 
     const priceByProduct: Record<string, number> = {};
+    let productsData: any[] = [];
     if (productIds.length) {
       const { data: products } = await supabase
         .from("products")
-        .select("id,price")
+          .select("id,price,inventory,reserved_stock")
         .in("id", productIds);
-      (products || []).forEach((p: any) => (priceByProduct[p.id] = Number(p.price || 0)));
+      productsData = products || [];
+        (products || []).forEach((p: any) => {
+          priceByProduct[p.id] = Number(p.price || 0);
+        });
     }
 
+      const stockByProduct: Record<string, number> = {};
+    productsData.forEach((p: any) => {
+        const inventory = Math.max(0, Number(p.inventory || 0));
+        const reserved = Math.max(0, Number(p.reserved_stock || 0));
+        stockByProduct[p.id] = Math.max(0, inventory - reserved);
+      });
+
     // Aggregate monthly rows
-    const agg: Record<string, { product_id: string; month_start: string; branch: string; units_sold: number; revenue: number }> =
+    const agg: Record<
+      string,
+      {
+        product_id: string;
+        month_start: string;
+        branch: string;
+        units_sold: number;
+        revenue: number;
+        order_count: number;
+        reservation_count: number;
+      }
+    > =
       {};
 
     for (const row of items || []) {
@@ -98,25 +120,84 @@ export async function GET(req: NextRequest) {
 
       const key = `${product_id}|${month_start}|${branch}`;
       if (!agg[key]) {
-        agg[key] = { product_id, month_start, branch, units_sold: 0, revenue: 0 };
+        agg[key] = {
+          product_id,
+          month_start,
+          branch,
+          units_sold: 0,
+          revenue: 0,
+          order_count: 0,
+          reservation_count: 0,
+        };
       }
       agg[key].units_sold += qty;
       agg[key].revenue += revenue;
+      if (String(row.item_type || "").toLowerCase() === "order") agg[key].order_count += 1;
+      if (String(row.item_type || "").toLowerCase() === "reservation") agg[key].reservation_count += 1;
     }
 
-    const rows = Object.values(agg);
+    const rowsBase = Object.values(agg);
 
-    // Upsert into the table (requires SUPABASE_SALES_INVENTORY_9MONTHS.sql to be applied)
+    const rowsByProduct = new Map<string, typeof rowsBase>();
+    for (const row of rowsBase) {
+      const list = rowsByProduct.get(row.product_id) || [];
+      list.push(row);
+      rowsByProduct.set(row.product_id, list);
+    }
+
+    const rows: Array<{
+      product_id: string;
+      month_start: string;
+      branch: string;
+      units_sold: number;
+      revenue: number;
+      beginning_stock: number;
+      ending_stock: number;
+      source_order_count: number;
+      source_reservation_count: number;
+      source_user_items_count: number;
+    }> = [];
+
+    for (const [productId, productRows] of rowsByProduct.entries()) {
+      const sortedDesc = [...productRows].sort((a, b) =>
+        a.month_start < b.month_start ? 1 : a.month_start > b.month_start ? -1 : 0
+      );
+
+      let runningEnding = Math.max(0, Number(stockByProduct[productId] || 0));
+
+      for (const row of sortedDesc) {
+        const sold = Math.max(0, Number(row.units_sold || 0));
+        const endingStock = Math.max(0, runningEnding);
+        const beginningStock = Math.max(0, endingStock + sold);
+
+        rows.push({
+          product_id: row.product_id,
+          month_start: row.month_start,
+          branch: row.branch,
+          units_sold: sold,
+          revenue: Number(row.revenue || 0),
+          beginning_stock: beginningStock,
+          ending_stock: endingStock,
+          source_order_count: row.order_count,
+          source_reservation_count: row.reservation_count,
+          source_user_items_count: row.order_count + row.reservation_count,
+        });
+
+        runningEnding = beginningStock;
+      }
+    }
+
+    // Upsert into the table (requires SUPABASE_SALES_INVENTORY_DATA.sql to be applied)
     if (rows.length) {
       const { error: upsertError } = await supabase
-        .from("sales_inventory_9months")
+        .from("sales_inventory_data")
         .upsert(rows, { onConflict: "product_id,month_start,branch" });
 
       if (upsertError) {
         return NextResponse.json(
           {
             error: upsertError.message,
-            hint: "Did you run SUPABASE_SALES_INVENTORY_9MONTHS.sql?",
+            hint: "Did you run SUPABASE_SALES_INVENTORY_DATA.sql?",
             rowsComputed: rows.length,
           },
           { status: 500 }

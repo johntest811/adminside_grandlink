@@ -30,38 +30,53 @@ export default function ToastPopup({
 
   const palette =
     state.type === "success"
-      ? { ring: "ring-green-200", bg: "bg-green-50", border: "border-green-200", title: "text-green-800", msg: "text-green-700" }
+      ? {
+          accent: "bg-emerald-600",
+          bg: "bg-emerald-50",
+          border: "border-emerald-200",
+          title: "text-emerald-900",
+          msg: "text-emerald-800",
+          iconBg: "bg-emerald-100",
+          iconFg: "text-emerald-700",
+          icon: "✓",
+        }
       : state.type === "info"
-      ? { ring: "ring-blue-200", bg: "bg-blue-50", border: "border-blue-200", title: "text-blue-800", msg: "text-blue-700" }
-      : { ring: "ring-red-200", bg: "bg-red-50", border: "border-red-200", title: "text-red-800", msg: "text-red-700" };
+      ? {
+          accent: "bg-blue-600",
+          bg: "bg-blue-50",
+          border: "border-blue-200",
+          title: "text-blue-900",
+          msg: "text-blue-800",
+          iconBg: "bg-blue-100",
+          iconFg: "text-blue-700",
+          icon: "i",
+        }
+      : {
+          accent: "bg-red-600",
+          bg: "bg-red-50",
+          border: "border-red-200",
+          title: "text-red-900",
+          msg: "text-red-800",
+          iconBg: "bg-red-100",
+          iconFg: "text-red-700",
+          icon: "✕",
+        };
 
   return (
-    <div className="fixed inset-0 z-[1000] pointer-events-none">
-      <div className="absolute top-4 right-4 w-[92vw] max-w-md pointer-events-auto">
-        <div className={`rounded-lg border ${palette.border} ${palette.bg} shadow-lg ring-1 ${palette.ring}`}>
-          <div className="p-4">
+    <div className="fixed top-4 right-4 z-[1000] pointer-events-none w-[92vw] max-w-md">
+      <div className="pointer-events-auto">
+        <div className={`relative overflow-hidden rounded-lg border ${palette.border} ${palette.bg} shadow-xl`}>
+          <div className={`absolute left-0 top-0 h-full w-1 ${palette.accent}`} />
+          <div className="p-4 pl-5">
             <div className="flex items-start gap-3">
-              <div className="mt-0.5">
-                {state.type === "success" ? (
-                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-green-100 text-green-700">✓</span>
-                ) : state.type === "info" ? (
-                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-blue-700">i</span>
-                ) : (
-                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-red-100 text-red-700">!</span>
-                )}
+              <span className={`mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold ${palette.iconBg} ${palette.iconFg}`}>
+                {palette.icon}
+              </span>
+              <div className="flex-1 pr-6">
+                <div className={`font-semibold leading-5 ${palette.title}`}>{state.title || (state.type === "success" ? "Success" : state.type === "error" ? "Error" : "Information")}</div>
+                <div className={`mt-1 text-sm leading-5 ${palette.msg}`}>{state.message}</div>
               </div>
-              <div className="flex-1">
-                {state.title ? (
-                  <div className={`font-semibold ${palette.title}`}>{state.title}</div>
-                ) : null}
-                <div className={`text-sm ${palette.msg}`}>{state.message}</div>
-              </div>
-              <button
-                type="button"
-                onClick={onClose}
-                className="ml-2 text-black/60 hover:text-black"
-                aria-label="Close notification"
-              >
+              <button type="button" onClick={onClose} className="absolute right-3 top-2 text-black/55 hover:text-black" aria-label="Close notification">
                 ×
               </button>
             </div>

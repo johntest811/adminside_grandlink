@@ -26,7 +26,7 @@ import {
   ChevronDown,
   ChevronRight,
   LogOut,
-  CheckSquare,
+  Clock3,
 } from "lucide-react";
 
 export default function DashboardLayout({
@@ -405,43 +405,55 @@ export default function DashboardLayout({
           <div className="relative" ref={taskDropdownRef}>
             <button
               type="button"
-              className="relative rounded-lg border border-gray-200 px-3 py-2 text-gray-700 hover:bg-gray-50"
+              className="relative p-2 text-gray-400 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 rounded-full transition-colors"
               onClick={() => setShowTaskDropdown((v) => !v)}
               aria-label="My tasks"
               title="My Tasks"
             >
-              <CheckSquare className="h-4 w-4" />
+              <Clock3 className="h-6 w-6" />
               {myTasks.length > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-red-600 text-white text-[10px] flex items-center justify-center">
-                  {myTasks.length}
+                <span className="absolute -top-1 -right-1 h-5 min-w-5 px-1 rounded-full bg-red-500 text-white text-[10px] flex items-center justify-center font-medium animate-pulse">
+                  {myTasks.length > 9 ? '9+' : myTasks.length}
                 </span>
               )}
             </button>
 
             {showTaskDropdown && (
-              <div className="absolute right-0 mt-2 w-80 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
-                <div className="px-3 py-2 border-b text-sm font-semibold text-black">My Tasks</div>
-                <div className="max-h-72 overflow-y-auto">
+              <div className="absolute right-0 mt-2 w-96 rounded-xl border border-gray-200 bg-white shadow-xl z-50 overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-200 bg-gradient-to-r from-indigo-50 to-white">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-semibold text-gray-900">My Tasks</div>
+                    <div className="text-xs text-gray-500">{myTasks.length} active</div>
+                  </div>
+                </div>
+                <div className="max-h-80 overflow-y-auto bg-white">
                   {loadingMyTasks ? (
-                    <div className="px-3 py-3 text-sm text-gray-600">Loading tasks...</div>
+                    <div className="px-4 py-4 text-sm text-gray-600">Loading tasks...</div>
                   ) : myTasks.length === 0 ? (
-                    <div className="px-3 py-3 text-sm text-gray-600">No active tasks assigned.</div>
+                    <div className="px-4 py-5 text-sm text-gray-600">No active tasks assigned.</div>
                   ) : (
                     myTasks.map((task) => (
                       <Link
                         key={task.id}
                         href="/dashboard/task/employeetask"
-                        className="block px-3 py-2 border-b last:border-b-0 hover:bg-gray-50"
+                        className="block px-4 py-3 border-b border-gray-100 last:border-b-0 hover:bg-gray-50 transition-colors"
                         onClick={() => setShowTaskDropdown(false)}
                       >
-                        <div className="text-sm font-medium text-black truncate">{task.task_name || task.product_name || `Task #${task.id}`}</div>
-                        <div className="text-xs text-gray-600 mt-0.5">{task.status || "pending"}{task.due_date ? ` • Due ${new Date(task.due_date).toLocaleDateString()}` : ""}</div>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-gray-900 truncate">{task.task_name || task.product_name || `Task #${task.id}`}</div>
+                            <div className="text-xs text-gray-600 mt-1">{task.due_date ? `Due ${new Date(task.due_date).toLocaleDateString()}` : "No due date"}</div>
+                          </div>
+                          <span className="shrink-0 px-2 py-0.5 rounded-full text-[11px] font-medium bg-indigo-100 text-indigo-700">
+                            {task.status || "pending"}
+                          </span>
+                        </div>
                       </Link>
                     ))
                   )}
                 </div>
-                <div className="px-3 py-2 border-t">
-                  <Link href="/dashboard/task/employeetask" className="text-xs text-indigo-700 hover:underline" onClick={() => setShowTaskDropdown(false)}>
+                <div className="px-4 py-2 border-t border-gray-200 bg-gray-50">
+                  <Link href="/dashboard/task/employeetask" className="text-xs font-medium text-indigo-700 hover:underline" onClick={() => setShowTaskDropdown(false)}>
                     Open Employee Task Page
                   </Link>
                 </div>

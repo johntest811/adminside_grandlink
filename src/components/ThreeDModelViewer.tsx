@@ -15,11 +15,26 @@ function getUrlExtension(url: string): string {
 type WeatherKey = "sunny" | "rainy" | "night" | "foggy";
 
 type ModelUnits = "mm" | "cm" | "m";
+type FrameFinish = "default" | "matteBlack" | "matteGray" | "narra" | "walnut";
+
+const FRAME_FINISH_PRESETS: Record<Exclude<FrameFinish, "default">, { color: number; roughness: number; metalness: number }> = {
+  matteBlack: { color: 0x1b1b1b, roughness: 0.82, metalness: 0.06 },
+  matteGray: { color: 0x6b6b6b, roughness: 0.82, metalness: 0.06 },
+  narra: { color: 0x8a4b2a, roughness: 0.72, metalness: 0.05 },
+  walnut: { color: 0x5b3a29, roughness: 0.72, metalness: 0.05 },
+};
+
+type MaterialSnapshot = {
+  colorHex?: number;
+  roughness?: number;
+  metalness?: number;
+};
 
 export type ThreeDModelViewerProps = {
   modelUrls: string[];
   initialIndex?: number;
   weather: WeatherKey;
+  frameFinish?: FrameFinish;
   skyboxes?: Partial<Record<WeatherKey, string | null>> | null;
   productDimensions?: {
     width?: number | string | null;
@@ -81,6 +96,7 @@ export default function ThreeDModelViewer({
   modelUrls,
   initialIndex,
   weather,
+  frameFinish = "default",
   skyboxes,
   productDimensions,
   width = 1200,
@@ -90,14 +106,23 @@ export default function ThreeDModelViewer({
   const [currentFbxIndex, setCurrentFbxIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [showMeasurements, setShowMeasurements] = useState(true);
+  const [showBaseplate, setShowBaseplate] = useState(true);
+  const [showShadows, setShowShadows] = useState(true);
   const [modelUnits, setModelUnits] = useState<ModelUnits>("mm");
   const [dimsMm, setDimsMm] = useState<{ width: number; height: number; thickness: number } | null>(null);
 
+  const frameMaterialsRef = useRef<THREE.Material[]>([]);
+  const frameMaterialSnapshotsRef = useRef<WeakMap<THREE.Material, MaterialSnapshot>>(new WeakMap());
   const labelElsRef = useRef<{ w?: HTMLDivElement; h?: HTMLDivElement; t?: HTMLDivElement }>({});
   const originalSizeRef = useRef<THREE.Vector3 | null>(null);
   const showMeasurementsRef = useRef<boolean>(true);
   const modelUnitsRef = useRef<ModelUnits>("mm");
   const assumedModelUnitsRef = useRef<ModelUnits>("m");
+
+  const showBaseplateRef = useRef<boolean>(true);
+  const showShadowsRef = useRef<boolean>(true);
+  const updateGroundRef = useRef<(() => void) | null>(null);
+  const updateShadowsRef = useRef<(() => void) | null>(null);
 
   const weatherRef = useRef<WeatherKey>(weather);
   const skyboxesRef = useRef<ThreeDModelViewerProps["skyboxes"]>(skyboxes ?? null);
@@ -131,6 +156,17 @@ export default function ThreeDModelViewer({
   useEffect(() => {
     showMeasurementsRef.current = showMeasurements;
   }, [showMeasurements]);
+
+  useEffect(() => {
+    showBaseplateRef.current = showBaseplate;
+    updateGroundRef.current?.();
+  }, [showBaseplate]);
+
+  useEffect(() => {
+    showShadowsRef.current = showShadows;
+    updateShadowsRef.current?.();
+    updateGroundRef.current?.();
+  }, [showShadows]);
 
   useEffect(() => {
     modelUnitsRef.current = modelUnits;
@@ -167,6 +203,44 @@ export default function ThreeDModelViewer({
     skyboxesRef.current = skyboxes ?? null;
     applyWeatherRef.current?.(weatherRef.current);
   }, [skyboxes]);
+
+  useEffect(() => {
+    const materials = frameMaterialsRef.current || [];
+    const snapshots = frameMaterialSnapshotsRef.current;
+    if (!materials.length) return;
+
+    if (frameFinish === "default") {
+      for (const mat of materials) {
+        const snap = snapshots.get(mat);
+        const m = mat as any;
+        if (!snap || !m) continue;
+        if (m.color && typeof snap.colorHex === "number") {
+          try {
+            m.color.setHex(snap.colorHex);
+          } catch {}
+        }
+        if (typeof snap.roughness === "number" && "roughness" in m) m.roughness = snap.roughness;
+        if (typeof snap.metalness === "number" && "metalness" in m) m.metalness = snap.metalness;
+        m.needsUpdate = true;
+      }
+      return;
+    }
+
+    const preset = FRAME_FINISH_PRESETS[frameFinish];
+    if (!preset) return;
+    for (const mat of materials) {
+      const m = mat as any;
+      if (!m) continue;
+      if (m.color) {
+        try {
+          m.color.setHex(preset.color);
+        } catch {}
+      }
+      if ("roughness" in m) m.roughness = preset.roughness;
+      if ("metalness" in m) m.metalness = preset.metalness;
+      m.needsUpdate = true;
+    }
+  }, [frameFinish]);
 
   const storageKey = useMemo(() => (currentUrl ? `gl:fbxUnits:${currentUrl}` : ""), [currentUrl]);
 
@@ -322,6 +396,82 @@ export default function ThreeDModelViewer({
     scene.add(hemi);
 
     scene.environment = null;
+
+    const groundGeometry = new THREE.PlaneGeometry(1, 1);
+    const baseplateMaterial = new THREE.MeshStandardMaterial({
+      color: 0xf3f4f6,
+      roughness: 0.95,
+      metalness: 0,
+    });
+    const shadowCatcherMaterial = new THREE.ShadowMaterial({ opacity: 0.28 });
+    shadowCatcherMaterial.transparent = true;
+    try {
+      (shadowCatcherMaterial as any).depthWrite = false;
+    } catch {}
+
+    const groundPlane = new THREE.Mesh<THREE.PlaneGeometry, THREE.Material>(groundGeometry, baseplateMaterial);
+    groundPlane.rotation.x = -Math.PI / 2;
+    groundPlane.position.set(0, -0.02, 0);
+    groundPlane.receiveShadow = true;
+    groundPlane.visible = true;
+    scene.add(groundPlane);
+
+    let modelRootForShadows: THREE.Object3D | null = null;
+    const setModelShadowFlags = (enabled: boolean) => {
+      if (!modelRootForShadows) return;
+      try {
+        modelRootForShadows.traverse((obj: any) => {
+          if (!obj || !obj.isMesh) return;
+          obj.castShadow = enabled;
+          obj.receiveShadow = enabled;
+        });
+      } catch {}
+    };
+
+    const updateGround = () => {
+      const base = !!showBaseplateRef.current;
+      const shadows = !!showShadowsRef.current;
+
+      if (base) {
+        groundPlane.visible = true;
+        if (groundPlane.material !== baseplateMaterial) {
+          groundPlane.material = baseplateMaterial;
+        }
+        groundPlane.receiveShadow = shadows;
+        baseplateMaterial.needsUpdate = true;
+      } else if (shadows) {
+        groundPlane.visible = true;
+        if (groundPlane.material !== shadowCatcherMaterial) {
+          groundPlane.material = shadowCatcherMaterial;
+        }
+        groundPlane.receiveShadow = true;
+        shadowCatcherMaterial.needsUpdate = true;
+      } else {
+        groundPlane.visible = false;
+      }
+    };
+
+    const updateShadowsNow = () => {
+      const enabled = !!showShadowsRef.current;
+
+      try {
+        renderer.shadowMap.enabled = enabled;
+        renderer.shadowMap.needsUpdate = true;
+      } catch {}
+      try {
+        sunLight.castShadow = enabled;
+      } catch {}
+      try {
+        fillLight.castShadow = enabled && !isLowEnd;
+      } catch {}
+
+      setModelShadowFlags(enabled);
+      updateGround();
+    };
+
+    updateGroundRef.current = updateGround;
+    updateShadowsRef.current = updateShadowsNow;
+    updateShadowsNow();
 
     let skyboxTex: THREE.Texture | null = null;
     let activeSkyboxUrl: string | null = null;
@@ -684,6 +834,9 @@ export default function ThreeDModelViewer({
     const modelExt = getUrlExtension(currentUrl);
 
     const handleLoaded = (object: THREE.Object3D) => {
+      const frameCandidateMaterials: THREE.Material[] = [];
+      const frameKeywords = /frame|alum|aluminum|mullion|sash|border|trim|walnut|narra|matte/i;
+
       object.traverse((child: any) => {
         if (!child.isMesh) return;
         child.castShadow = true;
@@ -704,8 +857,34 @@ export default function ThreeDModelViewer({
           };
           if (Array.isArray(child.material)) child.material.forEach(tweakMat);
           else tweakMat(child.material);
+
+          const childName = String(child?.name || "");
+          const mats = Array.isArray(child.material) ? child.material : [child.material];
+          mats.forEach((mat: any) => {
+            if (!mat) return;
+            const matName = String(mat?.name || "");
+            const looksLikeFrame = frameKeywords.test(childName) || frameKeywords.test(matName);
+            const canTint = !!mat.color && mat.transparent !== true;
+            if (looksLikeFrame && canTint) {
+              frameCandidateMaterials.push(mat as THREE.Material);
+            }
+          });
         } catch {}
       });
+
+      const uniqueCandidates = Array.from(new Set(frameCandidateMaterials));
+      frameMaterialsRef.current = uniqueCandidates;
+      for (const mat of uniqueCandidates) {
+        const m = mat as any;
+        if (!m) continue;
+        if (!frameMaterialSnapshotsRef.current.has(mat)) {
+          frameMaterialSnapshotsRef.current.set(mat, {
+            colorHex: m.color?.getHex?.(),
+            roughness: typeof m.roughness === "number" ? m.roughness : undefined,
+            metalness: typeof m.metalness === "number" ? m.metalness : undefined,
+          });
+        }
+      }
 
       const rawBox = new THREE.Box3().setFromObject(object);
       const rawSize = rawBox.getSize(new THREE.Vector3());
@@ -734,6 +913,26 @@ export default function ThreeDModelViewer({
 
       modelGroup.position.set(0, 0, 0);
       scene.add(modelGroup);
+      modelRootForShadows = modelGroup;
+      updateShadowsRef.current?.();
+
+      if (frameFinish !== "default") {
+        const preset = FRAME_FINISH_PRESETS[frameFinish];
+        if (preset) {
+          for (const mat of frameMaterialsRef.current) {
+            const m = mat as any;
+            if (!m) continue;
+            if (m.color) {
+              try {
+                m.color.setHex(preset.color);
+              } catch {}
+            }
+            if ("roughness" in m) m.roughness = preset.roughness;
+            if ("metalness" in m) m.metalness = preset.metalness;
+            m.needsUpdate = true;
+          }
+        }
+      }
 
       modelBounds = new THREE.Box3().setFromObject(modelGroup);
 
@@ -1082,7 +1281,7 @@ export default function ThreeDModelViewer({
       }
       while (container && container.firstChild) container.removeChild(container.firstChild);
     };
-  }, [currentUrl, productDimsMm, usesProductDimensions, width, height]);
+  }, [currentUrl, productDimsMm, usesProductDimensions, width, height, frameFinish]);
 
   if (!validUrls.length) {
     return (
@@ -1164,6 +1363,55 @@ export default function ThreeDModelViewer({
             {usesProductDimensions
               ? "Using product dimensions (if provided). Use Units to convert display."
               : "Use Units to change measurement display."}
+          </div>
+        </div>
+      </div>
+
+      <div className="absolute top-3 right-3 z-[9999] pointer-events-auto">
+        <div className="bg-black/70 backdrop-blur-md rounded-xl px-4 py-3 shadow-lg text-white min-w-[220px]">
+          <div className="text-sm font-semibold">Frame</div>
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <label className="text-xs text-white/70">Finish</label>
+            <select
+              value={frameFinish}
+              disabled
+              className="gl-units-select bg-white/10 border border-white/20 rounded-lg px-2 py-1 text-xs text-white outline-none disabled:opacity-100"
+              aria-label="Frame finish"
+            >
+              <option value="default">Default</option>
+              <option value="matteBlack">Matte Black</option>
+              <option value="matteGray">Matte Gray</option>
+              <option value="narra">Narra</option>
+              <option value="walnut">Walnut</option>
+            </select>
+          </div>
+          <div className="mt-2 text-[11px] text-white/60">Frame finish follows product settings.</div>
+        </div>
+      </div>
+
+      <div className="absolute bottom-4 left-3 z-[9999] pointer-events-auto">
+        <div className="bg-black/70 backdrop-blur-md rounded-xl px-4 py-3 shadow-lg text-white min-w-[200px]">
+          <div className="text-sm font-semibold">Scene</div>
+
+          <div className="mt-2 grid grid-cols-1 gap-2 text-xs text-white/90">
+            <label className="flex items-center justify-between gap-3">
+              <span className="text-white/80">Baseplate</span>
+              <input
+                type="checkbox"
+                checked={showBaseplate}
+                onChange={(e) => setShowBaseplate(e.target.checked)}
+                aria-label="Toggle baseplate"
+              />
+            </label>
+            <label className="flex items-center justify-between gap-3">
+              <span className="text-white/80">Shadows</span>
+              <input
+                type="checkbox"
+                checked={showShadows}
+                onChange={(e) => setShowShadows(e.target.checked)}
+                aria-label="Toggle shadows"
+              />
+            </label>
           </div>
         </div>
       </div>

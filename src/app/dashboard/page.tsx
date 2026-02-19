@@ -6,7 +6,7 @@ import { logActivity } from "@/app/lib/activity";
 // charts
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, PointElement, LineElement, Tooltip, Legend } from "chart.js";
 import { Bar, Line } from "react-chartjs-2";
-import { CalendarDays, CheckSquare } from "lucide-react";
+import { CalendarDays, Clock3 } from "lucide-react";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, PointElement, LineElement, Tooltip, Legend);
 
@@ -871,7 +871,9 @@ export default function DashboardPage() {
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <CheckSquare className="h-5 w-5 text-indigo-700" />
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-indigo-700">
+                <Clock3 className="h-4 w-4" />
+              </span>
               <h2 className="text-lg font-semibold text-black">My Tasks</h2>
             </div>
             <a href="/dashboard/task/employeetask" className="text-sm text-black underline">Open Tasks</a>
@@ -882,9 +884,16 @@ export default function DashboardPage() {
           ) : (
             <div className="space-y-3">
               {myTasks.map((task) => (
-                <div key={task.id} className="rounded border p-3">
-                  <div className="text-sm font-semibold text-black">{task.task_name || task.product_name || `Task #${task.id}`}</div>
-                  <div className="text-xs text-gray-600 mt-0.5">{task.status || "pending"}{task.due_date ? ` • Due ${new Date(task.due_date).toLocaleDateString()}` : ""}</div>
+                <div key={task.id} className="rounded-lg border border-gray-200 p-3 hover:bg-gray-50 transition-colors">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-black truncate">{task.task_name || task.product_name || `Task #${task.id}`}</div>
+                      <div className="text-xs text-gray-600 mt-0.5">{task.due_date ? `Due ${new Date(task.due_date).toLocaleDateString()}` : "No due date"}</div>
+                    </div>
+                    <span className="shrink-0 px-2 py-0.5 rounded-full text-[11px] font-medium bg-indigo-100 text-indigo-700">
+                      {task.status || "pending"}
+                    </span>
+                  </div>
                 </div>
               ))}
             </div>

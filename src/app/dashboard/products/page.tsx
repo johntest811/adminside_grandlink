@@ -7,6 +7,7 @@ import { logActivity } from "@/app/lib/activity";
 import { createNotification } from "@/app/lib/notifications";
 import ThreeDModelViewer from "@/components/ThreeDModelViewer";
 import RichTextEditor from "@/components/RichTextEditor";
+import ToastPopup, { type ToastPopupState } from "@/components/ToastPopup";
 
 const ALLOWED_3D_EXTENSIONS = ["fbx", "glb", "gltf"] as const;
 
@@ -59,8 +60,17 @@ export default function ProductsAdminPage() {
   const [height, setHeight] = useState("");
   const [width, setWidth] = useState("");
   const [thickness, setThickness] = useState("");
-  const [showPopup, setShowPopup] = useState(false);
+  const [toast, setToast] = useState<ToastPopupState>({
+    open: false,
+    type: "info",
+    title: "",
+    message: "",
+  });
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
+
+  const showToast = (next: Omit<ToastPopupState, "open">) => {
+    setToast({ open: true, ...next });
+  };
 
   useEffect(() => {
     skyboxPreviewUrlsRef.current = skyboxPreviewUrls;
@@ -85,13 +95,19 @@ export default function ProductsAdminPage() {
     };
   }, [fbxFiles]);
 
-  // Show popup for 3 seconds when product is added
+  // Convert message updates into unified toasts
   useEffect(() => {
-    if (message && message.includes("successfully")) {
-      setShowPopup(true);
-      const timer = setTimeout(() => setShowPopup(false), 3000);
-      return () => clearTimeout(timer);
+    if (!message) return;
+    const lower = message.toLowerCase();
+    if (lower.includes("error") || lower.includes("failed")) {
+      showToast({ type: "error", title: "Error", message });
+      return;
     }
+    if (lower.includes("success")) {
+      showToast({ type: "success", title: "Saved", message });
+      return;
+    }
+    showToast({ type: "info", title: "Notice", message });
   }, [message]);
 
   // Load current admin
@@ -619,11 +635,7 @@ export default function ProductsAdminPage() {
         </div>
 
         {/* Success Popup */}
-        {showPopup && (
-          <div className="fixed top-8 left-1/2 transform -translate-x-1/2 bg-green-500 text-white px-6 py-3 rounded shadow-lg z-50 transition-opacity duration-300">
-            Product added successfully! User notifications sent.
-          </div>
-        )}
+        <ToastPopup state={toast} onClose={() => setToast((prev) => ({ ...prev, open: false }))} />
 
         {/* 3D Viewer Modal */}
         {show3DViewer && modelPreviewUrls.length > 0 && (
@@ -668,6 +680,7 @@ export default function ProductsAdminPage() {
                   modelUrls={modelPreviewUrls}
                   initialIndex={currentFbxIndex}
                   weather={previewWeather}
+                  frameFinish="matteBlack"
                   skyboxes={skyboxPreviewUrls}
                   productDimensions={{
                     width: width || null,
@@ -1025,16 +1038,6 @@ export default function ProductsAdminPage() {
             </button>
           </div>
 
-          {/* Message */}
-          {message && (
-            <div className={`mt-4 p-3 rounded ${
-              message.includes('Error') 
-                ? 'bg-red-100 border border-red-400 text-red-700'
-                : 'bg-green-100 border border-green-400 text-green-700'
-            }`}>
-              {message}
-            </div>
-          )}
         </form>
       </div>
     </div>

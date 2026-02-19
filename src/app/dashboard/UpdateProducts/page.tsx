@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 import { logActivity } from "@/app/lib/activity";
 import { notifyProductDeleted } from "@/app/lib/notifications";
+import ToastPopup, { type ToastPopupState } from "@/components/ToastPopup";
 
 type Product = {
   id: string;
@@ -24,7 +25,9 @@ export default function UpdateProductsPage() {
   const [filter, setFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastPopupState>({ open: false, type: "info", title: "", message: "" });
+
+  const showToast = (next: Omit<ToastPopupState, "open">) => setToast({ open: true, ...next });
 
   // Load current admin and log page access
   useEffect(() => {
@@ -65,11 +68,12 @@ export default function UpdateProductsPage() {
     if (successData) {
       try {
         const { productName, changesCount } = JSON.parse(successData);
-        setSuccessMessage(`✅ Product "${productName}" updated successfully! (${changesCount} changes made)`);
+        showToast({
+          type: "success",
+          title: "Saved",
+          message: `Product "${productName}" updated successfully (${changesCount} changes made).`,
+        });
         localStorage.removeItem("productUpdateSuccess");
-        
-        // Clear success message after 5 seconds
-        setTimeout(() => setSuccessMessage(null), 5000);
       } catch (error) {
         console.error("Error parsing success message:", error);
       }
@@ -174,7 +178,7 @@ export default function UpdateProductsPage() {
 
   const handleDelete = async (productId: string, productName: string) => {
     if (!currentAdmin) {
-      alert("Error: Admin not loaded");
+      showToast({ type: "error", title: "Error", message: "Admin not loaded." });
       return;
     }
 
@@ -257,11 +261,19 @@ export default function UpdateProductsPage() {
         console.warn("Notification creation failed (non-critical):", notifyError);
       }
 
-      alert(`✅ Product "${productName}" moved to Archive/Trashcan.`);
+      showToast({
+        type: "success",
+        title: "Archived",
+        message: `Product "${productName}" moved to Archive/Trashcan.`,
+      });
 
     } catch (error: any) {
       console.error("Error deleting product:", error);
-      alert(`❌ Error deleting product: ${error.message}`);
+      showToast({
+        type: "error",
+        title: "Archive Failed",
+        message: `Error deleting product: ${error.message}`,
+      });
       
       // Log deletion error with full context
       if (currentAdmin) {
@@ -379,6 +391,7 @@ export default function UpdateProductsPage() {
 
   return (
     <div className="space-y-6">
+      <ToastPopup state={toast} onClose={() => setToast((prev) => ({ ...prev, open: false }))} />
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold text-gray-900">Update Products</h1>
         <button
@@ -407,13 +420,6 @@ export default function UpdateProductsPage() {
           Add New Product
         </button>
       </div>
-
-      {/* Success Message */}
-      {successMessage && (
-        <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-lg">
-          {successMessage}
-        </div>
-      )}
 
       {/* Filters */}
       <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">

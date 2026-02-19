@@ -7,11 +7,22 @@ import { logActivity } from "@/app/lib/activity";
 import { notifyProductUpdated, notifyProductFileUploaded } from "@/app/lib/notifications";
 import ThreeDModelViewer from "@/components/ThreeDModelViewer";
 import RichTextEditor from "@/components/RichTextEditor";
+import ToastPopup, { type ToastPopupState } from "@/components/ToastPopup";
 
 const ALLOWED_3D_EXTENSIONS = ["fbx", "glb", "gltf"] as const;
 
 type WeatherKey = "sunny" | "rainy" | "night" | "foggy";
 const WEATHER_KEYS: WeatherKey[] = ["sunny", "rainy", "night", "foggy"];
+type FrameFinish = "default" | "matteBlack" | "matteGray" | "narra" | "walnut";
+
+function materialToFrameFinish(material?: string | null): FrameFinish {
+  const key = String(material || "").toLowerCase();
+  if (key.includes("walnut")) return "walnut";
+  if (key.includes("narra") || key.includes("wood")) return "narra";
+  if (key.includes("aluminum") || key.includes("steel") || key.includes("metal")) return "matteGray";
+  if (key.includes("black")) return "matteBlack";
+  return "default";
+}
 
 function getFileExtension(name: string): string {
   const clean = (name || "").split("?")[0].split("#")[0];
@@ -59,6 +70,7 @@ export default function EditProductPage() {
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [message, setMessage] = useState("");
+  const [toast, setToast] = useState<ToastPopupState>({ open: false, type: "info", title: "", message: "" });
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
   const [show3DViewer, setShow3DViewer] = useState(false);
   const [currentFbxIndex, setCurrentFbxIndex] = useState(0);
@@ -66,6 +78,20 @@ export default function EditProductPage() {
   const [uploadingImages, setUploadingImages] = useState(false);
   const [uploadingSkyboxes, setUploadingSkyboxes] = useState(false);
   const [previewWeather, setPreviewWeather] = useState<WeatherKey>("sunny");
+
+  useEffect(() => {
+    if (!message) return;
+    const lower = message.toLowerCase();
+    if (lower.includes("error") || lower.includes("failed")) {
+      setToast({ open: true, type: "error", title: "Error", message });
+      return;
+    }
+    if (lower.includes("success") || lower.includes("saved") || lower.includes("updated")) {
+      setToast({ open: true, type: "success", title: "Saved", message });
+      return;
+    }
+    setToast({ open: true, type: "info", title: "Notice", message });
+  }, [message]);
 
   // Persist images (already exists)
   const persistImages = async (imgs: string[]) => {
@@ -957,6 +983,7 @@ export default function EditProductPage() {
 
   return (
     <div className="min-h-screen p-8 bg-gray-50">
+      <ToastPopup state={toast} onClose={() => setToast((prev) => ({ ...prev, open: false }))} />
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-3xl font-bold text-black">Edit Product: {product.name}</h1>
         <div className="text-sm text-gray-600">
@@ -1011,6 +1038,7 @@ export default function EditProductPage() {
                 modelUrls={currentFbxUrls}
                 initialIndex={currentFbxIndex}
                 weather={previewWeather}
+                frameFinish={materialToFrameFinish(product.material)}
                 skyboxes={product.skyboxes || null}
                 productDimensions={{
                   width: product.width ?? null,
@@ -1440,16 +1468,6 @@ export default function EditProductPage() {
           </button>
         </div>
         
-        {/* Status Message */}
-        {message && (
-          <div className={`text-center mt-4 p-3 rounded-lg ${
-            message.includes("Error") || message.includes("Failed") 
-              ? "bg-red-50 text-red-600 border border-red-200" 
-              : "bg-green-50 text-green-600 border border-green-200"
-          }`}>
-            {message}
-          </div>
-        )}
       </form>
     </div>
   );
