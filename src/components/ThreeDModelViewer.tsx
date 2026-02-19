@@ -28,6 +28,15 @@ type MaterialSnapshot = {
   colorHex?: number;
   roughness?: number;
   metalness?: number;
+  map?: THREE.Texture | null;
+  transparent?: boolean;
+  opacity?: number;
+};
+
+type WeatherMaterialSnapshot = {
+  roughness?: number;
+  metalness?: number;
+  envMapIntensity?: number;
 };
 
 export type ThreeDModelViewerProps = {
@@ -35,6 +44,7 @@ export type ThreeDModelViewerProps = {
   initialIndex?: number;
   weather: WeatherKey;
   frameFinish?: FrameFinish;
+  onFrameFinishChange?: (finish: FrameFinish) => void;
   skyboxes?: Partial<Record<WeatherKey, string | null>> | null;
   productDimensions?: {
     width?: number | string | null;
@@ -96,7 +106,8 @@ export default function ThreeDModelViewer({
   modelUrls,
   initialIndex,
   weather,
-  frameFinish = "default",
+  frameFinish: frameFinishProp = "default",
+  onFrameFinishChange,
   skyboxes,
   productDimensions,
   width = 1200,
@@ -109,9 +120,13 @@ export default function ThreeDModelViewer({
   const [showBaseplate, setShowBaseplate] = useState(true);
   const [showShadows, setShowShadows] = useState(true);
   const [modelUnits, setModelUnits] = useState<ModelUnits>("mm");
+  const [frameFinishUi, setFrameFinishUi] = useState<FrameFinish>(frameFinishProp);
   const [dimsMm, setDimsMm] = useState<{ width: number; height: number; thickness: number } | null>(null);
 
+  const frameFinishUiRef = useRef<FrameFinish>(frameFinishProp);
+
   const frameMaterialsRef = useRef<THREE.Material[]>([]);
+  const finishMaterialsRef = useRef<THREE.Material[]>([]);
   const frameMaterialSnapshotsRef = useRef<WeakMap<THREE.Material, MaterialSnapshot>>(new WeakMap());
   const labelElsRef = useRef<{ w?: HTMLDivElement; h?: HTMLDivElement; t?: HTMLDivElement }>({});
   const originalSizeRef = useRef<THREE.Vector3 | null>(null);
@@ -205,42 +220,88 @@ export default function ThreeDModelViewer({
   }, [skyboxes]);
 
   useEffect(() => {
-    const materials = frameMaterialsRef.current || [];
+    setFrameFinishUi(frameFinishProp);
+  }, [frameFinishProp]);
+
+  useEffect(() => {
+    frameFinishUiRef.current = frameFinishUi;
+  }, [frameFinishUi]);
+
+  const applyFrameFinishToTargets = (finish: FrameFinish) => {
+    const materials = finishMaterialsRef.current || [];
+    const frameMaterials = frameMaterialsRef.current || [];
     const snapshots = frameMaterialSnapshotsRef.current;
     if (!materials.length) return;
 
-    if (frameFinish === "default") {
+    if (finish === "default") {
       for (const mat of materials) {
         const snap = snapshots.get(mat);
-        const m = mat as any;
+        const m: any = mat as any;
         if (!snap || !m) continue;
-        if (m.color && typeof snap.colorHex === "number") {
-          try {
-            m.color.setHex(snap.colorHex);
-          } catch {}
-        }
-        if (typeof snap.roughness === "number" && "roughness" in m) m.roughness = snap.roughness;
-        if (typeof snap.metalness === "number" && "metalness" in m) m.metalness = snap.metalness;
-        m.needsUpdate = true;
+        try {
+          if (m.color && typeof snap.colorHex === "number") m.color.setHex(snap.colorHex);
+        } catch {}
+        try {
+          if (typeof snap.roughness === "number" && typeof m.roughness === "number") m.roughness = snap.roughness;
+        } catch {}
+        try {
+          if (typeof snap.metalness === "number" && typeof m.metalness === "number") m.metalness = snap.metalness;
+        } catch {}
+        try {
+          if ("map" in m) m.map = snap.map ?? null;
+        } catch {}
+        try {
+          if (typeof snap.transparent === "boolean") m.transparent = snap.transparent;
+          if (typeof snap.opacity === "number") m.opacity = snap.opacity;
+        } catch {}
+        try {
+          m.needsUpdate = true;
+        } catch {}
       }
       return;
     }
 
-    const preset = FRAME_FINISH_PRESETS[frameFinish];
+    const preset = FRAME_FINISH_PRESETS[finish];
     if (!preset) return;
+
+    // Tint all non-glass materials so the overall finish follows the product setting.
     for (const mat of materials) {
-      const m = mat as any;
+      const m: any = mat as any;
       if (!m) continue;
-      if (m.color) {
-        try {
-          m.color.setHex(preset.color);
-        } catch {}
-      }
-      if ("roughness" in m) m.roughness = preset.roughness;
-      if ("metalness" in m) m.metalness = preset.metalness;
-      m.needsUpdate = true;
+      try {
+        if (m.color && typeof m.color.set === "function") m.color.set(preset.color);
+      } catch {}
+      try {
+        if (typeof m.roughness === "number") m.roughness = preset.roughness;
+      } catch {}
+      try {
+        if (typeof m.metalness === "number") m.metalness = preset.metalness;
+      } catch {}
+      try {
+        m.needsUpdate = true;
+      } catch {}
     }
-  }, [frameFinish]);
+
+    // Force solid color finish for detected frame materials only.
+    for (const mat of frameMaterials) {
+      const m: any = mat as any;
+      if (!m) continue;
+      try {
+        if ("map" in m) m.map = null;
+      } catch {}
+      try {
+        m.transparent = false;
+        m.opacity = 1;
+      } catch {}
+      try {
+        m.needsUpdate = true;
+      } catch {}
+    }
+  };
+
+  useEffect(() => {
+    applyFrameFinishToTargets(frameFinishUiRef.current);
+  }, [frameFinishUi]);
 
   const storageKey = useMemo(() => (currentUrl ? `gl:fbxUnits:${currentUrl}` : ""), [currentUrl]);
 
@@ -277,6 +338,8 @@ export default function ThreeDModelViewer({
 
     const BASE_RAIN = Math.round(8000 * performanceFactor);
     const STORM_RAIN = Math.round(22000 * performanceFactor);
+    const BASE_WIND = Math.round(300 * performanceFactor);
+    const STRONG_WIND = Math.round(600 * performanceFactor);
 
     const container = mountRef.current;
     const renderWidth = Math.floor(container.clientWidth || width);
@@ -486,6 +549,36 @@ export default function ThreeDModelViewer({
       }
     };
 
+    const createWindTexture = () => {
+      const size = 64;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d")!;
+      ctx.clearRect(0, 0, size, size);
+
+      const grd = ctx.createLinearGradient(0, size / 2, size, size / 2);
+      grd.addColorStop(0, "rgba(220,230,255,0.0)");
+      grd.addColorStop(0.3, "rgba(200,220,255,0.6)");
+      grd.addColorStop(0.7, "rgba(180,200,255,0.8)");
+      grd.addColorStop(1, "rgba(160,180,255,0.0)");
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, size / 2 - 2, size, 4);
+
+      ctx.strokeStyle = "rgba(190,210,255,0.4)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, size / 2 - 1);
+      ctx.quadraticCurveTo(size / 2, size / 2 + 2, size, size / 2 - 1);
+      ctx.stroke();
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.needsUpdate = true;
+      return tex;
+    };
+
+    const windTexture = createWindTexture();
+
     let rainSystem: THREE.LineSegments | null = null;
     let rainVelY: Float32Array | null = null;
     let rainVelX: Float32Array | null = null;
@@ -504,6 +597,27 @@ export default function ThreeDModelViewer({
           maxZ: number;
         }
       | null = null;
+    let rainBaseOpacity = 0.6;
+    let windSystem: THREE.Points | null = null;
+    let windVel: Float32Array | null = null;
+    let windLifetime: Float32Array | null = null;
+    let windBaseOpacity = 0.3;
+    let splashSystem: THREE.Points | null = null;
+    let splashVelY: Float32Array | null = null;
+    let splashLifetime: Float32Array | null = null;
+    let splashArea: { minX: number; maxX: number; minZ: number; maxZ: number; groundY: number } | null = null;
+    let lightningFlash = 0;
+    let activeWeather: WeatherKey = weatherRef.current;
+
+    let lightingBase = {
+      ambient: 0.45,
+      hemi: 0.6,
+      fill: 0.6,
+      sun: 2.2,
+      exposure: 1.12,
+    };
+
+    const weatherMaterialSnapshots = new WeakMap<THREE.Material, WeatherMaterialSnapshot>();
 
     let modelBounds: THREE.Box3 | null = null;
     let measurementGroup: THREE.Group | null = null;
@@ -644,6 +758,8 @@ export default function ThreeDModelViewer({
     };
 
     const applyWeather = (type: WeatherKey) => {
+      activeWeather = type;
+
       if (rainSystem) {
         try {
           scene.remove(rainSystem);
@@ -660,7 +776,32 @@ export default function ThreeDModelViewer({
         rainBaseZ = null;
         rainArea = null;
       }
+
+      if (windSystem) {
+        try {
+          scene.remove(windSystem);
+          windSystem.geometry.dispose();
+          (windSystem.material as THREE.PointsMaterial).dispose();
+        } catch {}
+        windSystem = null;
+        windVel = null;
+        windLifetime = null;
+      }
+
+      if (splashSystem) {
+        try {
+          scene.remove(splashSystem);
+          splashSystem.geometry.dispose();
+          (splashSystem.material as THREE.PointsMaterial).dispose();
+        } catch {}
+        splashSystem = null;
+        splashVelY = null;
+        splashLifetime = null;
+        splashArea = null;
+      }
+
       scene.fog = null;
+      lightningFlash = 0;
 
       activeSkyboxUrl = null;
       if (skyboxTex) {
@@ -705,7 +846,7 @@ export default function ThreeDModelViewer({
             try {
               const extras = scene as unknown as Record<string, unknown>;
               if ("backgroundBlurriness" in extras) {
-                (scene as unknown as { backgroundBlurriness: number }).backgroundBlurriness = 0.0;
+                (scene as unknown as { backgroundBlurriness: number }).backgroundBlurriness = 0.08;
               }
               if ("backgroundIntensity" in extras) {
                 (scene as unknown as { backgroundIntensity: number }).backgroundIntensity = 1.0;
@@ -721,29 +862,42 @@ export default function ThreeDModelViewer({
 
       if (type === "sunny") {
         scene.background = new THREE.Color(0x87ceeb);
-        ambient.intensity = 0.45;
-        hemi.intensity = 0.6;
-        fillLight.intensity = 0.6;
+        lightingBase.ambient = 0.45;
+        lightingBase.hemi = 0.6;
+        lightingBase.fill = 0.62;
+        lightingBase.sun = 2.2;
+        lightingBase.exposure = 1.12;
+        ambient.intensity = lightingBase.ambient;
+        hemi.intensity = lightingBase.hemi;
+        fillLight.intensity = lightingBase.fill;
         try {
           sunLight.color.set(0xfff1c0);
         } catch {}
         sunLight.visible = true;
-        sunLight.intensity = 2.2;
+        sunLight.intensity = lightingBase.sun;
+        renderer.toneMappingExposure = lightingBase.exposure;
         renderer.setClearColor(0x87ceeb, 1);
       } else if (type === "rainy") {
-        scene.background = new THREE.Color(0xbfd1e5);
-        ambient.intensity = 0.3;
-        hemi.intensity = 0.5;
-        fillLight.intensity = 0.55;
+        scene.background = new THREE.Color(0xa7b5c4);
+        lightingBase.ambient = 0.24;
+        lightingBase.hemi = 0.36;
+        lightingBase.fill = 0.46;
+        lightingBase.sun = 0.55;
+        lightingBase.exposure = 0.94;
+        ambient.intensity = lightingBase.ambient;
+        hemi.intensity = lightingBase.hemi;
+        fillLight.intensity = lightingBase.fill;
         try {
-          sunLight.color.set(0xfff1c0);
+          sunLight.color.set(0xc7d5e6);
         } catch {}
         sunLight.visible = true;
-        sunLight.intensity = 0.8;
-        renderer.setClearColor(0xbfd1e5, 1);
+        sunLight.intensity = lightingBase.sun;
+        renderer.toneMappingExposure = lightingBase.exposure;
+        renderer.setClearColor(0xa7b5c4, 1);
 
-        const rainDensity = isLowEnd ? 0.1 : 0.16;
-        const rainCount = Math.max(250, Math.round((performanceFactor > 0.6 ? STORM_RAIN : BASE_RAIN) * rainDensity));
+        // Streak rain (LineSegments) anchored to model bounds so it always appears.
+        const rainDensity = isLowEnd ? 0.16 : 0.26;
+        const rainCount = Math.max(420, Math.round((performanceFactor > 0.6 ? STORM_RAIN : BASE_RAIN) * rainDensity));
         rainArea = computeRainArea();
 
         const positions = new Float32Array(rainCount * 2 * 3);
@@ -758,19 +912,19 @@ export default function ThreeDModelViewer({
         const spawnOne = (i: number) => {
           if (!rainArea) return;
           const headX = rainArea.minX + Math.random() * (rainArea.maxX - rainArea.minX);
-          const headY = rainArea.minY + Math.random() * (rainArea.maxY - rainArea.minY);
+          const headY = rainArea.maxY + Math.random() * (rainArea.maxY - rainArea.minY) * 0.3;
           const headZ = rainArea.minZ + Math.random() * (rainArea.maxZ - rainArea.minZ);
           rainBaseX![i] = headX;
           rainBaseZ![i] = headZ;
 
-          const baseLen = 7 + Math.random() * 12;
+          const baseLen = 9 + Math.random() * 16;
           const len = baseLen * (0.85 + Math.min(1, performanceFactor) * 0.25);
           rainLen![i] = len;
 
-          rainVelY![i] = (44 + Math.random() * 34) * (1 + (0.75 - performanceFactor) * 0.2);
-          rainVelX![i] = (Math.random() - 0.5) * (6 + Math.random() * 10);
+          rainVelY![i] = (58 + Math.random() * 48) * (1 + (0.75 - performanceFactor) * 0.2);
+          rainVelX![i] = (Math.random() - 0.5) * (10 + Math.random() * 14);
           rainSwirlPhase![i] = Math.random() * Math.PI * 2;
-          rainSwirlRadius![i] = 0.35 + Math.random() * 1.8;
+          rainSwirlRadius![i] = 0.4 + Math.random() * 2.2;
 
           const idx = i * 6;
           positions[idx + 0] = headX;
@@ -787,9 +941,9 @@ export default function ThreeDModelViewer({
         geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
 
         const mat = new THREE.LineBasicMaterial({
-          color: 0x6bb6ff,
+          color: 0xb9d8ff,
           transparent: true,
-          opacity: 0.32,
+          opacity: Math.min(0.5, Math.max(0.28, rainBaseOpacity * 0.82)),
           depthWrite: false,
           blending: THREE.NormalBlending,
         });
@@ -799,32 +953,163 @@ export default function ThreeDModelViewer({
         rainSystem.renderOrder = 1;
         scene.add(rainSystem);
 
-        const fogDensity = performanceFactor > 0.5 ? 0.001 : 0.0006;
-        scene.fog = new THREE.FogExp2(0xbfd1e5, fogDensity);
+        const fogDensity = performanceFactor > 0.5 ? 0.0016 : 0.0011;
+        scene.fog = new THREE.FogExp2(0xa7b5c4, fogDensity);
+
+        const splashCount = Math.max(220, Math.round((isLowEnd ? BASE_WIND : STRONG_WIND) * 0.9));
+        const splashPositions = new Float32Array(splashCount * 3);
+        splashVelY = new Float32Array(splashCount);
+        splashLifetime = new Float32Array(splashCount);
+
+        if (modelBounds) {
+          const size = modelBounds.getSize(new THREE.Vector3());
+          splashArea = {
+            minX: modelBounds.min.x - Math.max(8, size.x * 0.2),
+            maxX: modelBounds.max.x + Math.max(8, size.x * 0.2),
+            minZ: modelBounds.min.z - Math.max(8, size.z * 0.2),
+            maxZ: modelBounds.max.z + Math.max(8, size.z * 0.2),
+            groundY: groundPlane.position.y + 0.03,
+          };
+        } else {
+          splashArea = { minX: -60, maxX: 60, minZ: -60, maxZ: 60, groundY: groundPlane.position.y + 0.03 };
+        }
+
+        for (let i = 0; i < splashCount; i++) {
+          const base = i * 3;
+          splashPositions[base + 0] = splashArea.minX + Math.random() * (splashArea.maxX - splashArea.minX);
+          splashPositions[base + 1] = splashArea.groundY + Math.random() * 0.04;
+          splashPositions[base + 2] = splashArea.minZ + Math.random() * (splashArea.maxZ - splashArea.minZ);
+          splashVelY[i] = 1.8 + Math.random() * 2.8;
+          splashLifetime[i] = Math.random();
+        }
+
+        const splashGeo = new THREE.BufferGeometry();
+        splashGeo.setAttribute("position", new THREE.BufferAttribute(splashPositions, 3));
+        const splashMat = new THREE.PointsMaterial({
+          color: 0xd9e9ff,
+          size: isLowEnd ? 1.4 : 2.1,
+          transparent: true,
+          opacity: 0.34,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          sizeAttenuation: true,
+        });
+        splashSystem = new THREE.Points(splashGeo, splashMat);
+        splashSystem.frustumCulled = false;
+        splashSystem.renderOrder = 2;
+        scene.add(splashSystem);
+
+        const windCount = Math.max(120, Math.round((isLowEnd ? BASE_WIND : STRONG_WIND) * 0.6));
+        const windPositions = new Float32Array(windCount * 3);
+        windVel = new Float32Array(windCount * 3);
+        windLifetime = new Float32Array(windCount);
+        const center = modelBounds ? modelBounds.getCenter(new THREE.Vector3()) : new THREE.Vector3();
+        const size = modelBounds ? modelBounds.getSize(new THREE.Vector3()) : new THREE.Vector3(40, 40, 40);
+        const spread = Math.max(size.x, size.z) * 2.2;
+        for (let i = 0; i < windCount; i++) {
+          const base = i * 3;
+          windPositions[base + 0] = center.x - spread + Math.random() * spread * 2;
+          windPositions[base + 1] = center.y - size.y * 0.2 + Math.random() * size.y * 1.3;
+          windPositions[base + 2] = center.z - spread + Math.random() * spread * 2;
+          windVel[base + 0] = 6 + Math.random() * 8;
+          windVel[base + 1] = (Math.random() - 0.5) * 0.6;
+          windVel[base + 2] = (Math.random() - 0.5) * 1.8;
+          windLifetime[i] = Math.random() * 100;
+        }
+        const windGeo = new THREE.BufferGeometry();
+        windGeo.setAttribute("position", new THREE.BufferAttribute(windPositions, 3));
+        const windMat = new THREE.PointsMaterial({
+          map: windTexture,
+          color: 0xd3e5ff,
+          size: isLowEnd ? 6 : 8,
+          transparent: true,
+          opacity: Math.max(0.16, windBaseOpacity * 0.7),
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          sizeAttenuation: true,
+        });
+        windSystem = new THREE.Points(windGeo, windMat);
+        windSystem.frustumCulled = false;
+        windSystem.renderOrder = 1;
+        scene.add(windSystem);
       } else if (type === "night") {
         scene.background = new THREE.Color(0x0b1020);
         renderer.setClearColor(0x0b1020, 1);
-        ambient.intensity = 0.32;
-        hemi.intensity = 0.35;
-        fillLight.intensity = 0.75;
+        lightingBase.ambient = 0.2;
+        lightingBase.hemi = 0.24;
+        lightingBase.fill = 0.62;
+        lightingBase.sun = 0.95;
+        lightingBase.exposure = 0.74;
+        ambient.intensity = lightingBase.ambient;
+        hemi.intensity = lightingBase.hemi;
+        fillLight.intensity = lightingBase.fill;
         try {
-          sunLight.color.set(0xbdd1ff);
+          sunLight.color.set(0x9fc3ff);
         } catch {}
         sunLight.visible = true;
-        sunLight.intensity = 1.15;
-        scene.fog = new THREE.FogExp2(0x0b1020, 0.0006);
+        sunLight.intensity = lightingBase.sun;
+        renderer.toneMappingExposure = lightingBase.exposure;
+        scene.fog = new THREE.FogExp2(0x0b1020, 0.0012);
       } else if (type === "foggy") {
         scene.background = new THREE.Color(0xd6dbe0);
-        ambient.intensity = 0.6;
-        hemi.intensity = 0.65;
-        fillLight.intensity = 0.6;
+        lightingBase.ambient = 0.52;
+        lightingBase.hemi = 0.58;
+        lightingBase.fill = 0.5;
+        lightingBase.sun = 0.58;
+        lightingBase.exposure = 0.92;
+        ambient.intensity = lightingBase.ambient;
+        hemi.intensity = lightingBase.hemi;
+        fillLight.intensity = lightingBase.fill;
         try {
-          sunLight.color.set(0xfff1c0);
+          sunLight.color.set(0xf2f5f8);
         } catch {}
         sunLight.visible = true;
-        sunLight.intensity = 0.8;
-        scene.fog = new THREE.FogExp2(0xd6dbe0, 0.002);
+        sunLight.intensity = lightingBase.sun;
+        renderer.toneMappingExposure = lightingBase.exposure;
+        scene.fog = new THREE.FogExp2(0xd6dbe0, 0.0032);
         renderer.setClearColor(0xd6dbe0, 1);
+      }
+
+      // Weather can subtly affect material response (wet look, hazy look, etc).
+      const mats = finishMaterialsRef.current || [];
+      for (const mat of mats) {
+        if (!mat) continue;
+        const anyMat: any = mat as any;
+        if (typeof anyMat.roughness !== "number" && typeof anyMat.metalness !== "number") continue;
+
+        if (!weatherMaterialSnapshots.has(mat)) {
+          weatherMaterialSnapshots.set(mat, {
+            roughness: typeof anyMat.roughness === "number" ? anyMat.roughness : undefined,
+            metalness: typeof anyMat.metalness === "number" ? anyMat.metalness : undefined,
+            envMapIntensity: typeof anyMat.envMapIntensity === "number" ? anyMat.envMapIntensity : undefined,
+          });
+        }
+
+        const snap = weatherMaterialSnapshots.get(mat);
+        if (!snap) continue;
+
+        const baseRough = typeof snap.roughness === "number" ? snap.roughness : anyMat.roughness;
+        const baseMetal = typeof snap.metalness === "number" ? snap.metalness : anyMat.metalness;
+        const baseEnv = typeof snap.envMapIntensity === "number" ? snap.envMapIntensity : anyMat.envMapIntensity;
+
+        if (type === "rainy") {
+          if (typeof anyMat.roughness === "number" && typeof baseRough === "number") anyMat.roughness = THREE.MathUtils.clamp(baseRough * 0.55, 0.05, 0.62);
+          if (typeof anyMat.metalness === "number" && typeof baseMetal === "number") anyMat.metalness = THREE.MathUtils.clamp(baseMetal + 0.12, 0, 1);
+          if (typeof anyMat.envMapIntensity === "number" && typeof baseEnv === "number") anyMat.envMapIntensity = Math.max(baseEnv * 1.4, baseEnv + 0.2);
+        } else if (type === "foggy") {
+          if (typeof anyMat.roughness === "number" && typeof baseRough === "number") anyMat.roughness = THREE.MathUtils.clamp(baseRough * 1.08, 0.1, 1);
+          if (typeof anyMat.metalness === "number" && typeof baseMetal === "number") anyMat.metalness = THREE.MathUtils.clamp(baseMetal * 0.9, 0, 1);
+          if (typeof anyMat.envMapIntensity === "number" && typeof baseEnv === "number") anyMat.envMapIntensity = baseEnv * 0.9;
+        } else if (type === "night") {
+          if (typeof anyMat.roughness === "number" && typeof baseRough === "number") anyMat.roughness = THREE.MathUtils.clamp(baseRough * 0.9, 0.06, 1);
+          if (typeof anyMat.metalness === "number" && typeof baseMetal === "number") anyMat.metalness = THREE.MathUtils.clamp(baseMetal + 0.03, 0, 1);
+          if (typeof anyMat.envMapIntensity === "number" && typeof baseEnv === "number") anyMat.envMapIntensity = Math.max(baseEnv, baseEnv * 1.05);
+        } else {
+          if (typeof anyMat.roughness === "number" && typeof baseRough === "number") anyMat.roughness = baseRough;
+          if (typeof anyMat.metalness === "number" && typeof baseMetal === "number") anyMat.metalness = baseMetal;
+          if (typeof anyMat.envMapIntensity === "number" && typeof baseEnv === "number") anyMat.envMapIntensity = baseEnv;
+        }
+        anyMat.needsUpdate = true;
       }
     };
 
@@ -834,13 +1119,16 @@ export default function ThreeDModelViewer({
     const modelExt = getUrlExtension(currentUrl);
 
     const handleLoaded = (object: THREE.Object3D) => {
-      const frameCandidateMaterials: THREE.Material[] = [];
-      const frameKeywords = /frame|alum|aluminum|mullion|sash|border|trim|walnut|narra|matte/i;
+      // Detect finish targets after we normalize + scale the model.
+      frameMaterialsRef.current = [];
+      finishMaterialsRef.current = [];
 
       object.traverse((child: any) => {
         if (!child.isMesh) return;
         child.castShadow = true;
         child.receiveShadow = true;
+
+        // Keep GLB/GLTF PBR materials as-is; only apply safe tweaks.
         try {
           const tweakMat = (mat: any) => {
             if (!mat) return;
@@ -857,34 +1145,8 @@ export default function ThreeDModelViewer({
           };
           if (Array.isArray(child.material)) child.material.forEach(tweakMat);
           else tweakMat(child.material);
-
-          const childName = String(child?.name || "");
-          const mats = Array.isArray(child.material) ? child.material : [child.material];
-          mats.forEach((mat: any) => {
-            if (!mat) return;
-            const matName = String(mat?.name || "");
-            const looksLikeFrame = frameKeywords.test(childName) || frameKeywords.test(matName);
-            const canTint = !!mat.color && mat.transparent !== true;
-            if (looksLikeFrame && canTint) {
-              frameCandidateMaterials.push(mat as THREE.Material);
-            }
-          });
         } catch {}
       });
-
-      const uniqueCandidates = Array.from(new Set(frameCandidateMaterials));
-      frameMaterialsRef.current = uniqueCandidates;
-      for (const mat of uniqueCandidates) {
-        const m = mat as any;
-        if (!m) continue;
-        if (!frameMaterialSnapshotsRef.current.has(mat)) {
-          frameMaterialSnapshotsRef.current.set(mat, {
-            colorHex: m.color?.getHex?.(),
-            roughness: typeof m.roughness === "number" ? m.roughness : undefined,
-            metalness: typeof m.metalness === "number" ? m.metalness : undefined,
-          });
-        }
-      }
 
       const rawBox = new THREE.Box3().setFromObject(object);
       const rawSize = rawBox.getSize(new THREE.Vector3());
@@ -916,25 +1178,139 @@ export default function ThreeDModelViewer({
       modelRootForShadows = modelGroup;
       updateShadowsRef.current?.();
 
-      if (frameFinish !== "default") {
-        const preset = FRAME_FINISH_PRESETS[frameFinish];
-        if (preset) {
-          for (const mat of frameMaterialsRef.current) {
-            const m = mat as any;
-            if (!m) continue;
-            if (m.color) {
-              try {
-                m.color.setHex(preset.color);
-              } catch {}
+      modelBounds = new THREE.Box3().setFromObject(modelGroup);
+
+      // Fit ground plane to model bounds and keep it slightly below the model.
+      if (modelBounds) {
+        const size = modelBounds.getSize(new THREE.Vector3());
+        const span = Math.max(size.x, size.z);
+        const floorSize = Math.max(180, span * 2.4);
+        groundPlane.scale.set(floorSize, floorSize, 1);
+        groundPlane.position.y = modelBounds.min.y - Math.max(0.02, size.y * 0.002);
+      }
+      updateGroundRef.current?.();
+
+      // Detect likely frame materials.
+      // Priorities:
+      // 1) mesh/material name tokens
+      // 2) geometry close to overall bounds
+      // 3) dark/neutral default colors
+      const frameTokens = ["frame", "border", "mould", "mold", "molding", "trim", "casing", "bezel", "edge"];
+      const overall = modelBounds ? modelBounds.clone() : new THREE.Box3(new THREE.Vector3(-50, -50, -50), new THREE.Vector3(50, 50, 50));
+      const overallSize = overall.getSize(new THREE.Vector3());
+      const overallVol = Math.max(1e-6, overallSize.x * overallSize.y * overallSize.z);
+      const eps = Math.max(1.25, Math.min(5, overallSize.length() * 0.015));
+
+      const isGlassLike = (mat: any, name: string) => {
+        if (name.includes("glass")) return true;
+        try {
+          if (typeof mat?.transmission === "number" && mat.transmission > 0.2) return true;
+        } catch {}
+        try {
+          if (mat?.transparent && typeof mat?.opacity === "number" && mat.opacity < 0.95) return true;
+        } catch {}
+        return false;
+      };
+
+      const scoreByMaterial = new Map<THREE.Material, { score: number; tokenMatch: boolean }>();
+      const finishMaterials = new Set<THREE.Material>();
+      const perMeshBox = new THREE.Box3();
+
+      modelGroup.traverse((child: any) => {
+        if (!child?.isMesh) return;
+        const meshName = (child?.name || "").toString().toLowerCase();
+        try {
+          perMeshBox.setFromObject(child);
+        } catch {
+          return;
+        }
+        if (perMeshBox.isEmpty()) return;
+
+        const size = perMeshBox.getSize(new THREE.Vector3());
+        const vol = Math.max(1e-6, size.x * size.y * size.z);
+        const volRatio = vol / overallVol;
+
+        const touches =
+          (Math.abs(perMeshBox.min.x - overall.min.x) < eps ? 1 : 0) +
+          (Math.abs(perMeshBox.max.x - overall.max.x) < eps ? 1 : 0) +
+          (Math.abs(perMeshBox.min.y - overall.min.y) < eps ? 1 : 0) +
+          (Math.abs(perMeshBox.max.y - overall.max.y) < eps ? 1 : 0) +
+          (Math.abs(perMeshBox.min.z - overall.min.z) < eps ? 1 : 0) +
+          (Math.abs(perMeshBox.max.z - overall.max.z) < eps ? 1 : 0);
+
+        const mats: any[] = Array.isArray(child.material) ? child.material : [child.material];
+        for (const m of mats) {
+          if (!m) continue;
+          const mat = m as THREE.Material;
+          const matName = (m?.name || "").toString().toLowerCase();
+          const haystack = `${meshName} ${matName}`;
+
+          if (isGlassLike(m, haystack)) continue;
+          finishMaterials.add(mat);
+
+          let score = 0;
+          const tokenMatch = frameTokens.some((t) => haystack.includes(t));
+          if (tokenMatch) score += 5;
+
+          if (touches >= 2) score += 2;
+          if (touches >= 4) score += 1;
+
+          if (volRatio < 0.5) score += 1;
+          if (volRatio < 0.2) score += 1;
+
+          try {
+            const c = (m?.color as THREE.Color | undefined) ?? undefined;
+            if (c && (c as any).isColor) {
+              const lum = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+              if (lum < 0.45) score += 1;
             }
-            if ("roughness" in m) m.roughness = preset.roughness;
-            if ("metalness" in m) m.metalness = preset.metalness;
-            m.needsUpdate = true;
+          } catch {}
+
+          const prev = scoreByMaterial.get(mat);
+          if (!prev || score > prev.score) {
+            scoreByMaterial.set(mat, { score, tokenMatch });
+          } else if (tokenMatch && !prev.tokenMatch) {
+            scoreByMaterial.set(mat, { score: prev.score, tokenMatch: true });
           }
         }
+      });
+
+      const sorted = Array.from(scoreByMaterial.entries()).sort((a, b) => b[1].score - a[1].score);
+      let selected = sorted.filter(([, v]) => v.tokenMatch || v.score >= 4).map(([m]) => m);
+      if (selected.length === 0) {
+        selected = sorted.filter(([, v]) => v.score > 0).slice(0, 3).map(([m]) => m);
       }
 
-      modelBounds = new THREE.Box3().setFromObject(modelGroup);
+      frameMaterialsRef.current = selected;
+      finishMaterialsRef.current = Array.from(finishMaterials);
+
+      // Snapshot original values so "Default" can restore them.
+      for (const mat of finishMaterialsRef.current) {
+        if (!mat) continue;
+        if (frameMaterialSnapshotsRef.current.has(mat)) continue;
+        const anyMat: any = mat as any;
+        const snap: MaterialSnapshot = {};
+        try {
+          if (anyMat.color && typeof anyMat.color.getHex === "function") snap.colorHex = anyMat.color.getHex();
+        } catch {}
+        try {
+          if (typeof anyMat.roughness === "number") snap.roughness = anyMat.roughness;
+        } catch {}
+        try {
+          if (typeof anyMat.metalness === "number") snap.metalness = anyMat.metalness;
+        } catch {}
+        try {
+          if ("map" in anyMat) snap.map = anyMat.map ?? null;
+        } catch {}
+        try {
+          if (typeof anyMat.transparent === "boolean") snap.transparent = anyMat.transparent;
+          if (typeof anyMat.opacity === "number") snap.opacity = anyMat.opacity;
+        } catch {}
+        frameMaterialSnapshotsRef.current.set(mat, snap);
+      }
+
+      // Apply chosen finish after we have stable material targets.
+      applyFrameFinishToTargets(frameFinishUi);
 
       disposeMeasurementGroup();
       labelElsRef.current = {};
@@ -1193,13 +1569,13 @@ export default function ThreeDModelViewer({
         for (let i = 0; i < count; i++) {
           const idx = i * 6;
           const gust = Math.sin(i * 0.013 + t * 1.7) * 0.4;
-          rainSwirlPhase[i] += dt * (1.6 + i * 0.0007);
+          rainSwirlPhase[i] += dt * (1.8 + i * 0.0008);
           const swirlX = Math.cos(rainSwirlPhase[i]) * rainSwirlRadius[i];
           const swirlZ = Math.sin(rainSwirlPhase[i]) * rainSwirlRadius[i];
 
-          let headX = arr[idx + 0] + (rainVelX[i] + gust) * dt + swirlX * dt * 6;
+          let headX = arr[idx + 0] + (rainVelX[i] + gust) * dt + swirlX * dt * 7;
           let headY = arr[idx + 1] - rainVelY[i] * dt;
-          let headZ = arr[idx + 2] + swirlZ * dt * 5;
+          let headZ = arr[idx + 2] + swirlZ * dt * 6;
 
           const bounds = rainArea;
           if (bounds) {
@@ -1209,7 +1585,7 @@ export default function ThreeDModelViewer({
               rainBaseX[i] = resetX;
               rainBaseZ[i] = resetZ;
               rainSwirlPhase[i] = Math.random() * Math.PI * 2;
-              rainSwirlRadius[i] = 0.35 + Math.random() * 1.8;
+              rainSwirlRadius[i] = 0.4 + Math.random() * 2.2;
               headX = resetX;
               headY = bounds.maxY + Math.random() * (bounds.maxY - bounds.minY) * 0.25;
               headZ = resetZ;
@@ -1231,6 +1607,112 @@ export default function ThreeDModelViewer({
         }
 
         posAttr.needsUpdate = true;
+      }
+
+      if (activeWeather === "rainy") {
+        if (Math.random() < dt * 0.11) {
+          lightningFlash = Math.max(lightningFlash, 0.32 + Math.random() * 0.42);
+        }
+        if (lightningFlash > 0) {
+          ambient.intensity = lightingBase.ambient + lightningFlash * 0.18;
+          hemi.intensity = lightingBase.hemi + lightningFlash * 0.2;
+          fillLight.intensity = lightingBase.fill + lightningFlash * 0.3;
+          sunLight.intensity = lightingBase.sun + lightningFlash * 2.25;
+          renderer.toneMappingExposure = Math.min(1.65, lightingBase.exposure + lightningFlash * 0.45);
+          lightningFlash = Math.max(0, lightningFlash - dt * 1.9);
+          if (lightningFlash <= 0) {
+            ambient.intensity = lightingBase.ambient;
+            hemi.intensity = lightingBase.hemi;
+            fillLight.intensity = lightingBase.fill;
+            sunLight.intensity = lightingBase.sun;
+            renderer.toneMappingExposure = lightingBase.exposure;
+          }
+        }
+      }
+
+      if (splashSystem && splashVelY && splashLifetime && splashArea) {
+        const splashPositions = splashSystem.geometry.attributes.position as THREE.BufferAttribute;
+        const arr = splashPositions.array as Float32Array;
+        const count = splashVelY.length;
+
+        for (let i = 0; i < count; i++) {
+          const idx = i * 3;
+          splashLifetime[i] += dt * (1.6 + Math.random() * 0.8);
+          arr[idx + 1] += splashVelY[i] * dt;
+          splashVelY[i] -= 14 * dt;
+
+          if (splashLifetime[i] >= 1 || arr[idx + 1] < splashArea.groundY) {
+            arr[idx + 0] = splashArea.minX + Math.random() * (splashArea.maxX - splashArea.minX);
+            arr[idx + 1] = splashArea.groundY + Math.random() * 0.03;
+            arr[idx + 2] = splashArea.minZ + Math.random() * (splashArea.maxZ - splashArea.minZ);
+            splashVelY[i] = 1.4 + Math.random() * 3.2;
+            splashLifetime[i] = 0;
+          }
+        }
+
+        splashPositions.needsUpdate = true;
+      }
+
+      if (heavyStep && windSystem && windVel && windLifetime && modelBounds) {
+        const positions = windSystem.geometry.attributes.position as THREE.BufferAttribute;
+        const arr = positions.array as Float32Array;
+        const count = windVel.length / 3;
+        const t = Date.now() * 0.001;
+        const modelCenter = modelBounds.getCenter(new THREE.Vector3());
+        const modelSize = modelBounds.getSize(new THREE.Vector3());
+        const windRange = Math.max(modelSize.x, modelSize.y, modelSize.z) * 3;
+
+        for (let i = 0; i < count; i++) {
+          const base = i * 3;
+          windLifetime[i] += 0.8;
+
+          const turbulence = Math.sin(t * 2 + i * 0.1) * 0.8;
+          const gustFactor = 1 + Math.sin(t * 0.3 + i * 0.05) * 0.4;
+
+          arr[base + 0] += windVel[base + 0] * gustFactor + turbulence;
+          arr[base + 1] += windVel[base + 1] + Math.sin(t * 3 + i * 0.02) * 0.3;
+          arr[base + 2] += windVel[base + 2] + turbulence * 0.3;
+
+          const distanceFromModel = Math.sqrt(Math.pow(arr[base + 0] - modelCenter.x, 2) + Math.pow(arr[base + 2] - modelCenter.z, 2));
+
+          if (
+            distanceFromModel > windRange * 1.2 ||
+            windLifetime[i] > 150 ||
+            arr[base + 1] < modelCenter.y - modelSize.y * 3 ||
+            arr[base + 1] > modelCenter.y + modelSize.y * 3
+          ) {
+            const side = Math.random();
+            let startX, startY, startZ;
+
+            if (side < 0.7) {
+              startX = modelCenter.x - windRange * (0.8 + Math.random() * 0.4);
+              startY = modelCenter.y + (Math.random() - 0.5) * modelSize.y * 2;
+              startZ = modelCenter.z + (Math.random() - 0.5) * windRange;
+            } else if (side < 0.9) {
+              startX = modelCenter.x + (Math.random() - 0.5) * windRange;
+              startY = modelCenter.y + (Math.random() - 0.5) * modelSize.y * 2;
+              startZ = modelCenter.z - windRange * (0.8 + Math.random() * 0.4);
+            } else {
+              startX = modelCenter.x + (Math.random() - 0.5) * windRange * 0.5;
+              startY = modelCenter.y + windRange * (0.5 + Math.random() * 0.3);
+              startZ = modelCenter.z + (Math.random() - 0.5) * windRange * 0.5;
+            }
+
+            arr[base + 0] = startX;
+            arr[base + 1] = startY;
+            arr[base + 2] = startZ;
+
+            const baseWindSpeed = 8 + Math.random() * 12;
+            const windDirection = Math.PI * 0.1 * (Math.random() - 0.5);
+
+            windVel[base + 0] = baseWindSpeed * Math.cos(windDirection);
+            windVel[base + 1] = (Math.random() - 0.5) * 2;
+            windVel[base + 2] = baseWindSpeed * Math.sin(windDirection) * 0.3;
+
+            windLifetime[i] = 0;
+          }
+        }
+        positions.needsUpdate = true;
       }
 
       controls.update();
@@ -1260,6 +1742,29 @@ export default function ThreeDModelViewer({
       } catch {}
       cancelAnimationFrame(rafId);
       disposeMeasurementGroup();
+
+      if (rainSystem) {
+        try {
+          rainSystem.geometry.dispose();
+          (rainSystem.material as THREE.LineBasicMaterial).dispose();
+        } catch {}
+      }
+      if (windSystem) {
+        try {
+          windSystem.geometry.dispose();
+          (windSystem.material as THREE.PointsMaterial).dispose();
+        } catch {}
+      }
+      if (splashSystem) {
+        try {
+          splashSystem.geometry.dispose();
+          (splashSystem.material as THREE.PointsMaterial).dispose();
+        } catch {}
+      }
+      try {
+        windTexture.dispose();
+      } catch {}
+
       try {
         controls.dispose();
       } catch {}
@@ -1281,7 +1786,7 @@ export default function ThreeDModelViewer({
       }
       while (container && container.firstChild) container.removeChild(container.firstChild);
     };
-  }, [currentUrl, productDimsMm, usesProductDimensions, width, height, frameFinish]);
+  }, [currentUrl, productDimsMm, usesProductDimensions, width, height]);
 
   if (!validUrls.length) {
     return (
@@ -1373,9 +1878,15 @@ export default function ThreeDModelViewer({
           <div className="mt-3 flex items-center justify-between gap-3">
             <label className="text-xs text-white/70">Finish</label>
             <select
-              value={frameFinish}
-              disabled
-              className="gl-units-select bg-white/10 border border-white/20 rounded-lg px-2 py-1 text-xs text-white outline-none disabled:opacity-100"
+              value={frameFinishUi}
+              onChange={(e) => {
+                const next = e.target.value as FrameFinish;
+                setFrameFinishUi(next);
+                try {
+                  onFrameFinishChange?.(next);
+                } catch {}
+              }}
+              className="gl-units-select bg-white/10 border border-white/20 rounded-lg px-2 py-1 text-xs text-white outline-none"
               aria-label="Frame finish"
             >
               <option value="default">Default</option>
@@ -1385,7 +1896,7 @@ export default function ThreeDModelViewer({
               <option value="walnut">Walnut</option>
             </select>
           </div>
-          <div className="mt-2 text-[11px] text-white/60">Frame finish follows product settings.</div>
+          <div className="mt-2 text-[11px] text-white/60">Select a finish to preview frame color.</div>
         </div>
       </div>
 

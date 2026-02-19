@@ -80,6 +80,17 @@ export default function RichTextEditor({
     }
   }, [editor, value]);
 
+  useEffect(() => {
+    if (!expanded) return;
+    if (!editor) return;
+    const id = window.setTimeout(() => {
+      try {
+        editor.commands.focus("end");
+      } catch {}
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [expanded, editor]);
+
   const isActive = (name: string, attrs?: Record<string, any>) => {
     if (!editor) return false;
     return editor.isActive(name as any, attrs as any);
@@ -189,7 +200,7 @@ export default function RichTextEditor({
             Open Large Editor
           </button>
         </div>
-        <EditorContent editor={editor} />
+        {!expanded && <EditorContent editor={editor} />}
       </div>
     </>
   );
