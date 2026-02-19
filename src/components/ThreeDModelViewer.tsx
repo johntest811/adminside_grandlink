@@ -597,11 +597,11 @@ export default function ThreeDModelViewer({
           maxZ: number;
         }
       | null = null;
-    let rainBaseOpacity = 0.6;
+    const rainBaseOpacity = 0.6;
     let windSystem: THREE.Points | null = null;
     let windVel: Float32Array | null = null;
     let windLifetime: Float32Array | null = null;
-    let windBaseOpacity = 0.3;
+    const windBaseOpacity = 0.3;
     let splashSystem: THREE.Points | null = null;
     let splashVelY: Float32Array | null = null;
     let splashLifetime: Float32Array | null = null;
@@ -609,7 +609,7 @@ export default function ThreeDModelViewer({
     let lightningFlash = 0;
     let activeWeather: WeatherKey = weatherRef.current;
 
-    let lightingBase = {
+    const lightingBase = {
       ambient: 0.45,
       hemi: 0.6,
       fill: 0.6,
