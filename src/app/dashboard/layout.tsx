@@ -26,7 +26,7 @@ import {
   ChevronDown,
   ChevronRight,
   LogOut,
-  Clock3,
+  CheckCircle,
 } from "lucide-react";
 
 export default function DashboardLayout({
@@ -410,7 +410,7 @@ export default function DashboardLayout({
               aria-label="My tasks"
               title="My Tasks"
             >
-              <Clock3 className="h-6 w-6" />
+              <CheckCircle className="h-6 w-6" />
               {myTasks.length > 0 && (
                 <span className="absolute -top-1 -right-1 h-5 min-w-5 px-1 rounded-full bg-red-500 text-white text-[10px] flex items-center justify-center font-medium animate-pulse">
                   {myTasks.length > 9 ? '9+' : myTasks.length}
