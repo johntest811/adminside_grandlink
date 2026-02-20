@@ -255,7 +255,7 @@ async function trainAndForecastDemandLSTM(params: {
 }
 
 export default function SalesForecastingPage() {
-  const [trainingDays, setTrainingDays] = useState(180);
+  const [trainingDays, setTrainingDays] = useState(1095);
   const [lookback, setLookback] = useState(14);
   const [horizon, setHorizon] = useState(30);
   const [backtestDays, setBacktestDays] = useState(28);
@@ -271,7 +271,7 @@ export default function SalesForecastingPage() {
   const [autoRunDone, setAutoRunDone] = useState(false);
 
   // LSTM: product demand forecasting
-  const [lstmDays, setLstmDays] = useState(270);
+  const [lstmDays, setLstmDays] = useState(1095);
   const [lstmLimit, setLstmLimit] = useState(10);
   const [lstmBranch, setLstmBranch] = useState<string>("");
   const [lstmLookback, setLstmLookback] = useState(60);
@@ -296,7 +296,7 @@ export default function SalesForecastingPage() {
 
       const end = new Date();
       const start = new Date(end);
-      start.setDate(end.getDate() - Math.max(30, Math.min(1825, trainingDays)));
+      start.setDate(end.getDate() - Math.max(30, Math.min(1095, trainingDays)));
       const startISO = start.toISOString().slice(0, 10);
       const endISO = end.toISOString().slice(0, 10);
 
@@ -686,7 +686,7 @@ export default function SalesForecastingPage() {
     try {
       setSyncLoading(true);
       setSyncMessage(null);
-      const res = await fetch(`/api/analytics/sales-inventory-9months?months=60`, { cache: "no-store" });
+      const res = await fetch(`/api/analytics/sales-inventory-9months?months=36`, { cache: "no-store" });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "Failed to build sales_inventory_data");
       setSyncMessage(`Upserted ${json?.rowsUpserted || 0} rows into sales_inventory_data`);
@@ -723,7 +723,7 @@ export default function SalesForecastingPage() {
             onClick={syncSalesInventory9Months}
             disabled={syncLoading}
           >
-            {syncLoading ? "Syncing…" : "Sync sales_inventory_data (5 years)"}
+            {syncLoading ? "Syncing…" : "Sync sales_inventory_data (3 years)"}
           </button>
           {syncMessage && <div className="text-sm text-gray-700">{syncMessage}</div>}
           <div className="text-xs text-gray-500">
@@ -738,9 +738,9 @@ export default function SalesForecastingPage() {
               className="w-full px-3 py-2 border rounded text-black"
               type="number"
               min={30}
-              max={1825}
+              max={1095}
               value={trainingDays}
-              onChange={(e) => setTrainingDays(Number(e.target.value || 180))}
+              onChange={(e) => setTrainingDays(Number(e.target.value || 1095))}
             />
           </div>
           <div>
@@ -901,9 +901,9 @@ export default function SalesForecastingPage() {
               className="w-full px-3 py-2 border rounded text-black"
               type="number"
               min={30}
-              max={1825}
+              max={1095}
               value={lstmDays}
-              onChange={(e) => setLstmDays(Number(e.target.value || 270))}
+              onChange={(e) => setLstmDays(Number(e.target.value || 1095))}
             />
           </div>
           <div>
