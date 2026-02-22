@@ -412,8 +412,66 @@ export default function ReportsPage() {
         margin: { left: 20, right: 20 },
       });
 
-      // Products Inventory Section
+      // Additional Analytics Section
       let currentY = (pdf as any).lastAutoTable?.finalY
+        ? (pdf as any).lastAutoTable.finalY + 16
+        : sectionStartY + 40;
+
+      pdf.setFontSize(16);
+      pdf.setTextColor(139, 28, 28);
+      pdf.text("ADDITIONAL ANALYTICS", 20, currentY);
+
+      const additionalAnalyticsRows = [
+        ["Order Success Rate", `${reportInsights.successRate.toFixed(1)}%`],
+        ["Cancellation Rate", `${reportInsights.cancelRate.toFixed(1)}%`],
+        ["Pending Rate", `${reportInsights.pendingRate.toFixed(1)}%`],
+        ["Inventory Health", `${reportInsights.stockHealthPct.toFixed(1)}% healthy stock`],
+        ["Low-Stock Products (≤5)", `${reportInsights.lowStockCount}`],
+        ["Avg Daily Revenue", `₱${Math.round(reportInsights.avgDailyRevenue).toLocaleString()}`],
+        ["Projected 30-Day Revenue", `₱${Math.round(reportInsights.projected30DayRevenue).toLocaleString()}`],
+      ];
+
+      autoTable(pdf, {
+        startY: currentY + 5,
+        head: [["Insight", "Value"]],
+        body: additionalAnalyticsRows,
+        theme: "striped",
+        headStyles: { fillColor: [139, 28, 28] },
+        margin: { left: 20, right: 20 },
+      });
+
+      // Top Product Insights Section
+      currentY = (pdf as any).lastAutoTable?.finalY
+        ? (pdf as any).lastAutoTable.finalY + 16
+        : currentY + 40;
+
+      pdf.setFontSize(16);
+      pdf.setTextColor(139, 28, 28);
+      pdf.text("TOP PRODUCT INSIGHTS", 20, currentY);
+
+      const topProductRows = reportInsights.topRevenueProducts.map((product) => {
+        const sellThroughCandidate = reportInsights.topSellThroughProducts.find((entry: any) => entry.id === product.id);
+        return [
+          product.name,
+          `₱${Math.round(product.revenue || 0).toLocaleString()}`,
+          `${product.total_sold}`,
+          `${sellThroughCandidate ? sellThroughCandidate.sellThroughPct.toFixed(1) : 0}%`,
+        ];
+      });
+
+      autoTable(pdf, {
+        startY: currentY + 5,
+        head: [["Product", "Revenue", "Units Sold", "Sell-through"]],
+        body: topProductRows.length
+          ? topProductRows
+          : [["No product insights for selected range", "-", "-", "-"]],
+        theme: "striped",
+        headStyles: { fillColor: [139, 28, 28] },
+        margin: { left: 20, right: 20 },
+      });
+
+      // Products Inventory Section
+      currentY = (pdf as any).lastAutoTable?.finalY
         ? (pdf as any).lastAutoTable.finalY + 20
         : 90;
 
@@ -798,6 +856,54 @@ export default function ReportsPage() {
     [dailySeries]
   );
 
+  const reportInsights = useMemo(() => {
+    const totalOrders = Math.max(0, salesData.totalOrders);
+    const successRate = totalOrders > 0 ? (salesData.successfulOrders / totalOrders) * 100 : 0;
+    const cancelRate = totalOrders > 0 ? (salesData.cancelledOrders / totalOrders) * 100 : 0;
+    const pendingRate = totalOrders > 0 ? (salesData.pendingOrders / totalOrders) * 100 : 0;
+
+    const lowStockCount = productsData.filter((product) => (product.inventory || 0) <= 5).length;
+    const totalProducts = productsData.length;
+    const healthyStockCount = productsData.filter((product) => {
+      const available = Math.max(0, (product.inventory || 0) - (product.reserved_stock || 0));
+      return available > 5;
+    }).length;
+    const stockHealthPct = totalProducts > 0 ? (healthyStockCount / totalProducts) * 100 : 0;
+
+    const daysInRange = Math.max(1, dailySeries.labels.length);
+    const avgDailyRevenue = salesData.totalSales / daysInRange;
+    const avgDailyOrders = salesData.successfulOrders / daysInRange;
+    const projected30DayRevenue = avgDailyRevenue * 30;
+
+    const topRevenueProducts = [...productsData]
+      .sort((a, b) => (b.revenue || 0) - (a.revenue || 0))
+      .slice(0, 5);
+
+    const topSellThroughProducts = [...productsData]
+      .map((product) => {
+        const sold = Math.max(0, Number(product.total_sold || 0));
+        const currentStock = Math.max(0, Number(product.inventory || 0));
+        const denominator = sold + currentStock;
+        const sellThroughPct = denominator > 0 ? (sold / denominator) * 100 : 0;
+        return { ...product, sellThroughPct };
+      })
+      .sort((a, b) => b.sellThroughPct - a.sellThroughPct)
+      .slice(0, 5);
+
+    return {
+      successRate,
+      cancelRate,
+      pendingRate,
+      lowStockCount,
+      stockHealthPct,
+      avgDailyRevenue,
+      avgDailyOrders,
+      projected30DayRevenue,
+      topRevenueProducts,
+      topSellThroughProducts,
+    };
+  }, [dailySeries.labels.length, productsData, salesData]);
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -996,6 +1102,90 @@ export default function ReportsPage() {
                 />
               </svg>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Additional report analytics */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white p-5 rounded-lg shadow-sm border">
+          <p className="text-sm font-medium text-gray-600">Order Success Rate</p>
+          <p className="text-2xl font-bold text-emerald-600 mt-1">{reportInsights.successRate.toFixed(1)}%</p>
+          <p className="text-xs text-gray-500 mt-1">Cancellation: {reportInsights.cancelRate.toFixed(1)}% · Pending: {reportInsights.pendingRate.toFixed(1)}%</p>
+        </div>
+        <div className="bg-white p-5 rounded-lg shadow-sm border">
+          <p className="text-sm font-medium text-gray-600">Inventory Health</p>
+          <p className="text-2xl font-bold text-blue-600 mt-1">{reportInsights.stockHealthPct.toFixed(1)}%</p>
+          <p className="text-xs text-gray-500 mt-1">{reportInsights.lowStockCount} low-stock products (≤5 units)</p>
+        </div>
+        <div className="bg-white p-5 rounded-lg shadow-sm border">
+          <p className="text-sm font-medium text-gray-600">Avg Daily Revenue</p>
+          <p className="text-2xl font-bold text-purple-600 mt-1">₱{Math.round(reportInsights.avgDailyRevenue).toLocaleString()}</p>
+          <p className="text-xs text-gray-500 mt-1">Avg successful orders/day: {reportInsights.avgDailyOrders.toFixed(2)}</p>
+        </div>
+        <div className="bg-white p-5 rounded-lg shadow-sm border">
+          <p className="text-sm font-medium text-gray-600">Projected 30-Day Revenue</p>
+          <p className="text-2xl font-bold text-orange-600 mt-1">₱{Math.round(reportInsights.projected30DayRevenue).toLocaleString()}</p>
+          <p className="text-xs text-gray-500 mt-1">Based on selected date-range run rate</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="bg-white p-4 rounded-lg shadow-sm border">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Top Products by Revenue</h3>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50 text-gray-600">
+                <tr>
+                  <th className="px-3 py-2 text-left">Product</th>
+                  <th className="px-3 py-2 text-right">Revenue</th>
+                  <th className="px-3 py-2 text-right">Units Sold</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reportInsights.topRevenueProducts.map((product) => (
+                  <tr key={`rev-${product.id}`} className="border-t">
+                    <td className="px-3 py-2 text-gray-900">{product.name}</td>
+                    <td className="px-3 py-2 text-right text-emerald-700 font-medium">₱{Math.round(product.revenue || 0).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-gray-700">{product.total_sold.toLocaleString()}</td>
+                  </tr>
+                ))}
+                {reportInsights.topRevenueProducts.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-3 py-6 text-center text-gray-500">No revenue data in selected range</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="bg-white p-4 rounded-lg shadow-sm border">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Top Sell-Through Products</h3>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50 text-gray-600">
+                <tr>
+                  <th className="px-3 py-2 text-left">Product</th>
+                  <th className="px-3 py-2 text-right">Sell-through</th>
+                  <th className="px-3 py-2 text-right">In Stock</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reportInsights.topSellThroughProducts.map((product: any) => (
+                  <tr key={`st-${product.id}`} className="border-t">
+                    <td className="px-3 py-2 text-gray-900">{product.name}</td>
+                    <td className="px-3 py-2 text-right text-blue-700 font-medium">{product.sellThroughPct.toFixed(1)}%</td>
+                    <td className="px-3 py-2 text-right text-gray-700">{product.inventory.toLocaleString()}</td>
+                  </tr>
+                ))}
+                {reportInsights.topSellThroughProducts.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-3 py-6 text-center text-gray-500">No product movement data in selected range</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
