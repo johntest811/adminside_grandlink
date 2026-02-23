@@ -17,6 +17,12 @@ export async function GET() {
       .upsert(
         [
           {
+            key: "content_management_products",
+            name: "Content Management - Products Page",
+            path: "/dashboard/Content_management/products",
+            group_name: "Content Management",
+          },
+          {
             key: "user_accounts_delete",
             name: "User Accounts Delete",
             path: "/dashboard/user-accounts/delete",
