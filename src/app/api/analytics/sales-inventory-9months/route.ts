@@ -19,9 +19,10 @@ function monthKey(iso: string) {
   return `${y}-${m}-01`;
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const months = 36;
+    const url = new URL(req.url);
+    const months = Math.max(1, Math.min(36, Number(url.searchParams.get("months") || 36)));
 
     const end = new Date();
     const start = new Date(end);

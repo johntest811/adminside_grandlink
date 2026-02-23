@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
@@ -14,9 +14,9 @@ const supabase = createClient(SUPABASE_URL, SERVICE_ROLE, {
 
 function dateKey(iso: string) {
   const d = new Date(iso);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
 
@@ -30,74 +30,71 @@ function enumerateDates(startISO: string, endISO: string) {
   return out;
 }
 
-export async function GET(req: NextRequest) {
-  try {
-    const url = new URL(req.url);
+function monthStartISO(iso: string) {
+  const d = new Date(`${iso}T00:00:00.000Z`);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  return `${y}-${m}-01`;
+}
 
+function daysInMonthFromMonthStart(monthStart: string) {
+  const d = new Date(`${monthStart}T00:00:00.000Z`);
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth();
+  return new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+}
+
+export async function GET() {
+  try {
     const end = new Date();
     const start = new Date(end);
-    start.setDate(end.getDate() - 180);
+    start.setUTCDate(end.getUTCDate() - 1095);
 
-    const startDate = url.searchParams.get("start") || dateKey(start.toISOString());
-    const endDate = url.searchParams.get("end") || dateKey(end.toISOString());
+    const startDate = dateKey(start.toISOString());
+    const endDate = dateKey(end.toISOString());
+    const startMonth = monthStartISO(startDate);
+    const endMonth = monthStartISO(endDate);
 
-    const { data: items, error } = await supabase
-      .from("user_items")
-      .select("id,product_id,quantity,created_at,status,order_status,total_paid,item_type")
-      .gte("created_at", `${startDate}T00:00:00.000Z`)
-      .lte("created_at", `${endDate}T23:59:59.999Z`)
-      .in("item_type", ["order", "reservation"])
-      .limit(50000);
+    const { data: monthlyRows, error } = await supabase
+      .from("sales_inventory_data")
+      .select("month_start,revenue,units_sold")
+      .gte("month_start", startMonth)
+      .lte("month_start", endMonth)
+      .limit(100000);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    const successStatuses = new Set([
-      "reserved",
-      "approved",
-      "in_production",
-      "start_packaging",
-      "ready_for_delivery",
-      "completed",
-    ]);
-
-    // price fallback map
-    const productIds = Array.from(new Set((items || []).map((r: any) => r.product_id))).filter(Boolean);
-    const priceByProduct: Record<string, number> = {};
-    if (productIds.length) {
-      const { data: products } = await supabase
-        .from("products")
-        .select("id,price")
-        .in("id", productIds);
-      (products || []).forEach((p: any) => (priceByProduct[p.id] = Number(p.price || 0)));
+    const revenueByMonth: Record<string, number> = {};
+    const unitsByMonth: Record<string, number> = {};
+    for (const row of monthlyRows || []) {
+      const month = String((row as any).month_start || "").slice(0, 10);
+      if (!month) continue;
+      revenueByMonth[month] = (revenueByMonth[month] || 0) + Math.max(0, Number((row as any).revenue || 0));
+      unitsByMonth[month] = (unitsByMonth[month] || 0) + Math.max(0, Number((row as any).units_sold || 0));
     }
 
     const labels = enumerateDates(startDate, endDate);
-    const revenueByDay: Record<string, number> = {};
-    const qtyByDay: Record<string, number> = {};
-    labels.forEach((d) => {
-      revenueByDay[d] = 0;
-      qtyByDay[d] = 0;
-    });
 
-    for (const row of items || []) {
-      const s = String(row.order_status || row.status || "").toLowerCase();
-      if (!successStatuses.has(s)) continue;
-      const d = dateKey(row.created_at);
-      if (!revenueByDay[d] && revenueByDay[d] !== 0) continue;
-      const qty = Math.max(0, Number(row.quantity || 0));
-      const paid = Number(row.total_paid || 0);
-      const fallback = qty * (priceByProduct[row.product_id] || 0);
-      const revenue = paid > 0 ? paid : fallback;
-      revenueByDay[d] += revenue;
-      qtyByDay[d] += qty;
-    }
+    const revenue = labels.map((dayIso) => {
+      const month = monthStartISO(dayIso);
+      const total = revenueByMonth[month] || 0;
+      const dim = daysInMonthFromMonthStart(month);
+      return total / Math.max(1, dim);
+    });
+    const quantities = labels.map((dayIso) => {
+      const month = monthStartISO(dayIso);
+      const total = unitsByMonth[month] || 0;
+      const dim = daysInMonthFromMonthStart(month);
+      return total / Math.max(1, dim);
+    });
 
     return NextResponse.json({
       startDate,
       endDate,
       labels,
-      revenue: labels.map((d) => revenueByDay[d] || 0),
-      quantities: labels.map((d) => qtyByDay[d] || 0),
+      revenue,
+      quantities,
+      source: "sales_inventory_data",
     });
   } catch (e: any) {
     console.error("GET /api/analytics/sales-series error", e);

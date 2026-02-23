@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
 
     let query = supabase
       .from("sales_inventory_data")
-      .select("product_id,month_start,branch,units_sold,revenue,source_user_items_count")
+      .select("product_id,month_start,branch,units_sold,revenue")
       .gte("month_start", startMonth)
       .lte("month_start", endMonth)
       .order("month_start", { ascending: true })
@@ -78,7 +78,7 @@ export async function GET(req: NextRequest) {
 
       monthRevenueMap[month] += revenue;
       monthUnitsMap[month] += units;
-      sourceRows += Math.max(0, Number(row.source_user_items_count || 0));
+      sourceRows += 1;
 
       if (productId) {
         productSet.add(productId);

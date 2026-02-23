@@ -48,6 +48,8 @@ type ProductDemandSeriesResponse = {
   }>;
 };
 
+const FIXED_TRAINING_DAYS = 1095;
+
 type LstmDemandResult = {
   product_id: string;
   product_name: string;
@@ -58,29 +60,6 @@ type LstmDemandResult = {
   rmse_backtest: number;
   mape_backtest: number;
   confidence_score: number;
-};
-
-type SalesInventorySummaryResponse = {
-  windowMonths: number;
-  startMonth: string;
-  endMonth: string;
-  branch: string | null;
-  months: string[];
-  monthlyRevenue: number[];
-  monthlyUnits: number[];
-  totalRevenue: number;
-  totalUnits: number;
-  monthsWithData: number;
-  dataCompletenessPct: number;
-  productCount: number;
-  branchCount: number;
-  sourceRows: number;
-  topProducts: Array<{
-    product_id: string;
-    product_name: string;
-    revenue: number;
-    units_sold: number;
-  }>;
 };
 
 function addDaysISO(dateISO: string, days: number) {
@@ -278,7 +257,7 @@ async function trainAndForecastDemandLSTM(params: {
 }
 
 export default function SalesForecastingPage() {
-  const [trainingDays, setTrainingDays] = useState(1095);
+  const trainingDays = FIXED_TRAINING_DAYS;
   const [lookback, setLookback] = useState(14);
   const [horizon, setHorizon] = useState(30);
   const [backtestDays, setBacktestDays] = useState(28);
@@ -294,7 +273,7 @@ export default function SalesForecastingPage() {
   const [autoRunDone, setAutoRunDone] = useState(false);
 
   // LSTM: product demand forecasting
-  const [lstmDays, setLstmDays] = useState(1095);
+  const lstmDays = FIXED_TRAINING_DAYS;
   const [lstmLimit, setLstmLimit] = useState(10);
   const [lstmBranch, setLstmBranch] = useState<string>("");
   const [lstmLookback, setLstmLookback] = useState(60);
@@ -308,26 +287,6 @@ export default function SalesForecastingPage() {
 
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [inventorySummary, setInventorySummary] = useState<SalesInventorySummaryResponse | null>(null);
-  const [inventorySummaryLoading, setInventorySummaryLoading] = useState(false);
-  const [inventorySummaryError, setInventorySummaryError] = useState<string | null>(null);
-
-  const loadInventorySummary = useCallback(async (branch?: string) => {
-    try {
-      setInventorySummaryLoading(true);
-      setInventorySummaryError(null);
-      const branchQuery = branch?.trim() ? `?branch=${encodeURIComponent(branch.trim())}` : "";
-      const res = await fetch(`/api/analytics/sales-inventory-summary${branchQuery}`, { cache: "no-store" });
-      const json = (await res.json().catch(() => ({}))) as any;
-      if (!res.ok) throw new Error(json?.error || "Failed to load sales_inventory_data summary");
-      setInventorySummary(json as SalesInventorySummaryResponse);
-    } catch (e: unknown) {
-      setInventorySummaryError(e instanceof Error ? e.message : String(e));
-      setInventorySummary(null);
-    } finally {
-      setInventorySummaryLoading(false);
-    }
-  }, []);
 
   const run = useCallback(async () => {
     try {
@@ -339,8 +298,7 @@ export default function SalesForecastingPage() {
 
       const end = new Date();
       const start = new Date(end);
-      const fixedTrainingDays = 1095;
-      start.setDate(end.getDate() - fixedTrainingDays);
+      start.setDate(end.getDate() - FIXED_TRAINING_DAYS);
       const startISO = start.toISOString().slice(0, 10);
       const endISO = end.toISOString().slice(0, 10);
 
@@ -524,41 +482,6 @@ export default function SalesForecastingPage() {
     };
   }, [lstmResults]);
 
-  const rfExtendedAnalytics = useMemo(() => {
-    if (!rfAnalytics) return null;
-
-    const buildExtended = (base: typeof rfAnalytics.revenue) => {
-      const absRecent = Math.max(1, Math.abs(base.recentSum));
-      const wape = (base.mae / absRecent) * 100;
-      const signal = base.bias / Math.max(1, base.mae);
-      const confidence = Math.max(5, Math.min(99, 100 - base.mape * 0.9 - Math.min(35, Math.abs(signal) * 10)));
-      return {
-        wape,
-        signal,
-        confidence,
-      };
-    };
-
-    return {
-      revenue: buildExtended(rfAnalytics.revenue),
-      units: buildExtended(rfAnalytics.units),
-    };
-  }, [rfAnalytics]);
-
-  const lstmExtendedAnalytics = useMemo(() => {
-    if (!lstmResults || lstmResults.length === 0) return null;
-    const sortedByConfidence = [...lstmResults].sort((a, b) => b.confidence_score - a.confidence_score);
-    const sortedByError = [...lstmResults].sort((a, b) => a.mape_backtest - b.mape_backtest);
-    const positiveShare = (lstmResults.filter((r) => r.delta_pct > 0).length / lstmResults.length) * 100;
-
-    return {
-      bestConfidence: sortedByConfidence[0],
-      bestAccuracy: sortedByError[0],
-      positiveShare,
-      medianConfidence: sortedByConfidence[Math.floor(sortedByConfidence.length / 2)]?.confidence_score || 0,
-    };
-  }, [lstmResults]);
-
   const runLstm = useCallback(async () => {
     try {
       setLstmLoading(true);
@@ -567,9 +490,8 @@ export default function SalesForecastingPage() {
       setLstmProgress(null);
 
       const branchParam = lstmBranch.trim() ? `&branch=${encodeURIComponent(lstmBranch.trim())}` : "";
-      const fixedLstmDays = 1095;
       const res = await fetch(
-        `/api/analytics/product-demand-series?days=${fixedLstmDays}&limit=${lstmLimit}${branchParam}`,
+        `/api/analytics/product-demand-series?days=${FIXED_TRAINING_DAYS}&limit=${lstmLimit}${branchParam}`,
         { cache: "no-store" }
       );
       const json = (await res.json().catch(() => ({}))) as any;
@@ -625,8 +547,7 @@ export default function SalesForecastingPage() {
     setAutoRunDone(true);
     void run();
     void runLstm();
-    void loadInventorySummary();
-  }, [autoRunDone, loadInventorySummary, run, runLstm]);
+  }, [autoRunDone, run, runLstm]);
 
   const exportPdf = useCallback(async () => {
     try {
@@ -771,7 +692,6 @@ export default function SalesForecastingPage() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "Failed to build sales_inventory_data");
       setSyncMessage(`Upserted ${json?.rowsUpserted || 0} rows into sales_inventory_data`);
-      await loadInventorySummary(lstmBranch);
     } catch (e: unknown) {
       setSyncMessage(e instanceof Error ? e.message : String(e));
     } finally {
@@ -786,7 +706,7 @@ export default function SalesForecastingPage() {
           <div>
             <h1 className="text-2xl font-semibold text-black">Sales Forecasting</h1>
             <p className="mt-2 text-black text-sm">
-              Random Forest and LSTM forecasting with enforced 3-year history, with analytics backed by <span className="font-mono">sales_inventory_data</span>.
+              Random Forest forecasting trained on daily sales (from <span className="font-mono">/api/analytics/sales-series</span>).
             </p>
           </div>
           <button
@@ -813,57 +733,12 @@ export default function SalesForecastingPage() {
           </div>
         </div>
 
-        <div className="mt-4 rounded border bg-gray-50 p-4">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <h3 className="text-sm font-semibold text-black">3-Year Sales Inventory Data Coverage</h3>
-            <button
-              className="px-3 py-1.5 rounded border border-gray-300 bg-white hover:bg-gray-50 text-sm text-black disabled:opacity-50"
-              onClick={() => loadInventorySummary(lstmBranch)}
-              disabled={inventorySummaryLoading}
-            >
-              {inventorySummaryLoading ? "Refreshing…" : "Refresh summary"}
-            </button>
-          </div>
-          {inventorySummaryError && <div className="mt-2 text-sm text-red-700">{inventorySummaryError}</div>}
-          {inventorySummary && (
-            <div className="mt-3 grid grid-cols-1 md:grid-cols-5 gap-3 text-sm">
-              <div className="p-3 rounded border bg-white text-black">
-                <div className="font-semibold">Window</div>
-                <div className="mt-1">{inventorySummary.startMonth} → {inventorySummary.endMonth}</div>
-              </div>
-              <div className="p-3 rounded border bg-white text-black">
-                <div className="font-semibold">Data Completeness</div>
-                <div className="mt-1">{inventorySummary.monthsWithData}/36 months ({inventorySummary.dataCompletenessPct.toFixed(1)}%)</div>
-              </div>
-              <div className="p-3 rounded border bg-white text-black">
-                <div className="font-semibold">Rows / Products</div>
-                <div className="mt-1">{inventorySummary.sourceRows.toLocaleString()} source rows · {inventorySummary.productCount} products</div>
-              </div>
-              <div className="p-3 rounded border bg-white text-black">
-                <div className="font-semibold">3Y Revenue</div>
-                <div className="mt-1">₱{Math.round(inventorySummary.totalRevenue).toLocaleString()}</div>
-              </div>
-              <div className="p-3 rounded border bg-white text-black">
-                <div className="font-semibold">3Y Units / Branches</div>
-                <div className="mt-1">{Math.round(inventorySummary.totalUnits).toLocaleString()} units · {inventorySummary.branchCount} branches</div>
-              </div>
-            </div>
-          )}
-        </div>
-
         <div className="mt-4 grid grid-cols-1 md:grid-cols-5 gap-3">
           <div>
-            <label className="block text-xs text-gray-700 mb-1">Training days</label>
-            <input
-              className="w-full px-3 py-2 border rounded text-black"
-              type="number"
-              min={1095}
-              max={1095}
-              value={trainingDays}
-              onChange={() => setTrainingDays(1095)}
-              disabled
-            />
-            <div className="mt-1 text-[11px] text-gray-500">Fixed at 3 years</div>
+            <label className="block text-xs text-gray-700 mb-1">Training window</label>
+            <div className="w-full px-3 py-2 border rounded bg-gray-50 text-black text-sm">
+              Fixed at 3 years ({trainingDays} days)
+            </div>
           </div>
           <div>
             <label className="block text-xs text-gray-700 mb-1">Lookback (days)</label>
@@ -950,23 +825,6 @@ export default function SalesForecastingPage() {
             </div>
           </div>
         )}
-
-        {rfExtendedAnalytics && (
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-            <div className="p-3 rounded border bg-white text-black">
-              <div className="font-semibold">RF WAPE</div>
-              <div className="mt-1">Revenue {rfExtendedAnalytics.revenue.wape.toFixed(2)}% · Units {rfExtendedAnalytics.units.wape.toFixed(2)}%</div>
-            </div>
-            <div className="p-3 rounded border bg-white text-black">
-              <div className="font-semibold">RF Tracking Signal</div>
-              <div className="mt-1">Revenue {rfExtendedAnalytics.revenue.signal.toFixed(2)} · Units {rfExtendedAnalytics.units.signal.toFixed(2)}</div>
-            </div>
-            <div className="p-3 rounded border bg-white text-black">
-              <div className="font-semibold">RF Confidence Score</div>
-              <div className="mt-1">Revenue {rfExtendedAnalytics.revenue.confidence.toFixed(0)} / 100 · Units {rfExtendedAnalytics.units.confidence.toFixed(0)} / 100</div>
-            </div>
-          </div>
-        )}
       </div>
 
       {revenueChartData && (
@@ -1035,17 +893,10 @@ export default function SalesForecastingPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
           <div>
-            <label className="block text-xs text-gray-700 mb-1">History (days)</label>
-            <input
-              className="w-full px-3 py-2 border rounded text-black"
-              type="number"
-              min={1095}
-              max={1095}
-              value={lstmDays}
-              onChange={() => setLstmDays(1095)}
-              disabled
-            />
-            <div className="mt-1 text-[11px] text-gray-500">Fixed at 3 years</div>
+            <label className="block text-xs text-gray-700 mb-1">History window</label>
+            <div className="w-full px-3 py-2 border rounded bg-gray-50 text-black text-sm">
+              Fixed at 3 years ({lstmDays} days)
+            </div>
           </div>
           <div>
             <label className="block text-xs text-gray-700 mb-1">Products (top)</label>
@@ -1123,23 +974,6 @@ export default function SalesForecastingPage() {
               <div className="mt-1">
                 ↑ {lstmAnalytics.strongestGrowth?.product_name || "-"} · ↓ {lstmAnalytics.weakestGrowth?.product_name || "-"}
               </div>
-            </div>
-          </div>
-        )}
-
-        {lstmExtendedAnalytics && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-            <div className="p-3 rounded border bg-white text-black">
-              <div className="font-semibold">Positive Demand Share</div>
-              <div className="mt-1">{lstmExtendedAnalytics.positiveShare.toFixed(1)}% of products forecasted to grow</div>
-            </div>
-            <div className="p-3 rounded border bg-white text-black">
-              <div className="font-semibold">Most Reliable Product</div>
-              <div className="mt-1">{lstmExtendedAnalytics.bestConfidence?.product_name || "-"} ({lstmExtendedAnalytics.bestConfidence?.confidence_score.toFixed(0) || "0"}/100 confidence)</div>
-            </div>
-            <div className="p-3 rounded border bg-white text-black">
-              <div className="font-semibold">Best Accuracy Product</div>
-              <div className="mt-1">{lstmExtendedAnalytics.bestAccuracy?.product_name || "-"} ({lstmExtendedAnalytics.bestAccuracy?.mape_backtest.toFixed(1) || "0"}% MAPE)</div>
             </div>
           </div>
         )}
