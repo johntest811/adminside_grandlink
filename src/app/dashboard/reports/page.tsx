@@ -412,8 +412,43 @@ export default function ReportsPage() {
         margin: { left: 20, right: 20 },
       });
 
-      // Products Inventory Section
       let currentY = (pdf as any).lastAutoTable?.finalY
+        ? (pdf as any).lastAutoTable.finalY + 16
+        : sectionStartY + 70;
+
+      pdf.setFontSize(16);
+      pdf.setTextColor(139, 28, 28);
+      pdf.text("ANALYTICS HIGHLIGHTS", 20, currentY);
+
+      const highlightRows = [
+        ["Average revenue per day", `₱${Math.round(reportInsights.avgRevenuePerDay).toLocaleString()}`],
+        ["Success / Cancel / Pending", `${reportInsights.successRate.toFixed(1)}% / ${reportInsights.cancelRate.toFixed(1)}% / ${reportInsights.pendingRate.toFixed(1)}%`],
+        ["Average units per successful order", reportInsights.avgUnitsPerOrder.toFixed(2)],
+        [
+          "Top product by revenue",
+          reportInsights.topRevenueProduct
+            ? `${reportInsights.topRevenueProduct.name} (₱${Math.round(reportInsights.topRevenueProduct.revenue || 0).toLocaleString()})`
+            : "N/A",
+        ],
+        [
+          "Top category by revenue",
+          `${reportInsights.topCategoryName} (₱${Math.round(reportInsights.topCategoryRevenue).toLocaleString()})`,
+        ],
+        ["Low-stock products (≤5 units)", reportInsights.lowStockProducts.toString()],
+      ];
+
+      autoTable(pdf, {
+        startY: currentY + 5,
+        head: [["Insight", "Value"]],
+        body: highlightRows,
+        theme: "striped",
+        headStyles: { fillColor: [139, 28, 28] },
+        margin: { left: 20, right: 20 },
+        styles: { fontSize: 10 },
+      });
+
+      // Products Inventory Section
+      currentY = (pdf as any).lastAutoTable?.finalY
         ? (pdf as any).lastAutoTable.finalY + 20
         : 90;
 
@@ -798,6 +833,57 @@ export default function ReportsPage() {
     [dailySeries]
   );
 
+  const reportInsights = useMemo(() => {
+    const periodDays = Math.max(1, dailySeries.labels.length || 1);
+    const successRate = salesData.totalOrders
+      ? (salesData.successfulOrders / salesData.totalOrders) * 100
+      : 0;
+    const cancelRate = salesData.totalOrders
+      ? (salesData.cancelledOrders / salesData.totalOrders) * 100
+      : 0;
+    const pendingRate = salesData.totalOrders
+      ? (salesData.pendingOrders / salesData.totalOrders) * 100
+      : 0;
+
+    const avgRevenuePerDay = salesData.totalSales / periodDays;
+    const avgUnitsPerOrder = salesData.successfulOrders
+      ? salesData.totalProductsSold / salesData.successfulOrders
+      : 0;
+
+    const sortedByRevenue = [...productsData].sort((a, b) => b.revenue - a.revenue);
+    const topRevenueProduct = sortedByRevenue[0] || null;
+
+    const categoryRevenueMap = productsData.reduce((acc, product) => {
+      const key = product.category || "Uncategorized";
+      acc[key] = (acc[key] || 0) + (product.revenue || 0);
+      return acc;
+    }, {} as Record<string, number>);
+
+    const topCategoryEntry = Object.entries(categoryRevenueMap).sort((a, b) => b[1] - a[1])[0];
+    const topCategoryName = topCategoryEntry?.[0] || "N/A";
+    const topCategoryRevenue = topCategoryEntry?.[1] || 0;
+
+    const lowStockProducts = productsData.filter((product) => (product.inventory || 0) <= 5).length;
+    const highDemandLowStock = productsData
+      .filter((product) => (product.inventory || 0) <= 5 && (product.total_sold || 0) > 0)
+      .sort((a, b) => b.total_sold - a.total_sold)
+      .slice(0, 5);
+
+    return {
+      periodDays,
+      successRate,
+      cancelRate,
+      pendingRate,
+      avgRevenuePerDay,
+      avgUnitsPerOrder,
+      topRevenueProduct,
+      topCategoryName,
+      topCategoryRevenue,
+      lowStockProducts,
+      highDemandLowStock,
+    };
+  }, [dailySeries.labels.length, productsData, salesData]);
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -998,6 +1084,97 @@ export default function ReportsPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="bg-white p-4 rounded-lg shadow-sm border">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Performance Snapshot</h3>
+          <div className="space-y-2 text-sm text-gray-700">
+            <div className="flex justify-between gap-3">
+              <span>Period length</span>
+              <span className="font-medium text-gray-900">{reportInsights.periodDays} days</span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span>Avg revenue/day</span>
+              <span className="font-medium text-green-700">₱{Math.round(reportInsights.avgRevenuePerDay).toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span>Avg units/order</span>
+              <span className="font-medium text-gray-900">{reportInsights.avgUnitsPerOrder.toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white p-4 rounded-lg shadow-sm border">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Order Health</h3>
+          <div className="space-y-2 text-sm text-gray-700">
+            <div className="flex justify-between gap-3">
+              <span>Successful</span>
+              <span className="font-medium text-green-700">{reportInsights.successRate.toFixed(1)}%</span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span>Cancelled</span>
+              <span className="font-medium text-red-700">{reportInsights.cancelRate.toFixed(1)}%</span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span>Pending</span>
+              <span className="font-medium text-amber-700">{reportInsights.pendingRate.toFixed(1)}%</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white p-4 rounded-lg shadow-sm border">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Revenue Leaders</h3>
+          <div className="space-y-2 text-sm text-gray-700">
+            <div>
+              <div className="text-xs text-gray-500">Top Product</div>
+              <div className="font-medium text-gray-900">
+                {reportInsights.topRevenueProduct
+                  ? `${reportInsights.topRevenueProduct.name} (₱${Math.round(reportInsights.topRevenueProduct.revenue || 0).toLocaleString()})`
+                  : "N/A"}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-500">Top Category</div>
+              <div className="font-medium text-gray-900">
+                {reportInsights.topCategoryName} (₱{Math.round(reportInsights.topCategoryRevenue).toLocaleString()})
+              </div>
+            </div>
+            <div className="text-xs text-gray-600">
+              Low-stock products (≤5 units): <span className="font-semibold">{reportInsights.lowStockProducts}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white p-4 rounded-lg shadow-sm border">
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">High-demand, low-stock products</h3>
+        {reportInsights.highDemandLowStock.length === 0 ? (
+          <p className="text-sm text-gray-600">No immediate low-stock demand risk in the selected period.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-left text-gray-500 border-b">
+                  <th className="py-2 pr-4">Product</th>
+                  <th className="py-2 pr-4">Current Stock</th>
+                  <th className="py-2 pr-4">Units Sold</th>
+                  <th className="py-2 pr-4">Revenue</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reportInsights.highDemandLowStock.map((product) => (
+                  <tr key={product.id} className="border-b last:border-b-0 text-gray-800">
+                    <td className="py-2 pr-4 font-medium">{product.name}</td>
+                    <td className="py-2 pr-4">{product.inventory}</td>
+                    <td className="py-2 pr-4">{product.total_sold}</td>
+                    <td className="py-2 pr-4">₱{Math.round(product.revenue || 0).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Charts */}

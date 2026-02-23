@@ -48,6 +48,8 @@ type ProductDemandSeriesResponse = {
   }>;
 };
 
+const FIXED_TRAINING_DAYS = 1095;
+
 type LstmDemandResult = {
   product_id: string;
   product_name: string;
@@ -255,7 +257,7 @@ async function trainAndForecastDemandLSTM(params: {
 }
 
 export default function SalesForecastingPage() {
-  const [trainingDays, setTrainingDays] = useState(1095);
+  const trainingDays = FIXED_TRAINING_DAYS;
   const [lookback, setLookback] = useState(14);
   const [horizon, setHorizon] = useState(30);
   const [backtestDays, setBacktestDays] = useState(28);
@@ -271,7 +273,7 @@ export default function SalesForecastingPage() {
   const [autoRunDone, setAutoRunDone] = useState(false);
 
   // LSTM: product demand forecasting
-  const [lstmDays, setLstmDays] = useState(1095);
+  const lstmDays = FIXED_TRAINING_DAYS;
   const [lstmLimit, setLstmLimit] = useState(10);
   const [lstmBranch, setLstmBranch] = useState<string>("");
   const [lstmLookback, setLstmLookback] = useState(60);
@@ -296,7 +298,7 @@ export default function SalesForecastingPage() {
 
       const end = new Date();
       const start = new Date(end);
-      start.setDate(end.getDate() - Math.max(30, Math.min(1095, trainingDays)));
+      start.setDate(end.getDate() - FIXED_TRAINING_DAYS);
       const startISO = start.toISOString().slice(0, 10);
       const endISO = end.toISOString().slice(0, 10);
 
@@ -340,7 +342,7 @@ export default function SalesForecastingPage() {
     } finally {
       setLoading(false);
     }
-  }, [backtestDays, horizon, lookback, trainingDays]);
+  }, [backtestDays, horizon, lookback]);
 
   const revenueChartData = useMemo(() => {
     if (!revForecast) return null;
@@ -489,7 +491,7 @@ export default function SalesForecastingPage() {
 
       const branchParam = lstmBranch.trim() ? `&branch=${encodeURIComponent(lstmBranch.trim())}` : "";
       const res = await fetch(
-        `/api/analytics/product-demand-series?days=${lstmDays}&limit=${lstmLimit}${branchParam}`,
+        `/api/analytics/product-demand-series?days=${FIXED_TRAINING_DAYS}&limit=${lstmLimit}${branchParam}`,
         { cache: "no-store" }
       );
       const json = (await res.json().catch(() => ({}))) as any;
@@ -538,7 +540,7 @@ export default function SalesForecastingPage() {
       setLstmProgress(null);
       setLstmLoading(false);
     }
-  }, [lstmBranch, lstmDays, lstmEpochs, lstmHorizon, lstmLimit, lstmLookback]);
+  }, [lstmBranch, lstmEpochs, lstmHorizon, lstmLimit, lstmLookback]);
 
   useEffect(() => {
     if (autoRunDone) return;
@@ -733,15 +735,10 @@ export default function SalesForecastingPage() {
 
         <div className="mt-4 grid grid-cols-1 md:grid-cols-5 gap-3">
           <div>
-            <label className="block text-xs text-gray-700 mb-1">Training days</label>
-            <input
-              className="w-full px-3 py-2 border rounded text-black"
-              type="number"
-              min={30}
-              max={1095}
-              value={trainingDays}
-              onChange={(e) => setTrainingDays(Number(e.target.value || 1095))}
-            />
+            <label className="block text-xs text-gray-700 mb-1">Training window</label>
+            <div className="w-full px-3 py-2 border rounded bg-gray-50 text-black text-sm">
+              Fixed at 3 years ({trainingDays} days)
+            </div>
           </div>
           <div>
             <label className="block text-xs text-gray-700 mb-1">Lookback (days)</label>
@@ -896,15 +893,10 @@ export default function SalesForecastingPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
           <div>
-            <label className="block text-xs text-gray-700 mb-1">History (days)</label>
-            <input
-              className="w-full px-3 py-2 border rounded text-black"
-              type="number"
-              min={30}
-              max={1095}
-              value={lstmDays}
-              onChange={(e) => setLstmDays(Number(e.target.value || 1095))}
-            />
+            <label className="block text-xs text-gray-700 mb-1">History window</label>
+            <div className="w-full px-3 py-2 border rounded bg-gray-50 text-black text-sm">
+              Fixed at 3 years ({lstmDays} days)
+            </div>
           </div>
           <div>
             <label className="block text-xs text-gray-700 mb-1">Products (top)</label>
