@@ -106,6 +106,10 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
         delete fallbackData.skyboxes;
         changed = true;
       }
+      if (msg.includes('house_model_url')) {
+        delete fallbackData.house_model_url;
+        changed = true;
+      }
 
       if (changed) {
         try {

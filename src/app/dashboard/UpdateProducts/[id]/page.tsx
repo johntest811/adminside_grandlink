@@ -55,6 +55,7 @@ type Product = {
   thickness?: number;
   fbx_url?: string;
   fbx_urls?: string[];
+  house_model_url?: string | null;
   skyboxes?: Partial<Record<WeatherKey, string | null>>;
   fullproductname?: string;
   additionalfeatures?: string;
@@ -75,6 +76,7 @@ export default function EditProductPage() {
   const [show3DViewer, setShow3DViewer] = useState(false);
   const [currentFbxIndex, setCurrentFbxIndex] = useState(0);
   const [uploadingFbx, setUploadingFbx] = useState(false);
+  const [uploadingHouseModel, setUploadingHouseModel] = useState(false);
   const [uploadingImages, setUploadingImages] = useState(false);
   const [uploadingSkyboxes, setUploadingSkyboxes] = useState(false);
   const [previewWeather, setPreviewWeather] = useState<WeatherKey>("sunny");
@@ -179,6 +181,33 @@ export default function EditProductPage() {
     } catch (err) {
       console.error('persistSkyboxes error:', err);
       setMessage(`Warning: skyboxes saved locally but failed to persist: ${String((err as any)?.message || err)}`);
+    }
+  };
+
+  const persistHouseModel = async (houseModelUrl: string | null) => {
+    try {
+      const res = await fetch(`/api/products/${productId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: JSON.stringify(currentAdmin || {})
+        },
+        body: JSON.stringify({ house_model_url: houseModelUrl || null }),
+      });
+
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error || `Failed to persist house model (${res.status})`);
+      }
+
+      const j = await res.json().catch(() => null);
+      if (j?.product) {
+        setOriginalProduct((prev) => ({ ...(prev || {} as any), ...j.product } as Product));
+        setProduct((prev) => ({ ...(prev || {} as any), ...j.product } as Product));
+      }
+    } catch (err) {
+      console.error('persistHouseModel error:', err);
+      setMessage(`Warning: house model saved locally but failed to persist: ${String((err as any)?.message || err)}`);
     }
   };
 
@@ -808,6 +837,78 @@ export default function EditProductPage() {
     });
   };
 
+  const handleHouseModelUpload = async (file: File) => {
+    if (!currentAdmin || !product) return;
+
+    if (!isAllowed3DFile(file)) {
+      setMessage(
+        `Unsupported house model file. Allowed: ${ALLOWED_3D_EXTENSIONS.map((x) => `.${x}`).join(", ")}`
+      );
+      return;
+    }
+
+    setUploadingHouseModel(true);
+    setMessage('Uploading house model...');
+
+    try {
+      const url = await uploadFile(file, 'house-models', productId);
+      await handleChange('house_model_url', url);
+      await persistHouseModel(url);
+
+      await logActivity({
+        admin_id: currentAdmin.id,
+        admin_name: currentAdmin.username,
+        action: 'upload',
+        entity_type: 'house_3d_model_file',
+        entity_id: product.id,
+        page: 'UpdateProducts',
+        details: `Uploaded house model for "${product.name}": ${file.name}`,
+        metadata: {
+          fileName: file.name,
+          fileSize: file.size,
+          houseModelUrl: url,
+          productName: product.name,
+          productId: product.id,
+          adminAccount: currentAdmin.username,
+          timestamp: new Date().toISOString()
+        }
+      });
+
+      setMessage('House model uploaded successfully');
+      setTimeout(() => setMessage(''), 2500);
+    } catch (error) {
+      console.error('House model upload error:', error);
+      setMessage('Error uploading house model');
+    } finally {
+      setUploadingHouseModel(false);
+    }
+  };
+
+  const handleRemoveHouseModel = async () => {
+    if (!currentAdmin || !product || !product.house_model_url) return;
+
+    const removed = product.house_model_url;
+    await handleChange('house_model_url', null);
+    await persistHouseModel(null);
+
+    await logActivity({
+      admin_id: currentAdmin.id,
+      admin_name: currentAdmin.username,
+      action: 'delete',
+      entity_type: 'house_3d_model_file',
+      entity_id: product.id,
+      page: 'UpdateProducts',
+      details: `Removed house model from "${product.name}"`,
+      metadata: {
+        removedUrl: removed,
+        productName: product.name,
+        productId: product.id,
+        adminAccount: currentAdmin.username,
+        timestamp: new Date().toISOString()
+      }
+    });
+  };
+
   // Enhanced FBX file upload handler
   const handleFbxUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -1039,6 +1140,7 @@ export default function EditProductPage() {
                 initialIndex={currentFbxIndex}
                 weather={previewWeather}
                 frameFinish={materialToFrameFinish(product.material)}
+                houseModelUrl={product.house_model_url || undefined}
                 skyboxes={product.skyboxes || null}
                 productDimensions={{
                   width: product.width ?? null,
@@ -1209,6 +1311,56 @@ export default function EditProductPage() {
           <h2 className="text-lg font-semibold text-gray-900 mb-4">
             3D Models Management ({currentFbxUrls.length} files)
           </h2>
+
+          <div className="mb-6 p-4 bg-gray-50 border rounded-lg">
+            <h3 className="text-md font-semibold text-gray-900 mb-2">House Context Model</h3>
+            <div className="text-sm text-gray-500 mb-3">
+              Optional: this model is shown on the website 3D viewer as the house context for the product.
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <label className="px-3 py-2 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 cursor-pointer transition-colors">
+                {product.house_model_url ? 'Replace House Model' : 'Upload House Model'}
+                <input
+                  type="file"
+                  accept=".fbx,.glb,.gltf"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleHouseModelUpload(f);
+                  }}
+                />
+              </label>
+
+              <button
+                type="button"
+                onClick={handleRemoveHouseModel}
+                disabled={!product.house_model_url || uploadingHouseModel}
+                className="px-3 py-2 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                Remove
+              </button>
+            </div>
+
+            {uploadingHouseModel && (
+              <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded text-blue-800 text-sm">
+                Uploading house model...
+              </div>
+            )}
+
+            {product.house_model_url ? (
+              <a
+                href={product.house_model_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 underline text-xs break-all"
+              >
+                {product.house_model_url.split('/').pop() || product.house_model_url}
+              </a>
+            ) : (
+              <div className="text-xs text-gray-500">No house model uploaded.</div>
+            )}
+          </div>
           
           <div className="mb-4">
             <label className="block font-medium mb-1 text-black">Upload New 3D Model Files (.fbx, .glb, .gltf)</label>

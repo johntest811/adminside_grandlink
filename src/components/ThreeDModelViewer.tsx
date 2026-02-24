@@ -41,6 +41,7 @@ type WeatherMaterialSnapshot = {
 
 export type ThreeDModelViewerProps = {
   modelUrls: string[];
+  houseModelUrl?: string | null;
   initialIndex?: number;
   weather: WeatherKey;
   frameFinish?: FrameFinish;
@@ -104,6 +105,7 @@ function parseDimensionToMm(value: unknown, defaultUnits: ModelUnits): number | 
 
 export default function ThreeDModelViewer({
   modelUrls,
+  houseModelUrl,
   initialIndex,
   weather,
   frameFinish: frameFinishProp = "default",
@@ -156,6 +158,11 @@ export default function ThreeDModelViewer({
   }, [initialIndex, validUrls.length]);
 
   const currentUrl = validUrls[currentFbxIndex] || validUrls[0] || "";
+  const resolvedHouseModelUrl = useMemo(() => {
+    if (!houseModelUrl || typeof houseModelUrl !== "string") return null;
+    const trimmed = houseModelUrl.trim();
+    return trimmed ? trimmed : null;
+  }, [houseModelUrl]);
 
   const productDimsMm = useMemo(() => {
     const defaultUnits = (productDimensions?.units ?? "mm") as ModelUnits;
@@ -1419,8 +1426,9 @@ export default function ThreeDModelViewer({
     (gltfLoader as any).setCrossOrigin?.("anonymous");
 
     let objectURLToRevoke: string | null = null;
+    let houseObjectURLToRevoke: string | null = null;
 
-    const tryFetchAsObjectUrl = async (url: string): Promise<string | null> => {
+    const tryFetchAsObjectUrl = async (url: string, kind: "main" | "house"): Promise<string | null> => {
       const tryUrls: string[] = [url];
       if (url.includes(" ")) tryUrls.push(encodeURI(url));
       for (const u of tryUrls) {
@@ -1428,8 +1436,10 @@ export default function ThreeDModelViewer({
           const res = await fetch(u, { mode: "cors" });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const blob = await res.blob();
-          objectURLToRevoke = URL.createObjectURL(blob);
-          return objectURLToRevoke;
+          const objUrl = URL.createObjectURL(blob);
+          if (kind === "main") objectURLToRevoke = objUrl;
+          if (kind === "house") houseObjectURLToRevoke = objUrl;
+          return objUrl;
         } catch {
           // try next
         }
@@ -1437,108 +1447,141 @@ export default function ThreeDModelViewer({
       return null;
     };
 
-    const loadModel = async () => {
-      const ext = modelExt;
+    const loadObjectFromUrl = async (url: string, kind: "main" | "house"): Promise<THREE.Object3D> => {
+      const ext = getUrlExtension(url);
 
-      const loadAsGLTF = (url: string) =>
-        new Promise<void>((resolve, reject) => {
+      if (ext === "gltf") {
+        return await new Promise<THREE.Object3D>((resolve, reject) => {
+          try {
+            const base = new URL(url, window.location.href);
+            base.search = "";
+            base.hash = "";
+            base.pathname = base.pathname.slice(0, base.pathname.lastIndexOf("/") + 1);
+            manager.setURLModifier((requested) => {
+              if (!requested) return requested;
+              const lower = requested.toLowerCase();
+              if (lower.startsWith("data:") || lower.startsWith("blob:") || lower.startsWith("http://") || lower.startsWith("https://")) return requested;
+              try {
+                return new URL(requested, base).toString();
+              } catch {
+                return requested;
+              }
+            });
+          } catch {}
+
           gltfLoader.load(
             url,
             (gltf: any) => {
               const object = gltf?.scene as THREE.Object3D | undefined;
-              if (!object) {
-                reject(new Error("Missing gltf.scene"));
-                return;
-              }
-              handleLoaded(object);
-              resolve();
+              if (!object) return reject(new Error("Missing gltf.scene"));
+              resolve(object);
             },
             undefined,
             reject
           );
         });
-
-      const loadAsFBX = (url: string) =>
-        new Promise<void>((resolve, reject) => {
-          fbxLoader.load(
-            url,
-            (object) => {
-              handleLoaded(object);
-              resolve();
-            },
-            undefined,
-            reject
-          );
-        });
-
-      if (ext === "gltf") {
-        try {
-          const base = new URL(currentUrl, window.location.href);
-          base.search = "";
-          base.hash = "";
-          base.pathname = base.pathname.slice(0, base.pathname.lastIndexOf("/") + 1);
-          manager.setURLModifier((requested) => {
-            if (!requested) return requested;
-            const lower = requested.toLowerCase();
-            if (
-              lower.startsWith("data:") ||
-              lower.startsWith("blob:") ||
-              lower.startsWith("http://") ||
-              lower.startsWith("https://")
-            )
-              return requested;
-            try {
-              return new URL(requested, base).toString();
-            } catch {
-              return requested;
-            }
-          });
-        } catch {}
-
-        try {
-          await loadAsGLTF(currentUrl);
-        } catch (err) {
-          handleError(err);
-        }
-        return;
       }
 
-      let loadUrl = currentUrl;
+      let loadUrl = url;
       if (ext === "fbx" || ext === "glb") {
-        const objUrl = await tryFetchAsObjectUrl(currentUrl);
+        const objUrl = await tryFetchAsObjectUrl(url, kind);
         if (objUrl) loadUrl = objUrl;
       }
 
       if (ext === "fbx") {
-        try {
-          await loadAsFBX(loadUrl);
-        } catch (err) {
-          handleError(err);
-        }
-        return;
+        return await new Promise<THREE.Object3D>((resolve, reject) => {
+          fbxLoader.load(loadUrl, resolve, undefined, reject);
+        });
       }
 
       if (ext === "glb") {
-        try {
-          await loadAsGLTF(loadUrl);
-        } catch (err) {
-          handleError(err);
-        }
-        return;
+        return await new Promise<THREE.Object3D>((resolve, reject) => {
+          gltfLoader.load(
+            loadUrl,
+            (gltf: any) => {
+              const object = gltf?.scene as THREE.Object3D | undefined;
+              if (!object) return reject(new Error("Missing gltf.scene"));
+              resolve(object);
+            },
+            undefined,
+            reject
+          );
+        });
       }
 
+      throw new Error(`Unsupported 3D model type: .${ext || "?"}`);
+    };
+
+    const addHouseContextModel = async () => {
+      if (!resolvedHouseModelUrl) return;
       try {
-        const objUrl = await tryFetchAsObjectUrl(currentUrl);
-        const candidate = objUrl || currentUrl;
-        await loadAsFBX(candidate);
-      } catch {
-        try {
-          const objUrl = await tryFetchAsObjectUrl(currentUrl);
-          const candidate = objUrl || currentUrl;
-          await loadAsGLTF(candidate);
-        } catch (err) {
-          handleError(err instanceof Error ? err : new Error(`Unsupported 3D model type: .${ext || "?"}`));
-        }
+        const houseObject = await loadObjectFromUrl(resolvedHouseModelUrl, "house");
+
+        houseObject.traverse((child: any) => {
+          if (!child?.isMesh) return;
+          child.castShadow = false;
+          child.receiveShadow = true;
+          const mats = Array.isArray(child.material) ? child.material : [child.material];
+          mats.forEach((mat: any) => {
+            if (!mat) return;
+            try {
+              mat.side = THREE.DoubleSide;
+            } catch {}
+            try {
+              mat.needsUpdate = true;
+            } catch {}
+          });
+        });
+
+        const rawBox = new THREE.Box3().setFromObject(houseObject);
+        const rawSize = rawBox.getSize(new THREE.Vector3());
+        const rawCenter = rawBox.getCenter(new THREE.Vector3());
+        const maxDimension = Math.max(rawSize.x, rawSize.y, rawSize.z);
+        if (!Number.isFinite(maxDimension) || maxDimension <= 0) return;
+
+        const houseGroup = new THREE.Group();
+        houseObject.position.set(-rawCenter.x, -rawBox.min.y, -rawCenter.z);
+        houseGroup.add(houseObject);
+
+        const targetSize = 260;
+        const scale = targetSize / maxDimension;
+        houseGroup.scale.setScalar(scale);
+        houseGroup.position.set(0, 0, 0);
+        scene.add(houseGroup);
+
+        const houseBounds = new THREE.Box3().setFromObject(houseGroup);
+        const combined = modelBounds ? modelBounds.clone().union(houseBounds) : houseBounds.clone();
+        modelBounds = combined.clone();
+
+        const size = combined.getSize(new THREE.Vector3());
+        const center = combined.getCenter(new THREE.Vector3());
+        const span = Math.max(size.x, size.z);
+
+        const floorSize = Math.max(180, span * 2.4);
+        groundPlane.scale.set(floorSize, floorSize, 1);
+        groundPlane.position.y = combined.min.y - Math.max(0.02, size.y * 0.002);
+        updateGroundRef.current?.();
+
+        const biggest = Math.max(size.x, size.y, size.z);
+        const distance = biggest * 1.4;
+        camera.position.set(distance * 0.5, distance * 0.35, distance * 0.8);
+        camera.lookAt(center);
+        controls.target.copy(center);
+        controls.minDistance = distance * 0.28;
+        controls.maxDistance = distance * 4.2;
+        controls.update();
+      } catch (err) {
+        console.error("House context model load error:", err);
+      }
+    };
+
+    const loadModel = async () => {
+      try {
+        const object = await loadObjectFromUrl(currentUrl, "main");
+        handleLoaded(object);
+        await addHouseContextModel();
+      } catch (err) {
+        handleError(err);
       }
     };
 
@@ -1776,6 +1819,11 @@ export default function ThreeDModelViewer({
           URL.revokeObjectURL(objectURLToRevoke);
         } catch {}
       }
+      if (houseObjectURLToRevoke) {
+        try {
+          URL.revokeObjectURL(houseObjectURLToRevoke);
+        } catch {}
+      }
       try {
         skyboxTex?.dispose();
       } catch {}
@@ -1786,7 +1834,7 @@ export default function ThreeDModelViewer({
       }
       while (container && container.firstChild) container.removeChild(container.firstChild);
     };
-  }, [currentUrl, productDimsMm, usesProductDimensions, width, height]);
+  }, [currentUrl, productDimsMm, usesProductDimensions, width, height, resolvedHouseModelUrl, modelExt]);
 
   if (!validUrls.length) {
     return (

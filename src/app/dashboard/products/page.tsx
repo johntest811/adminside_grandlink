@@ -46,6 +46,8 @@ export default function ProductsAdminPage() {
   const [inventory, setInventory] = useState("");
   const [images, setImages] = useState<File[]>([]);
   const [fbxFiles, setFbxFiles] = useState<File[]>([]);
+  const [houseModelFile, setHouseModelFile] = useState<File | null>(null);
+  const [houseModelPreviewUrl, setHouseModelPreviewUrl] = useState<string | null>(null);
   const [modelPreviewUrls, setModelPreviewUrls] = useState<string[]>([]);
   const [skyboxFiles, setSkyboxFiles] = useState<Partial<Record<WeatherKey, File | null>>>({});
   const [skyboxPreviewUrls, setSkyboxPreviewUrls] = useState<Partial<Record<WeatherKey, string>>>({});
@@ -81,8 +83,11 @@ export default function ProductsAdminPage() {
       try {
         Object.values(skyboxPreviewUrlsRef.current).forEach((u) => u && URL.revokeObjectURL(u));
       } catch {}
+      try {
+        if (houseModelPreviewUrl) URL.revokeObjectURL(houseModelPreviewUrl);
+      } catch {}
     };
-  }, []);
+  }, [houseModelPreviewUrl]);
 
   useEffect(() => {
     const urls = fbxFiles.map((f) => URL.createObjectURL(f));
@@ -299,6 +304,85 @@ export default function ProductsAdminPage() {
     }
   };
 
+  const handleHouseModelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] || null;
+    if (!file) return;
+
+    if (!isAllowed3DFile(file)) {
+      setMessage(
+        `Unsupported house model file. Allowed: ${ALLOWED_3D_EXTENSIONS.map((x) => `.${x}`).join(", ")}`
+      );
+      return;
+    }
+
+    setHouseModelFile(file);
+    setHouseModelPreviewUrl((prev) => {
+      if (prev) {
+        try {
+          URL.revokeObjectURL(prev);
+        } catch {}
+      }
+      try {
+        return URL.createObjectURL(file);
+      } catch {
+        return null;
+      }
+    });
+
+    if (currentAdmin) {
+      try {
+        await logActivity({
+          admin_id: currentAdmin.id,
+          admin_name: currentAdmin.username,
+          action: 'upload',
+          entity_type: 'house_3d_model_file',
+          details: `Selected house model file: ${file.name}`,
+          page: 'products',
+          metadata: {
+            fileName: file.name,
+            fileSize: file.size,
+            fileType: getFileExtension(file.name),
+            adminAccount: currentAdmin.username
+          }
+        });
+      } catch (error) {
+        console.error("Failed to log house model upload:", error);
+      }
+    }
+  };
+
+  const removeHouseModel = async () => {
+    const previous = houseModelFile;
+    setHouseModelFile(null);
+    setHouseModelPreviewUrl((prev) => {
+      if (prev) {
+        try {
+          URL.revokeObjectURL(prev);
+        } catch {}
+      }
+      return null;
+    });
+
+    if (currentAdmin && previous) {
+      try {
+        await logActivity({
+          admin_id: currentAdmin.id,
+          admin_name: currentAdmin.username,
+          action: 'delete',
+          entity_type: 'house_3d_model_file',
+          details: `Removed house model file: ${previous.name}`,
+          page: 'products',
+          metadata: {
+            fileName: previous.name,
+            adminAccount: currentAdmin.username
+          }
+        });
+      } catch (error) {
+        console.error("Failed to log house model removal:", error);
+      }
+    }
+  };
+
   const handleSkyboxSelect = async (weather: WeatherKey, file: File | null) => {
     setSkyboxFiles((prev) => ({ ...prev, [weather]: file }));
 
@@ -431,6 +515,7 @@ export default function ProductsAdminPage() {
             hasFbx: fbxFiles.length > 0,
             hasSkyboxes: WEATHER_KEYS.some((k) => !!skyboxFiles[k]),
             fbxCount: fbxFiles.length,
+            hasHouseModel: !!houseModelFile,
             adminAccount: currentAdmin.username
           }
         });
@@ -461,6 +546,16 @@ export default function ProductsAdminPage() {
           console.log(`✅ 3D model ${i + 1} uploaded:`, url);
         } catch (uploadError) {
           console.error(`Failed to upload 3D model ${i + 1}:`, uploadError);
+        }
+      }
+
+      let houseModelUrl: string | null = null;
+      if (houseModelFile) {
+        try {
+          houseModelUrl = await uploadFile(houseModelFile, 'house-models');
+          console.log("✅ House model uploaded:", houseModelUrl);
+        } catch (uploadError) {
+          console.error("Failed to upload house model:", uploadError);
         }
       }
 
@@ -495,6 +590,7 @@ export default function ProductsAdminPage() {
         images: imageUrls,
         fbx_url: fbxUploadedUrls.length > 0 ? fbxUploadedUrls[0] : null,
         fbx_urls: fbxUploadedUrls.length > 0 ? fbxUploadedUrls : null,
+        house_model_url: houseModelUrl,
         skyboxes: Object.keys(skyboxes).length ? skyboxes : null
       };
 
@@ -583,6 +679,8 @@ export default function ProductsAdminPage() {
       setInventory("0");
       setImages([]);
       setFbxFiles([]);
+      setHouseModelFile(null);
+      setHouseModelPreviewUrl(null);
       setSkyboxFiles({});
       setSkyboxPreviewUrls({});
       setHeight("");
@@ -681,6 +779,7 @@ export default function ProductsAdminPage() {
                   initialIndex={currentFbxIndex}
                   weather={previewWeather}
                   frameFinish="matteBlack"
+                  houseModelUrl={houseModelPreviewUrl || undefined}
                   skyboxes={skyboxPreviewUrls}
                   productDimensions={{
                     width: width || null,
@@ -964,6 +1063,51 @@ export default function ProductsAdminPage() {
                   : `Open 3D Viewer (${fbxFiles.length} ${fbxFiles.length === 1 ? 'model' : 'models'})`
                 }
               </button>
+
+              <div className="mt-6 border-t border-gray-200 pt-4">
+                <h3 className="text-md font-semibold text-[#233a5e] mb-2">
+                  House Context Model (.fbx, .glb, .gltf)
+                </h3>
+                <div className="text-xs text-gray-600 mb-2">
+                  Optional: upload one 3D house model where this product should be previewed on the website.
+                </div>
+
+                <label
+                  htmlFor="house-model-upload"
+                  className="flex flex-col items-center justify-center w-full h-16 border-2 border-dashed border-gray-400 rounded-lg cursor-pointer bg-[#e7eaef] hover:bg-gray-200 mb-2"
+                >
+                  <span className="text-sm text-[#233a5e]">
+                    {houseModelFile ? "Replace House Model" : "+ Add House Model"}
+                  </span>
+                </label>
+                <input
+                  id="house-model-upload"
+                  type="file"
+                  accept=".fbx,.glb,.gltf"
+                  onChange={handleHouseModelUpload}
+                  className="hidden"
+                />
+
+                {houseModelFile && (
+                  <div className="flex items-center justify-between p-2 bg-gray-100 rounded text-xs border">
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate font-medium text-[#233a5e]" title={houseModelFile.name}>
+                        {houseModelFile.name}
+                      </div>
+                      <div className="text-gray-500">
+                        {(houseModelFile.size / (1024 * 1024)).toFixed(2)} MB
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={removeHouseModel}
+                      className="px-2 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700 ml-2"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
+              </div>
 
               {/* Skyboxes (per weather) */}
               <div className="mt-6">

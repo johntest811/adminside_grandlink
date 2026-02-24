@@ -73,6 +73,10 @@ export async function POST(req: Request) {
         delete fallbackBody.skyboxes;
         changed = true;
       }
+      if (msg.includes("house_model_url")) {
+        delete fallbackBody.house_model_url;
+        changed = true;
+      }
       if (changed) {
         const retry = await supabaseAdmin
           .from("products")
