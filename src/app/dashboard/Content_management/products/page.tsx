@@ -2,12 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { logActivity } from "@/app/lib/activity";
+import { supabase } from "../../../Clients/Supabase/SupabaseClients";
 
 type ProductPageHero = {
   title: string;
   subtitle: string;
   image: string;
 };
+
+const BUCKET_NAME = "uploads";
 
 export default function AdminProductsPageContent() {
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
@@ -19,6 +22,7 @@ export default function AdminProductsPageContent() {
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   useEffect(() => {
     const loadAdmin = async () => {
@@ -138,6 +142,53 @@ export default function AdminProductsPageContent() {
     }
   };
 
+  const uploadToBucket = async (file: File) => {
+    const safeName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+    const filePath = `products-hero/${Date.now()}_${safeName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(filePath, file, { upsert: true, contentType: file.type });
+
+    if (uploadError) throw uploadError;
+
+    const base = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
+    return `${base}/storage/v1/object/public/${BUCKET_NAME}/${encodeURIComponent(filePath)}`;
+  };
+
+  const handleHeroImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !currentAdmin) return;
+
+    setUploadingImage(true);
+    try {
+      const url = await uploadToBucket(file);
+      setHeroContent((prev) => ({ ...prev, image: url }));
+
+      await logActivity({
+        admin_id: currentAdmin.id,
+        admin_name: currentAdmin.username,
+        action: "upload",
+        entity_type: "products_page_hero_image",
+        details: `Admin ${currentAdmin.username} uploaded Products page hero image: ${file.name}`,
+        page: "Products",
+        metadata: {
+          fileName: file.name,
+          fileSize: file.size,
+          imageUrl: url,
+          adminAccount: currentAdmin.username,
+          adminId: currentAdmin.id,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    } catch (error: any) {
+      alert(error?.message || "Failed to upload image");
+    } finally {
+      setUploadingImage(false);
+      if (e.target) e.target.value = "";
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 p-6">
@@ -180,14 +231,35 @@ export default function AdminProductsPageContent() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Background Image URL</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Background Image Upload</label>
             <input
-              type="text"
-              value={heroContent.image}
-              onChange={(e) => setHeroContent((prev) => ({ ...prev, image: e.target.value }))}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
-              placeholder="https://..."
+              type="file"
+              accept="image/*"
+              onChange={handleHeroImageUpload}
+              disabled={uploadingImage}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900 file:mr-3 file:rounded file:border-0 file:bg-gray-100 file:px-3 file:py-2"
             />
+            <p className="mt-1 text-xs text-gray-500">
+              Upload from your computer. The file will be stored in Supabase and linked automatically.
+            </p>
+            {heroContent.image ? (
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  type="text"
+                  value={heroContent.image}
+                  readOnly
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs text-gray-700 bg-gray-50"
+                />
+                <button
+                  type="button"
+                  onClick={() => setHeroContent((prev) => ({ ...prev, image: "" }))}
+                  className="px-3 py-2 text-xs rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
+                >
+                  Clear
+                </button>
+              </div>
+            ) : null}
+            {uploadingImage ? <div className="mt-2 text-xs text-gray-500">Uploading image...</div> : null}
           </div>
         </div>
 

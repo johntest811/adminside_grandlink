@@ -65,6 +65,7 @@ export default function AdminAboutPage() {
     if (currentAdmin) {
       fetchAbout();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAdmin]);
 
   const fetchAbout = async () => {

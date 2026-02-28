@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { adminNotificationService } from "@/utils/notificationHelper";
 
 type UserItem = {
@@ -38,11 +38,6 @@ type UserItem = {
   customer?: { name?: string|null; email?: string|null; phone?: string|null };
 };
 
-type PaymentModalData = {
-  item: UserItem;
-  type: 'approve_balance' | 'request_balance' | 'refund';
-};
-
 export default function OrdersPage() {
   const [reservations, setReservations] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,8 +46,6 @@ export default function OrdersPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
-  const [showPaymentModal, setShowPaymentModal] = useState<PaymentModalData | null>(null);
-  const [paymentNotes, setPaymentNotes] = useState('');
   // removed inline edit id in favor of modal
   // New: edit payment modal state
   const [editPaymentItem, setEditPaymentItem] = useState<UserItem | null>(null);
@@ -133,24 +126,6 @@ export default function OrdersPage() {
       const previousStage = String(item?.meta?.cancel_prev_stage || item?.order_status || item?.order_progress || item?.status || 'approved');
       const normalized = newStatus === 'reject_cancellation' ? mapStatusForDB(previousStage) : mapStatusForDB(newStatus);
 
-      const progressMap: Record<string, string> = {
-        pending_payment: "awaiting_payment",
-        reserved: "payment_confirmed",
-        approved: "in_production",
-        in_production: "in_production",
-        quality_check: "quality_check",
-        start_packaging: "packaging",
-        packaging: "packaging",
-        ready_for_delivery: "ready_for_delivery",
-        out_for_delivery: "out_for_delivery",
-        completed: "delivered",
-        cancelled: "cancelled",
-        pending_cancellation: "pending_cancellation",
-        pending_balance_payment: "balance_due",
-        // NEW
-        approve_cancellation: "cancelled",
-      };
-
       const computedOrderStatus =
         newStatus === 'approve_cancellation'
           ? 'cancelled'
@@ -217,106 +192,6 @@ export default function OrdersPage() {
     }
   };
 
-  // ONLY update user_items for payment actions
-  const handlePaymentAction = async (action: 'approve_balance' | 'request_balance' | 'refund') => {
-    if (!showPaymentModal || !currentAdmin) return;
-    const { item } = showPaymentModal;
-    setUpdatingStatus(item.id);
-
-    try {
-      const unitPrice = item.price ?? item.meta?.price ?? 0;
-      const totalPrice = unitPrice * item.quantity;
-      const reservationFee = item.reservation_fee ?? item.meta?.reservation_fee ?? 500;
-      const balanceDue = Math.max(totalPrice - reservationFee, 0);
-      const baseNoteBy = currentAdmin.username || currentAdmin.name || 'admin';
-
-      let updates: any = { updated_at: new Date().toISOString() };
-      let notifyStatus = item.status;
-
-      if (action === 'approve_balance') {
-        updates = {
-          ...updates,
-          balance_payment_status: 'completed',
-          total_paid: totalPrice,
-          status: 'approved',                  // allowed
-          order_status: 'approved',
-          meta: {
-            ...item.meta,
-            payment_stage: 'fully_paid',
-            admin_payment_notes: paymentNotes,
-            balance_amount_received: balanceDue,
-            balance_payment_approved_by: baseNoteBy,
-            balance_payment_approved_at: new Date().toISOString(),
-            payment_history: [
-              ...(item.meta?.payment_history || []),
-              {
-                type: 'balance_payment',
-                amount: balanceDue,
-                approved_by: baseNoteBy,
-                approved_at: new Date().toISOString(),
-                notes: paymentNotes,
-              },
-            ],
-          },
-        };
-        notifyStatus = 'approved';
-      } else if (action === 'request_balance') {
-        updates = {
-          ...updates,
-          status: 'reserved',                   // keep valid status
-          order_status: 'pending_balance_payment', // fine-grained for UI/email
-          balance_payment_status: 'pending',
-          meta: {
-            ...item.meta,
-            payment_stage: 'balance_due',
-            admin_payment_notes: paymentNotes,
-            balance_amount_due: balanceDue,
-            balance_payment_requested_by: baseNoteBy,
-            balance_payment_requested_at: new Date().toISOString(),
-            balance_payment_link: `${process.env.NEXT_PUBLIC_USER_WEBSITE_URL}/payment/balance?order_id=${item.id}`,
-          },
-        };
-        notifyStatus = 'pending_balance_payment';
-      } else if (action === 'refund') {
-        const refundAmount = item.total_paid ?? reservationFee;
-        updates = {
-          ...updates,
-          status: 'cancelled',                  // allowed
-          order_status: 'cancelled',
-          payment_status: 'refunded',
-          meta: {
-            ...item.meta,
-            refund_status: 'processing',
-            refund_amount: refundAmount,
-            refund_reason: paymentNotes,
-            refund_processed_by: baseNoteBy,
-            refund_processed_at: new Date().toISOString(),
-          },
-        };
-        notifyStatus = 'cancelled';
-      }
-
-      const updatedItem = await updateOrderViaApi({ itemId: item.id, updates });
-
-      await adminNotificationService.notifyOrderStatusUpdate(
-        item.id,
-        item.user_id,
-        notifyStatus,
-        baseNoteBy,
-        item.meta?.product_name || ''
-      );
-
-      setReservations(prev => prev.map(r => (r.id === item.id ? { ...r, ...updatedItem } : r)));
-      setShowPaymentModal(null);
-      setPaymentNotes('');
-      await fetchReservations();
-    } catch (err: any) {
-      console.error('Error processing payment action:', err);
-      alert(`Error: ${err.message}`);
-    } finally {
-      setUpdatingStatus(null);
-    }
-  };
 
   const getStatusColor = (status: string) =>
     ({
@@ -332,22 +207,6 @@ export default function OrdersPage() {
       pending_cancellation: 'bg-orange-100 text-orange-800',
       cancelled: 'bg-red-100 text-red-800',
     }[status] || 'bg-gray-100 text-gray-800');
-
-  const getPaymentInfo = (item: UserItem) => {
-    const unitPrice = item.price ?? item.meta?.price ?? 0;
-    const totalPrice = unitPrice * item.quantity;
-    const reservationFee = item.reservation_fee ?? item.meta?.reservation_fee ?? 500;
-    const balance = Math.max(totalPrice - reservationFee, 0);
-    const totalPaid = item.total_paid ?? (item.payment_status === 'completed' ? reservationFee : 0);
-    return {
-      totalPrice,
-      reservationFee,
-      balance,
-      totalPaid,
-      isFullyPaid: totalPaid >= totalPrice,
-      hasReservationFee: item.payment_status === 'completed',
-    };
-  };
 
   // Current UI stage (prefers order_status/order_progress)
   const getStage = (r: UserItem) => r.order_status || r.order_progress || r.status;

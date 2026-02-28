@@ -90,7 +90,6 @@ export default function ReportsPage() {
   const kpiDoughnutRef = useRef<any>(null);        // NEW
   const ordersStatusRef = useRef<any>(null);       // NEW
   const categoryRevenueRef = useRef<any>(null);    // NEW
-  const completedOrdersRef = useRef<any>(null);    // NEW for section reference
 
   // New: daily chart series
   const [dailySeries, setDailySeries] = useState<DailySeries>({
@@ -111,6 +110,7 @@ export default function ReportsPage() {
       // Load completed orders list with details (server API, service role)
       fetchCompleted();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAdmin, dateRange]);
 
   const loadCurrentAdmin = async () => {
@@ -322,7 +322,7 @@ export default function ReportsPage() {
       const reportPeriod = `${dateRange.startDate} to ${dateRange.endDate}`;
 
       // Helper: load public logo (AVIF) and convert to PNG data URL for jsPDF
-      const loadImageAsPngDataUrl = (src: string) =>
+      const loadImageAsPngDataUrl = () =>
         new Promise<{ dataUrl: string; width: number; height: number }>((resolve, reject) => {
           const img = new Image();
           img.crossOrigin = "anonymous";
@@ -343,7 +343,7 @@ export default function ReportsPage() {
       // Try to place the logo on the right side of the header
       let headerBottomY = 0;
       try {
-        const logo = await loadImageAsPngDataUrl("/ge-logo.avif");
+        const logo = await loadImageAsPngDataUrl();
         const pageWidth = (pdf as any).internal.pageSize.getWidth();
         const margin = 20;
         const imgW = 40; // display width in pdf units
@@ -352,7 +352,7 @@ export default function ReportsPage() {
         const imgY = 15; // a little lower to add more top space
         pdf.addImage(logo.dataUrl, "PNG", imgX, imgY, imgW, imgH);
         headerBottomY = imgY + imgH;
-      } catch (e) {
+      } catch {
         // If logo fails to load, continue without blocking PDF generation
         headerBottomY = 30;
       }

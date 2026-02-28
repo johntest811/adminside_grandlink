@@ -500,128 +500,6 @@ export default function EditProductPage() {
     }
   };
 
-  const handleFileUpload = async (
-    e: React.ChangeEvent<HTMLInputElement>,
-    field: keyof Product
-  ) => {
-    if (!e.target.files || !product || !currentAdmin) return;
-    const file = e.target.files[0];
-
-    const safeFileName = file.name.replace(/[^a-z0-9.\-_]/gi, "_");
-    const objectPath = `${field}/${product.id}_${safeFileName}`;
-
-    try {
-      const { data, error } = await supabase.storage
-        .from("products")
-        .upload(objectPath, file, { upsert: true });
-
-      if (error) {
-        console.error("upload error", error);
-        setMessage(`Error uploading file: ${error.message}`);
-        
-        // Log upload error
-        await logActivity({
-          admin_id: currentAdmin.id,
-          admin_name: currentAdmin.username,
-          action: "upload",
-          entity_type: "file_error",
-          entity_id: product.id,
-          page: "UpdateProducts",
-          details: `Admin ${currentAdmin.username} failed to upload ${field} for "${product.name}": ${error.message}`,
-          metadata: {
-            productName: product.name,
-            productId: product.id,
-            fieldType: field,
-            fileName: file.name,
-            fileSize: file.size,
-            error: error.message,
-            adminAccount: currentAdmin.username,
-            adminId: currentAdmin.id
-          }
-        });
-        return;
-      }
-
-      const { data: urlData } = await supabase.storage
-        .from("products")
-        .getPublicUrl(data.path);
-
-      const url = urlData.publicUrl;
-      const oldUrl = product[field];
-      
-      await handleChange(field, url);
-      setMessage(`${field} uploaded successfully!`);
-
-      // Log successful file upload
-      await logActivity({
-        admin_id: currentAdmin.id,
-        admin_name: currentAdmin.username,
-        action: "upload",
-        entity_type: "product_file",
-        entity_id: product.id,
-        page: "UpdateProducts",
-        details: `Admin ${currentAdmin.username} uploaded ${field} for product "${product.name}": ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB)`,
-        metadata: {
-          productName: product.name,
-          productId: product.id,
-          fieldType: field,
-          fileName: file.name,
-          fileSize: file.size,
-          fileSizeMB: (file.size / 1024 / 1024).toFixed(2),
-          fileType: file.type,
-          oldUrl: oldUrl,
-          newUrl: url,
-          adminAccount: currentAdmin.username,
-          adminId: currentAdmin.id,
-          uploadPath: data.path,
-          timestamp: new Date().toISOString()
-        }
-      });
-
-      // CREATE NOTIFICATION FOR FILE UPLOAD
-      try {
-        const fileType = field.toString().includes('image') ? 'image' : field.toString().includes('fbx') ? 'fbx' : 'file';
-        await notifyProductFileUploaded(
-          product.name, 
-          currentAdmin.username, 
-          fileType, 
-          file.name
-        );
-      } catch (notifyError) {
-        console.warn("Failed to create file upload notification:", notifyError);
-      }
-
-      // Clear success message after 3 seconds
-      setTimeout(() => setMessage(""), 3000);
-    } catch (err: any) {
-      console.error("upload threw", err);
-      setMessage("Error uploading file: " + (err?.message || String(err)));
-      
-      // Log upload exception
-      if (currentAdmin) {
-        await logActivity({
-          admin_id: currentAdmin.id,
-          admin_name: currentAdmin.username,
-          action: "upload",
-          entity_type: "file_exception",
-          entity_id: product.id,
-          page: "UpdateProducts",
-          details: `Admin ${currentAdmin.username} encountered exception uploading ${field} for "${product.name}": ${err?.message || String(err)}`,
-          metadata: {
-            productName: product.name,
-            productId: product.id,
-            fieldType: field,
-            fileName: file.name,
-            error: err?.message || String(err),
-            adminAccount: currentAdmin.username,
-            adminId: currentAdmin.id,
-            timestamp: new Date().toISOString()
-          }
-        });
-      }
-    }
-  };
-
   // Images management (unlimited)
   const syncLegacyImages = async (imgs: string[]) => {
     // Keep legacy fields in sync for backward compatibility
@@ -1141,6 +1019,7 @@ export default function EditProductPage() {
                 weather={previewWeather}
                 frameFinish={materialToFrameFinish(product.material)}
                 houseModelUrl={product.house_model_url || undefined}
+                productCategory={product?.category ?? product?.type ?? null}
                 skyboxes={product.skyboxes || null}
                 productDimensions={{
                   width: product.width ?? null,

@@ -60,6 +60,7 @@ export default function AdminShowroomsPage() {
     if (currentAdmin) {
       fetchShowrooms();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAdmin]);
 
   // ADD: page view activity

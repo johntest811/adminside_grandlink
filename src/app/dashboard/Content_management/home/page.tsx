@@ -682,16 +682,6 @@ export default function HomeEditor() {
     await logContentChange('about', field, oldValue, value);
   };
 
-  const handleServicesImageChange = async (index: number, value: string) => {
-    const oldValue = content.services?.images?.[index] || '';
-    
-    const imgs = (content.services?.images || []).slice();
-    imgs[index] = value;
-    setContent({ ...content, services: { ...(content.services || {}), images: imgs } });
-    
-    await logContentChange('services', 'images', oldValue, value, index);
-  };
-
   // form control classes for visible lines
   const formControl = "w-full border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-red-200";
   const formControlSmall = "border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-red-200";
@@ -731,9 +721,9 @@ export default function HomeEditor() {
             <div className="flex gap-2 mb-2">
               <input 
                 className={`flex-1 ${formControlSmall}`} 
-                placeholder="Image URL" 
+                placeholder="Choose image from library/upload" 
                 value={s.image || ""} 
-                onChange={(e) => handleCarouselChange(i, 'image', e.target.value)} 
+                readOnly
               />
               <button className="px-2 bg-gray-100 text-black" onClick={() => openImagePicker("carousel", i)}>Choose</button>
             </div>
@@ -779,9 +769,9 @@ export default function HomeEditor() {
             <div className="flex gap-2 mb-2">
               <input 
                 className={`flex-1 ${formControlSmall}`} 
-                placeholder="Image URL" 
+                placeholder="Choose image from library/upload" 
                 value={s.image || ""} 
-                onChange={(e) => handleExploreChange(i, 'image', e.target.value)} 
+                readOnly
               />
               <button className="px-2 bg-gray-100 text-black" onClick={() => openImagePicker("explore", i)}>Choose</button>
             </div>
@@ -821,9 +811,9 @@ export default function HomeEditor() {
             <div className="flex gap-2 mb-2">
               <input 
                 className={`flex-1 ${formControlSmall}`} 
-                placeholder="Image URL" 
+                placeholder="Choose image from library/upload" 
                 value={p.image || ""} 
-                onChange={(e) => handleFeaturedProjectsChange(i, 'image', e.target.value)} 
+                readOnly
               />
               <button className="px-2 bg-gray-100 text-black" onClick={() => openImagePicker("featured_projects", i)}>Choose</button>
             </div>
@@ -862,9 +852,9 @@ export default function HomeEditor() {
             <div className="flex gap-2 mb-2">
               <input
                 className={`flex-1 ${formControlSmall}`}
-                placeholder="Image URL"
+                placeholder="Choose image from library/upload"
                 value={imgItem.image || ""}
-                onChange={(e) => handleFeaturedLongImagesChange(i, 'image', e.target.value)}
+                readOnly
               />
               <button className="px-2 bg-gray-100 text-black" onClick={() => openImagePicker("featured_long_images", i)}>Choose</button>
             </div>
@@ -938,7 +928,7 @@ export default function HomeEditor() {
                 <input 
                   className={`flex-1 ${formControlSmall}`} 
                   value={img || ""} 
-                  onChange={(e) => handleServicesImageChange(i, e.target.value)} 
+                  readOnly
                 />
                 <button className="px-2 bg-gray-100 text-black" onClick={() => openImagePicker("services.images", i)}>Choose</button>
                 <button className="text-black" onClick={() => { 
@@ -967,7 +957,7 @@ export default function HomeEditor() {
             <input 
               className="flex-1" 
               value={content.about?.logo || ""} 
-              onChange={(e) => handleAboutChange('logo', e.target.value)} 
+              readOnly
             />
             <button className="px-2 bg-gray-100 text-black" onClick={() => openImagePicker("about.logo")}>Choose</button>
           </div>

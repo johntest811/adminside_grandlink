@@ -37,7 +37,6 @@ export default function AdminInquiriesPage() {
         if (error) throw error;
         if (mounted) setInquiries(data ?? []);
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.error("load inquiries", err);
       } finally {
         if (mounted) setLoading(false);
@@ -85,7 +84,6 @@ export default function AdminInquiriesPage() {
       if (selected?.id === id) setSelected(null);
       alert("Inquiry deleted");
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.error("delete inquiry", err);
       alert("Could not delete inquiry");
     }

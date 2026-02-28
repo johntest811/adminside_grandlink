@@ -83,6 +83,7 @@ export default function UpdateProductsPage() {
   // Fetch products with enhanced logging
   useEffect(() => {
     fetchProducts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAdmin]);
 
   const fetchProducts = async () => {
@@ -478,7 +479,7 @@ export default function UpdateProductsPage() {
                     src={product.image1 || (product as any).images?.[0]}
                     alt={product.name}
                     className="w-full h-full object-cover"
-                    onError={(e) => {
+                    onError={() => {
                       // Log broken image
                       if (currentAdmin) {
                         logActivity({

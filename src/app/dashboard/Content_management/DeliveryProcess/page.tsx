@@ -58,6 +58,7 @@ export default function AdminDeliveryProcess() {
     if (currentAdmin) {
       fetchSteps();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAdmin]);
 
   const fetchSteps = async () => {

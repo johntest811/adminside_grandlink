@@ -1,11 +1,10 @@
 "use client";
 import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
-import NotificationBell from "@/components/NotificationBell";
 import { logActivity } from "@/app/lib/activity";
 // charts
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, PointElement, LineElement, Tooltip, Legend } from "chart.js";
-import { Bar, Line } from "react-chartjs-2";
+import { Bar } from "react-chartjs-2";
 import { CalendarDays, Clock3 } from "lucide-react";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, PointElement, LineElement, Tooltip, Legend);
@@ -132,10 +131,10 @@ export default function DashboardPage() {
     pendingOrders: 0,
   });
 
-  const [dailySales, setDailySales] = useState<{ date: string; amount: number }[]>([]);
-  const [weeklySales, setWeeklySales] = useState<{ label: string; amount: number }[]>([]);
+  const [, setDailySales] = useState<{ date: string; amount: number }[]>([]);
+  const [, setWeeklySales] = useState<{ label: string; amount: number }[]>([]);
   // New: Orders status summary (last 30 days)
-  const [ordersStatusCounts, setOrdersStatusCounts] = useState<{ successful: number; cancelled: number; pending: number }>({
+  const [, setOrdersStatusCounts] = useState<{ successful: number; cancelled: number; pending: number }>({
     successful: 0,
     cancelled: 0,
     pending: 0,
@@ -283,12 +282,10 @@ export default function DashboardPage() {
       const last30 = new Date(Date.now() - 30*24*60*60*1000);
       const last365 = new Date(Date.now() - 365*24*60*60*1000);
 
-      const { data: sessions } = await supabase
+      await supabase
         .from("payment_sessions")
         .select("amount, status, created_at")
         .gte("created_at", startOfMonth.toISOString());
-
-      const completed = (sessions || []).filter((s: any) => s.status === "completed");
 
       // Daily sales (last 10 days) for the line chart below
       const { data: sessions30 } = await supabase
@@ -412,8 +409,6 @@ export default function DashboardPage() {
         n.setHours(0,0,0,0);
         return n;
       };
-      const ym = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-
       // Aggregate: Daily last 14 days
       const last14: { label: string; count: number }[] = [];
       const last14Status: Array<{ label: string; successful: number; cancelled: number; pending: number }> = [];

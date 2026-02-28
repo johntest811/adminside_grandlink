@@ -44,9 +44,17 @@ export default function DashboardLayout({
   const [adminTheme, setAdminTheme] = useState<"light" | "dark" | "midnight">("light");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [showTaskDropdown, setShowTaskDropdown] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showProfileEdit, setShowProfileEdit] = useState(false);
+  const [editFullName, setEditFullName] = useState("");
+  const [editPosition, setEditPosition] = useState("");
+  const [editProfileImageUrl, setEditProfileImageUrl] = useState("");
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [uploadingProfileImage, setUploadingProfileImage] = useState(false);
   const [myTasks, setMyTasks] = useState<any[]>([]);
   const [loadingMyTasks, setLoadingMyTasks] = useState(false);
   const taskDropdownRef = useRef<HTMLDivElement | null>(null);
+  const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const navButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [collapsedFlyout, setCollapsedFlyout] = useState<{ name: string; top: number } | null>(null);
 
@@ -182,6 +190,9 @@ export default function DashboardLayout({
       if (taskDropdownRef.current && !taskDropdownRef.current.contains(target)) {
         setShowTaskDropdown(false);
       }
+      if (profileMenuRef.current && !profileMenuRef.current.contains(target)) {
+        setShowProfileMenu(false);
+      }
     };
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
@@ -279,6 +290,17 @@ export default function DashboardLayout({
         const { data, error } = await q.maybeSingle<any>();
         if (error) throw error;
 
+        if (data) {
+          try {
+            const fallbackImage = localStorage.getItem(`adminProfileImage:${data.id}`) || "";
+            if (fallbackImage && !data.profile_image_url) {
+              data.profile_image_url = fallbackImage;
+            }
+          } catch {}
+
+          setCurrentAdmin((prev: any) => ({ ...(prev || {}), ...data }));
+        }
+
         const t = (data as any)?.theme;
         if (t === "light" || t === "dark" || t === "midnight") {
           applyTheme(t);
@@ -355,6 +377,95 @@ export default function DashboardLayout({
   };
 
   const handleLogoutClick = () => setShowLogoutConfirm(true); // NEW
+
+  const getAdminInitial = () => {
+    const label = String(currentAdmin?.full_name || currentAdmin?.username || "A").trim();
+    return label.charAt(0).toUpperCase() || "A";
+  };
+
+  const getAdminProfileImage = () => {
+    return String(
+      currentAdmin?.profile_image_url || currentAdmin?.avatar_url || currentAdmin?.image_url || ""
+    ).trim();
+  };
+
+  const openProfileEdit = () => {
+    setEditFullName(String(currentAdmin?.full_name || ""));
+    setEditPosition(String(currentAdmin?.position || "Admin"));
+    setEditProfileImageUrl(getAdminProfileImage());
+    setShowProfileEdit(true);
+    setShowProfileMenu(false);
+  };
+
+  const uploadAdminProfileImage = async (file: File): Promise<string> => {
+    if (!currentAdmin?.id) throw new Error("No admin session found.");
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const path = `admin-profiles/${currentAdmin.id}/${Date.now()}-${safeName}`;
+
+    const { error } = await supabase.storage
+      .from("uploads")
+      .upload(path, file, { upsert: true, contentType: file.type });
+    if (error) throw error;
+
+    const { data } = supabase.storage.from("uploads").getPublicUrl(path);
+    if (!data?.publicUrl) throw new Error("Failed to resolve uploaded image URL.");
+    return data.publicUrl;
+  };
+
+  const onPickAdminProfileImage = async (file: File | null) => {
+    if (!file) return;
+    setUploadingProfileImage(true);
+    try {
+      const publicUrl = await uploadAdminProfileImage(file);
+      setEditProfileImageUrl(publicUrl);
+    } catch (e: any) {
+      alert(`Failed to upload profile image: ${e?.message || e}`);
+    } finally {
+      setUploadingProfileImage(false);
+    }
+  };
+
+  const saveTopNavProfile = async () => {
+    if (!currentAdmin?.id) return;
+    setSavingProfile(true);
+    try {
+      const updates: any = {
+        full_name: editFullName || null,
+        position: editPosition || null,
+        profile_image_url: editProfileImageUrl || null,
+      };
+
+      let { error } = await supabase.from("admins").update(updates).eq("id", currentAdmin.id);
+
+      if (error && String(error.message || "").toLowerCase().includes("profile_image_url")) {
+        const fallback = {
+          full_name: editFullName || null,
+          position: editPosition || null,
+        };
+        const retry = await supabase.from("admins").update(fallback).eq("id", currentAdmin.id);
+        error = retry.error;
+        if (!error) {
+          try {
+            localStorage.setItem(`adminProfileImage:${currentAdmin.id}`, editProfileImageUrl || "");
+          } catch {}
+        }
+      }
+
+      if (error) throw error;
+
+      setCurrentAdmin((prev: any) => ({
+        ...(prev || {}),
+        full_name: editFullName || null,
+        position: editPosition || null,
+        profile_image_url: editProfileImageUrl || null,
+      }));
+      setShowProfileEdit(false);
+    } catch (e: any) {
+      alert(`Failed to save profile: ${e?.message || e}`);
+    } finally {
+      setSavingProfile(false);
+    }
+  };
 
   if (loading || (currentAdmin && !allowedPaths)) {
     return (
@@ -475,11 +586,46 @@ export default function DashboardLayout({
             adminRole={currentAdmin?.role || currentAdmin?.position || "admin"}
           />
 
-          <div className="ml-2 flex items-center gap-3">
-            <div className="h-8 w-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-medium">
-              {currentAdmin?.username ? currentAdmin.username.charAt(0).toUpperCase() : "A"}
-            </div>
-            <div className="text-sm text-black font-medium">{currentAdmin?.username ?? "Admin User"}</div>
+          <div className="ml-2 relative" ref={profileMenuRef}>
+            <button
+              type="button"
+              onClick={() => setShowProfileMenu((v) => !v)}
+              className="flex items-center gap-3 rounded-lg px-2 py-1 hover:bg-gray-100 transition-colors"
+            >
+              <div className="h-8 w-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-medium overflow-hidden">
+                {getAdminProfileImage() ? (
+                  <img
+                    src={getAdminProfileImage()}
+                    alt="Admin profile"
+                    className="h-8 w-8 object-cover"
+                  />
+                ) : (
+                  getAdminInitial()
+                )}
+              </div>
+              <div className="text-sm text-black font-medium">
+                {currentAdmin?.full_name || currentAdmin?.username || "Admin User"}
+              </div>
+            </button>
+
+            {showProfileMenu && (
+              <div className="absolute right-0 mt-2 w-44 rounded-lg border border-gray-200 bg-white shadow-lg z-50 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={openProfileEdit}
+                  className="w-full text-left px-4 py-2 text-sm text-black hover:bg-gray-100"
+                >
+                  Edit Profile
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLogoutClick}
+                  className="w-full text-left px-4 py-2 text-sm text-black hover:bg-gray-100"
+                >
+                  Logout
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -677,6 +823,84 @@ export default function DashboardLayout({
                 className="px-4 py-2 bg-black text-white rounded"
               >
                 Logout
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Top-nav profile edit popup */}
+      {showProfileEdit && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+            <div className="px-5 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-black">Edit Profile</h3>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-black mb-1">Full Name</label>
+                <input
+                  className="w-full p-2 border rounded text-black"
+                  value={editFullName}
+                  onChange={(e) => setEditFullName(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-black mb-1">Position</label>
+                <input
+                  className="w-full p-2 border rounded text-black"
+                  value={editPosition}
+                  onChange={(e) => setEditPosition(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-black mb-1">Profile Image URL</label>
+                <input
+                  className="w-full p-2 border rounded text-black"
+                  value={editProfileImageUrl}
+                  onChange={(e) => setEditProfileImageUrl(e.target.value)}
+                  placeholder="https://..."
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-black mb-1">Upload Profile Image</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="w-full p-2 border rounded text-black"
+                  onChange={(e) => onPickAdminProfileImage(e.target.files?.[0] || null)}
+                  disabled={uploadingProfileImage}
+                />
+                {uploadingProfileImage && (
+                  <p className="mt-1 text-xs text-gray-600">Uploading image...</p>
+                )}
+              </div>
+              {editProfileImageUrl && (
+                <div className="flex items-center gap-3 p-2 border rounded">
+                  <img
+                    src={editProfileImageUrl}
+                    alt="Profile preview"
+                    className="h-12 w-12 rounded-full object-cover border"
+                  />
+                  <span className="text-xs text-black break-all">Preview</span>
+                </div>
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-gray-200 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowProfileEdit(false)}
+                className="px-4 py-2 bg-gray-200 rounded text-black"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveTopNavProfile}
+                disabled={savingProfile}
+                className="px-4 py-2 bg-black text-white rounded disabled:opacity-60"
+              >
+                {savingProfile ? "Saving..." : "Save Changes"}
               </button>
             </div>
           </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 
 type ActivityLog = {
@@ -64,7 +64,7 @@ export default function AuditPage() {
   const [from, setFrom] = useState<string>("");
   const [to, setTo] = useState<string>("");
 
-  const fetchAll = async () => {
+  const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
       let q = supabase
@@ -105,7 +105,7 @@ export default function AuditPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [action, page, from, to, search]);
 
   useEffect(() => {
     fetchAll();
@@ -116,12 +116,11 @@ export default function AuditPage() {
     return () => {
       try { supabase.removeChannel(ch); } catch {}
     };
-  }, []);
+  }, [fetchAll]);
 
   useEffect(() => {
     fetchAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [action, page, from, to]);
+  }, [fetchAll]);
 
   const pages = useMemo(() => {
     const set = new Set<string>();

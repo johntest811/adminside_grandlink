@@ -54,7 +54,6 @@ export default function InquireContentEditor() {
           setFacebook("facebook.com/grandeast");
         }
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.error("load inquire content", err);
       } finally {
         if (mounted) setLoading(false);
@@ -100,7 +99,6 @@ export default function InquireContentEditor() {
         alert("Content created.");
       }
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.error("save inquire content", err);
       alert("Could not save content.");
     } finally {

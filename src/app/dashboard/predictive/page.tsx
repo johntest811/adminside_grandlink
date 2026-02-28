@@ -140,7 +140,6 @@ async function trainAndForecastTemperature(values: number[]): Promise<ForecastRe
 
   // Build chart series: last 48 actual + 24 forecast.
   const tailActual = clean.slice(clean.length - 48);
-  const futureIdxBase = clean.length;
 
   const labels: string[] = [];
   for (let i = clean.length - 48; i < clean.length + FORECAST_HOURS; i++) {

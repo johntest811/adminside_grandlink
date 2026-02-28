@@ -15,9 +15,10 @@ type Admin = {
   created_at?: string | null;
   last_login?: string | null;
   password?: string | null;
+  profile_image_url?: string | null;
+  avatar_url?: string | null;
 };
 
-type HomeContentRow = { id: string; content: any; updated_at?: string };
 type InquireContentRow = {
   id: string;
   title: string;
@@ -53,8 +54,10 @@ export default function SettingsPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [editFullName, setEditFullName] = useState("");
   const [editPosition, setEditPosition] = useState<string>("");
+  const [editProfileImageUrl, setEditProfileImageUrl] = useState("");
   const [editPassword, setEditPassword] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
+  const [uploadingProfileImage, setUploadingProfileImage] = useState(false);
 
   useEffect(() => {
     loadCurrentAdminProfile();
@@ -93,6 +96,9 @@ export default function SettingsPage() {
     setAdminTheme(theme);
     try {
       localStorage.setItem("adminTheme", theme);
+    } catch {}
+    try {
+      document.documentElement.dataset.adminTheme = theme;
     } catch {}
     try {
       window.dispatchEvent(new Event("admin-theme-changed"));
@@ -174,6 +180,13 @@ export default function SettingsPage() {
       }
 
       if (adminRow) {
+        try {
+          const fallbackImage = localStorage.getItem(`adminProfileImage:${adminRow.id}`) || "";
+          if (fallbackImage && !(adminRow as any).profile_image_url) {
+            (adminRow as any).profile_image_url = fallbackImage;
+          }
+        } catch {}
+
         setCurrentAdmin(adminRow);
 
         // Prefer theme saved on the account (fallback to localStorage/default)
@@ -202,8 +215,44 @@ export default function SettingsPage() {
     if (!currentAdmin) return;
     setEditFullName(currentAdmin.full_name || "");
     setEditPosition(currentAdmin.position || "Admin");
+    setEditProfileImageUrl(
+      currentAdmin.profile_image_url || currentAdmin.avatar_url || ""
+    );
     setEditPassword("");
     setEditOpen(true);
+  };
+
+  const getProfileImageUrl = (admin?: Admin | null) => {
+    if (!admin) return "";
+    return String(admin.profile_image_url || admin.avatar_url || "").trim();
+  };
+
+  const uploadProfileImage = async (file: File): Promise<string> => {
+    if (!currentAdmin?.id) throw new Error("No admin session found.");
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const path = `admin-profiles/${currentAdmin.id}/${Date.now()}-${safeName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("uploads")
+      .upload(path, file, { upsert: true, contentType: file.type });
+    if (uploadError) throw uploadError;
+
+    const { data } = supabase.storage.from("uploads").getPublicUrl(path);
+    if (!data?.publicUrl) throw new Error("Failed to resolve public image URL.");
+    return data.publicUrl;
+  };
+
+  const onPickProfileImage = async (file: File | null) => {
+    if (!file) return;
+    setUploadingProfileImage(true);
+    try {
+      const publicUrl = await uploadProfileImage(file);
+      setEditProfileImageUrl(publicUrl);
+    } catch (e: any) {
+      alert(`Failed to upload profile image: ${e?.message || e}`);
+    } finally {
+      setUploadingProfileImage(false);
+    }
   };
 
   const saveProfile = async () => {
@@ -213,11 +262,27 @@ export default function SettingsPage() {
       const updates: Partial<Admin> = {
         full_name: editFullName || null,
         position: editPosition || null,
+        profile_image_url: editProfileImageUrl || null,
       };
-      const { error } = await supabase
+      let { error } = await supabase
         .from("admins")
         .update(updates)
         .eq("id", currentAdmin.id);
+
+      if (error && String(error.message || "").toLowerCase().includes("profile_image_url")) {
+        const fallback = {
+          full_name: editFullName || null,
+          position: editPosition || null,
+        };
+        const retry = await supabase.from("admins").update(fallback).eq("id", currentAdmin.id);
+        error = retry.error;
+        if (!error) {
+          try {
+            localStorage.setItem(`adminProfileImage:${currentAdmin.id}`, editProfileImageUrl || "");
+          } catch {}
+        }
+      }
+
       if (error) throw error;
 
       if (editPassword.trim()) {
@@ -256,8 +321,19 @@ export default function SettingsPage() {
     return parts.map((p) => p[0]?.toUpperCase() || "").join("") || "AD";
   })();
 
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("adminTheme");
+      if (saved === "light" || saved === "dark" || saved === "midnight") {
+        document.documentElement.dataset.adminTheme = saved;
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
   // General site settings (stored in home_content.content JSONB)
-  const [homeId, setHomeId] = useState<string | null>(null);
+  const [homeContent, setHomeContent] = useState<Record<string, any>>({});
   const [general, setGeneral] = useState({
     siteName: "GrandLink Glass and Aluminium",
     siteDescription:
@@ -266,6 +342,15 @@ export default function SettingsPage() {
     contactPhone: "+63 900 000 0000",
     address: "Cebu City, Philippines",
     facebook: "https://facebook.com/grandlink",
+    topNavContactEmail: "grandeast.org@gmail.com",
+    topNavFacebookText: "Click here visit to our FB Page",
+    topNavPhoneText: "Smart | 09082810586 Globe (Viber) | 09277640475",
+    topNavInquireLabel: "INQUIRE NOW",
+    topNavInquireLink: "/Inquire",
+    footerFacebookUrl: "https://facebook.com/grandlink",
+    footerPhoneText: "Smart || 09082810586 Globe (Viber) || 09277640475",
+    footerInquireLabel: "INQUIRE NOW",
+    footerInquireLink: "/Inquire",
   });
   const [savingGeneral, setSavingGeneral] = useState(false);
 
@@ -283,21 +368,21 @@ export default function SettingsPage() {
   useEffect(() => {
     // Load initial settings
     const load = async () => {
-      // home_content (get latest row)
+      // home_content singleton via local admin API
       {
-        const { data, error } = await supabase
-          .from("home_content")
-          .select("*")
-          .order("updated_at", { ascending: false })
-          .limit(1)
-          .maybeSingle<HomeContentRow>();
-        if (!error && data) {
-          setHomeId(data.id);
-          const c = data.content || {};
-          setGeneral((g) => ({
-            ...g,
-            ...c,
-          }));
+        try {
+          const res = await fetch("/api/home", { credentials: "include" });
+          const payload = await res.json().catch(() => ({}));
+          if (res.ok) {
+            const c = (payload?.content ?? payload) || {};
+            setHomeContent(c);
+            setGeneral((g) => ({
+              ...g,
+              ...c,
+            }));
+          }
+        } catch {
+          // ignore and keep defaults
         }
       }
 
@@ -328,21 +413,21 @@ export default function SettingsPage() {
   const saveGeneral = async () => {
     setSavingGeneral(true);
     try {
-      if (homeId) {
-        const { error } = await supabase
-          .from("home_content")
-          .update({ content: general, updated_at: new Date().toISOString() })
-          .eq("id", homeId);
-        if (error) throw error;
-      } else {
-        const { data, error } = await supabase
-          .from("home_content")
-          .insert({ content: general })
-          .select()
-          .maybeSingle();
-        if (error) throw error;
-        if (data?.id) setHomeId(data.id);
+      const nextContent = {
+        ...homeContent,
+        ...general,
+      };
+      const res = await fetch("/api/home", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(nextContent),
+        credentials: "include",
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.error || `${res.status} ${res.statusText}`);
       }
+      setHomeContent(nextContent);
       alert("General settings saved.");
     } catch (e: any) {
       alert(`Failed to save general settings: ${e.message || e}`);
@@ -396,8 +481,18 @@ export default function SettingsPage() {
       {/* Profile header */}
       <div className="bg-white shadow rounded-lg p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
         <div className="flex items-center gap-4">
-          <div className="h-14 w-14 rounded-full bg-black text-white flex items-center justify-center text-xl font-bold">
-            {profileLoading ? "…" : initials}
+          <div className="h-14 w-14 rounded-full bg-black text-white flex items-center justify-center text-xl font-bold overflow-hidden">
+            {profileLoading ? (
+              "…"
+            ) : getProfileImageUrl(currentAdmin) ? (
+              <img
+                src={getProfileImageUrl(currentAdmin)}
+                alt="Admin profile"
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              initials
+            )}
           </div>
           <div>
             <div className="text-xl font-semibold text-black">
@@ -544,6 +639,86 @@ export default function SettingsPage() {
               onChange={(e) => setGeneral({ ...general, address: e.target.value })}
             />
           </div>
+
+          <div className="md:col-span-2 border-t pt-4 mt-2">
+            <h3 className="text-lg font-semibold text-black mb-3">Top Navigation</h3>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-black mb-1">Top Bar Email</label>
+            <input
+              className="w-full p-2 border rounded text-black"
+              value={general.topNavContactEmail}
+              onChange={(e) => setGeneral({ ...general, topNavContactEmail: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-black mb-1">Top Bar Facebook Text</label>
+            <input
+              className="w-full p-2 border rounded text-black"
+              value={general.topNavFacebookText}
+              onChange={(e) => setGeneral({ ...general, topNavFacebookText: e.target.value })}
+            />
+          </div>
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium text-black mb-1">Top Bar Phone Text</label>
+            <input
+              className="w-full p-2 border rounded text-black"
+              value={general.topNavPhoneText}
+              onChange={(e) => setGeneral({ ...general, topNavPhoneText: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-black mb-1">Inquire Button Label (Top Nav)</label>
+            <input
+              className="w-full p-2 border rounded text-black"
+              value={general.topNavInquireLabel}
+              onChange={(e) => setGeneral({ ...general, topNavInquireLabel: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-black mb-1">Inquire Button Link (Top Nav)</label>
+            <input
+              className="w-full p-2 border rounded text-black"
+              value={general.topNavInquireLink}
+              onChange={(e) => setGeneral({ ...general, topNavInquireLink: e.target.value })}
+            />
+          </div>
+
+          <div className="md:col-span-2 border-t pt-4 mt-2">
+            <h3 className="text-lg font-semibold text-black mb-3">Footer</h3>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-black mb-1">Footer Facebook URL</label>
+            <input
+              className="w-full p-2 border rounded text-black"
+              value={general.footerFacebookUrl}
+              onChange={(e) => setGeneral({ ...general, footerFacebookUrl: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-black mb-1">Footer Phone Text</label>
+            <input
+              className="w-full p-2 border rounded text-black"
+              value={general.footerPhoneText}
+              onChange={(e) => setGeneral({ ...general, footerPhoneText: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-black mb-1">Inquire Button Label (Footer)</label>
+            <input
+              className="w-full p-2 border rounded text-black"
+              value={general.footerInquireLabel}
+              onChange={(e) => setGeneral({ ...general, footerInquireLabel: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-black mb-1">Inquire Button Link (Footer)</label>
+            <input
+              className="w-full p-2 border rounded text-black"
+              value={general.footerInquireLink}
+              onChange={(e) => setGeneral({ ...general, footerInquireLink: e.target.value })}
+            />
+          </div>
         </div>
         <div className="mt-4">
           <button
@@ -660,6 +835,42 @@ export default function SettingsPage() {
                   onChange={(e) => setEditPassword(e.target.value)}
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-black mb-1">
+                  Profile Image URL
+                </label>
+                <input
+                  className="w-full p-2 border rounded text-black"
+                  value={editProfileImageUrl}
+                  onChange={(e) => setEditProfileImageUrl(e.target.value)}
+                  placeholder="https://..."
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-black mb-1">
+                  Upload Profile Image
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="w-full p-2 border rounded text-black"
+                  onChange={(e) => onPickProfileImage(e.target.files?.[0] || null)}
+                  disabled={uploadingProfileImage}
+                />
+                {uploadingProfileImage && (
+                  <p className="mt-1 text-xs text-gray-600">Uploading image...</p>
+                )}
+              </div>
+              {editProfileImageUrl && (
+                <div className="flex items-center gap-3 p-2 border rounded">
+                  <img
+                    src={editProfileImageUrl}
+                    alt="Profile preview"
+                    className="h-12 w-12 rounded-full object-cover border"
+                  />
+                  <span className="text-xs text-black break-all">Preview</span>
+                </div>
+              )}
             </div>
             <div className="mt-4 flex gap-2">
               <button

@@ -30,22 +30,6 @@ const mapStatusForDB = (s: string) => {
   }
 };
 
-const progressMap: Record<string, string> = {
-  pending_payment: "awaiting_payment",
-  reserved: "payment_confirmed",
-  approved: "in_production",
-  in_production: "in_production",
-  quality_check: "quality_check",
-  start_packaging: "packaging",
-  packaging: "packaging",
-  ready_for_delivery: "ready_for_delivery",
-  out_for_delivery: "out_for_delivery",
-  completed: "delivered",
-  cancelled: "cancelled",
-  pending_cancellation: "pending_cancellation",
-  pending_balance_payment: "balance_due",
-};
-
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();

@@ -1,7 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { logActivity } from "@/app/lib/activity";
-import { notifyProductCreated, notifyInventoryChange } from "@/app/lib/notifications";
+import { notifyProductCreated } from "@/app/lib/notifications";
 import { adminNotificationService } from "@/utils/notificationHelper";
 
 const supabaseAdmin = createClient(
@@ -10,7 +10,7 @@ const supabaseAdmin = createClient(
 );
 
 // GET all products
-export async function GET(req: Request) {
+export async function GET() {
   try {
     const { data: products, error } = await supabaseAdmin
       .from("products")
@@ -42,7 +42,7 @@ export async function POST(req: Request) {
       if (authHeader) {
         currentAdmin = JSON.parse(authHeader);
       }
-    } catch (e) {
+    } catch {
       console.log("No admin auth found in header");
     }
 

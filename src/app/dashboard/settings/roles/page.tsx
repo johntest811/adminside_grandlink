@@ -115,6 +115,7 @@ export default function RolesAndPermissionsPage() {
     } catch {
       // ignore
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
   useEffect(() => {
@@ -251,6 +252,7 @@ export default function RolesAndPermissionsPage() {
 
     // Admin dropdown is only needed in admin override mode.
     fetchAdmins().catch((e) => alert(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, canViewRoles, currentAdmin?.id]);
 
   useEffect(() => {
@@ -261,6 +263,7 @@ export default function RolesAndPermissionsPage() {
     if (!positions.length) return;
     if (!admins.length) return;
     loadAdminPermissionState(selectedAdminId).catch((e) => alert(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, selectedAdminId, pages.length, positions.length, admins.length, canViewRoles]);
 
   useEffect(() => {

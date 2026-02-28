@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
         const email: string | undefined = data?.user?.email;
         const nameFromMeta: string | undefined = (data?.user?.user_metadata as any)?.full_name || (data?.user?.user_metadata as any)?.name;
         usersById[uid] = { name: nameFromMeta || email || "User" };
-      } catch (e) {
+      } catch {
         usersById[uid] = { name: "User" };
       }
     }

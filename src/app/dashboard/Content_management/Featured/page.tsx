@@ -66,6 +66,7 @@ export default function AdminFeaturedProjects() {
     if (currentAdmin) {
       fetchProjects();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAdmin]);
 
   const fetchProjects = async () => {

@@ -333,7 +333,8 @@ export default function AdminTasksPage() {
 
     const msg = String((error as any)?.message || "");
     if (msg.toLowerCase().includes("column") && msg.toLowerCase().includes("visible_to_customer")) {
-      const { visible_to_customer: _visibleToCustomer, ...rest } = patch as any;
+      const rest = { ...(patch as any) };
+      delete (rest as any).visible_to_customer;
       const { error: retryErr } = await supabase.from("task_updates").update(rest).eq("id", id);
       if (retryErr) throw retryErr;
       return;

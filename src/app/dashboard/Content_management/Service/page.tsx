@@ -63,9 +63,9 @@ export default function AdminServicesPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [uploadingIcon, setUploadingIcon] = useState(false);
   const [uploadingEditIcon, setUploadingEditIcon] = useState(false);
+  const [uploadingHeroImage, setUploadingHeroImage] = useState(false);
 
   const [pageContent, setPageContent] = useState<ServicesPageContent>(DEFAULT_PAGE_CONTENT);
-  const [originalPageContent, setOriginalPageContent] = useState<ServicesPageContent>(DEFAULT_PAGE_CONTENT);
   const [savingPageContent, setSavingPageContent] = useState(false);
 
   useEffect(() => {
@@ -107,6 +107,7 @@ export default function AdminServicesPage() {
       fetchServices();
       fetchPageContent();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAdmin]);
 
   // ADD: page view activity
@@ -184,7 +185,6 @@ export default function AdminServicesPage() {
         const loaded = (d?.content ?? d) as ServicesPageContent;
         const merged = { ...DEFAULT_PAGE_CONTENT, ...(loaded || {}) };
         setPageContent(merged);
-        setOriginalPageContent(JSON.parse(JSON.stringify(merged)));
       }
     } catch (e) {
       console.error("Failed to load services page content", e);
@@ -208,8 +208,6 @@ export default function AdminServicesPage() {
         console.error("Failed to save services page content:", res.status, t);
         return;
       }
-
-      setOriginalPageContent(JSON.parse(JSON.stringify(pageContent)));
 
       await logActivity({
         admin_id: currentAdmin.id,
@@ -588,7 +586,7 @@ export default function AdminServicesPage() {
             <input
               type="text"
               value={pageContent.heroImageUrl || ""}
-              onChange={(e) => setPageContent({ ...pageContent, heroImageUrl: e.target.value })}
+              readOnly
               className="border p-2 rounded text-black w-full focus:ring-2 focus:ring-blue-500"
             />
             <div className="mt-2 flex items-center gap-3">
@@ -598,14 +596,23 @@ export default function AdminServicesPage() {
                 onChange={async (e) => {
                   const file = e.target.files?.[0];
                   if (!file || !currentAdmin) return;
+                  setUploadingHeroImage(true);
                   const url = await uploadToBucket(file);
                   if (url) setPageContent((prev) => ({ ...prev, heroImageUrl: url }));
+                  setUploadingHeroImage(false);
                   if (e.target) e.target.value = "";
                 }}
                 className="text-sm"
               />
+              <button
+                type="button"
+                onClick={() => setPageContent((prev) => ({ ...prev, heroImageUrl: "" }))}
+                className="px-3 py-1 rounded border text-sm text-gray-700 hover:bg-gray-50"
+              >
+                Clear
+              </button>
+              {uploadingHeroImage ? <span className="text-xs text-blue-600">Uploading...</span> : null}
               {pageContent.heroImageUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={pageContent.heroImageUrl}
                   alt="Hero preview"
@@ -672,7 +679,6 @@ export default function AdminServicesPage() {
                   <td className="p-3 text-black font-medium">{s.id}</td>
                   <td className="p-3 text-center">
                     {s.icon_url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={s.icon_url}
                         alt={s.name}
@@ -767,7 +773,6 @@ export default function AdminServicesPage() {
                       <span className="text-xs text-gray-600">Uploading...</span>
                     ) : null}
                     {newService.icon_url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={newService.icon_url}
                         alt="Icon preview"
@@ -875,7 +880,6 @@ export default function AdminServicesPage() {
                     <span className="text-xs text-gray-600">Uploading...</span>
                   ) : null}
                   {editingService.icon_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={editingService.icon_url}
                       alt="Icon preview"

@@ -1,7 +1,7 @@
 "use client";
 // Add this import
 import { adminNotificationService } from "@/utils/notificationHelper";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 import { createNotification, checkLowStockAlerts } from "@/app/lib/notifications";
 import { logActivity } from "@/app/lib/activity";
@@ -122,6 +122,7 @@ export default function InventoryAdminPage() {
     if (currentAdmin) {
       fetchItems(showOnlyLow);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAdmin]);
 
   useEffect(() => {

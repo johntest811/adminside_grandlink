@@ -29,7 +29,7 @@ function isAllowed3DFile(file: File): boolean {
 const uploadFile = async (file: File, folder: string) => {
   const fileExt = file.name.split('.').pop();
   const fileName = `${uuidv4()}.${fileExt}`;
-  const { data, error } = await supabase.storage
+  const { error } = await supabase.storage
     .from('products')
     .upload(`${folder}/${fileName}`, file);
 
@@ -780,6 +780,7 @@ export default function ProductsAdminPage() {
                   weather={previewWeather}
                   frameFinish="matteBlack"
                   houseModelUrl={houseModelPreviewUrl || undefined}
+                  productCategory={category || null}
                   skyboxes={skyboxPreviewUrls}
                   productDimensions={{
                     width: width || null,

@@ -68,6 +68,7 @@ export default function AdminFAQsPage() {
       fetchCategories();
       fetchQuestions();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAdmin]);
 
   const fetchCategories = async () => {
