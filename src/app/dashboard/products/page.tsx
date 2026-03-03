@@ -37,6 +37,22 @@ const uploadFile = async (file: File, folder: string) => {
   return supabase.storage.from('products').getPublicUrl(`${folder}/${fileName}`).data.publicUrl;
 };
 
+const uploadFilesSettled = async (files: File[], folder: string) => {
+  const settled = await Promise.allSettled(files.map((file) => uploadFile(file, folder)));
+  const urls: string[] = [];
+  const failedFiles: string[] = [];
+
+  settled.forEach((result, index) => {
+    if (result.status === "fulfilled") {
+      urls.push(result.value);
+      return;
+    }
+    failedFiles.push(files[index]?.name || `file-${index + 1}`);
+  });
+
+  return { urls, failedFiles };
+};
+
 export default function ProductsAdminPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -45,6 +61,7 @@ export default function ProductsAdminPage() {
   const [price, setPrice] = useState("");
   const [inventory, setInventory] = useState("");
   const [images, setImages] = useState<File[]>([]);
+  const [imagePreviewUrls, setImagePreviewUrls] = useState<string[]>([]);
   const [fbxFiles, setFbxFiles] = useState<File[]>([]);
   const [houseModelFile, setHouseModelFile] = useState<File | null>(null);
   const [houseModelPreviewUrl, setHouseModelPreviewUrl] = useState<string | null>(null);
@@ -99,6 +116,17 @@ export default function ProductsAdminPage() {
       } catch {}
     };
   }, [fbxFiles]);
+
+  useEffect(() => {
+    const urls = images.map((f) => URL.createObjectURL(f));
+    setImagePreviewUrls(urls);
+
+    return () => {
+      try {
+        urls.forEach((u) => URL.revokeObjectURL(u));
+      } catch {}
+    };
+  }, [images]);
 
   // Convert message updates into unified toasts
   useEffect(() => {
@@ -523,54 +551,30 @@ export default function ProductsAdminPage() {
         console.error("Failed to log form submission:", error);
       }
       
-      // Upload images (unlimited)
-      const imageUrls: string[] = [];
-      for (let i = 0; i < images.length; i++) {
-        const img = images[i];
-        try {
-          const url = await uploadFile(img, 'images');
-          imageUrls.push(url);
-          console.log(`✅ Image ${i + 1} uploaded:`, url);
-        } catch (uploadError) {
-          console.error(`Failed to upload image ${i + 1}:`, uploadError);
-        }
-      }
+      // Upload assets in parallel to reduce submission time
+      const [imagesUpload, modelsUpload, houseUpload, ...skyboxUploads] = await Promise.all([
+        uploadFilesSettled(images, 'images'),
+        uploadFilesSettled(fbxFiles, 'models'),
+        houseModelFile ? uploadFile(houseModelFile, 'house-models') : Promise.resolve(null),
+        ...WEATHER_KEYS.map((k) => {
+          const f = skyboxFiles[k];
+          return f ? uploadFile(f, `skyboxes/${k}`) : Promise.resolve(null);
+        }),
+      ]);
 
-      // Upload 3D model files (FBX/GLB/GLTF)
-      const fbxUploadedUrls: string[] = [];
-      for (let i = 0; i < fbxFiles.length; i++) {
-        const file = fbxFiles[i];
-        try {
-          const url = await uploadFile(file, 'models');
-          fbxUploadedUrls.push(url);
-          console.log(`✅ 3D model ${i + 1} uploaded:`, url);
-        } catch (uploadError) {
-          console.error(`Failed to upload 3D model ${i + 1}:`, uploadError);
-        }
-      }
+      const imageUrls = imagesUpload.urls;
+      const fbxUploadedUrls = modelsUpload.urls;
+      const houseModelUrl = houseUpload;
 
-      let houseModelUrl: string | null = null;
-      if (houseModelFile) {
-        try {
-          houseModelUrl = await uploadFile(houseModelFile, 'house-models');
-          console.log("✅ House model uploaded:", houseModelUrl);
-        } catch (uploadError) {
-          console.error("Failed to upload house model:", uploadError);
-        }
-      }
-
-      // Upload skyboxes (per weather)
       const skyboxes: Partial<Record<WeatherKey, string>> = {};
-      for (const k of WEATHER_KEYS) {
-        const f = skyboxFiles[k];
-        if (!f) continue;
-        try {
-          const url = await uploadFile(f, `skyboxes/${k}`);
-          skyboxes[k] = url;
-          console.log(`✅ Skybox (${k}) uploaded:`, url);
-        } catch (uploadError) {
-          console.error(`Failed to upload skybox (${k}):`, uploadError);
-        }
+      WEATHER_KEYS.forEach((k, index) => {
+        const url = skyboxUploads[index];
+        if (url) skyboxes[k] = url;
+      });
+
+      if (imagesUpload.failedFiles.length || modelsUpload.failedFiles.length) {
+        const totalFailed = imagesUpload.failedFiles.length + modelsUpload.failedFiles.length;
+        setMessage(`Uploaded with ${totalFailed} failed file(s). Product creation continues.`);
       }
 
       console.log("📦 Creating product in database...");
@@ -639,36 +643,7 @@ export default function ProductsAdminPage() {
         console.error("⚠️ Failed to create admin notification:", notifError);
       }
 
-      // Send notifications to users via API route
-      console.log("📢 Sending user notifications via API...");
-      
-      try {
-        const notificationResponse = await fetch('/api/notify', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            type: 'new_product',
-            productName: insertedProduct.name,
-            productId: insertedProduct.id,
-            adminName: currentAdmin.username
-          }),
-        });
-
-        const notificationResult = await notificationResponse.json();
-
-        if (notificationResponse.ok && notificationResult.success) {
-          console.log("✅ User notifications sent:", notificationResult.message);
-          setMessage(`Product "${insertedProduct.name}" added successfully! ${notificationResult.message}`);
-        } else {
-          console.error("❌ User notification error:", notificationResult.error);
-          setMessage(`Product "${insertedProduct.name}" added successfully! (Note: User notifications may have failed)`);
-        }
-      } catch (notificationError) {
-        console.error("❌ Failed to send notifications:", notificationError);
-        setMessage(`Product "${insertedProduct.name}" added successfully! (Note: User notifications failed)`);
-      }
+      setMessage(`Product "${insertedProduct.name}" added successfully!`);
       
       // Reset form
       setName("");
@@ -948,12 +923,14 @@ export default function ProductsAdminPage() {
                   
                   {images.length > 0 && (
                     <div className="flex items-center space-x-2 flex-wrap">
-                      {getCarouselImages().map((img, idx) => {
-                        const actualIndex = carouselIndex + idx;
+                      {getCarouselImages().map((_, idx) => {
+                        const actualIndex = images.length
+                          ? (carouselIndex + idx) % images.length
+                          : carouselIndex + idx;
                         return (
                           <div key={actualIndex} className="relative">
                             <img
-                              src={URL.createObjectURL(img)}
+                              src={imagePreviewUrls[actualIndex]}
                               alt={`Product Image ${actualIndex + 1}`}
                               className="w-20 h-20 object-cover rounded-lg border border-gray-300"
                             />

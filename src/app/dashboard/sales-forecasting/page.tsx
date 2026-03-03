@@ -282,6 +282,10 @@ export default function SalesForecastingPage() {
   const [lstmLoading, setLstmLoading] = useState(false);
   const [lstmError, setLstmError] = useState<string | null>(null);
   const [lstmResults, setLstmResults] = useState<LstmDemandResult[] | null>(null);
+  const [lstmAutoTrainEnabled, setLstmAutoTrainEnabled] = useState(false);
+  const [lstmAutoTrainMinutes, setLstmAutoTrainMinutes] = useState(30);
+  const [lstmLastRunAt, setLstmLastRunAt] = useState<string | null>(null);
+  const [lstmNextAutoRunAt, setLstmNextAutoRunAt] = useState<number | null>(null);
 
   const [lstmProgress, setLstmProgress] = useState<{ current: number; total: number; label: string } | null>(null);
 
@@ -482,7 +486,7 @@ export default function SalesForecastingPage() {
     };
   }, [lstmResults]);
 
-  const runLstm = useCallback(async () => {
+  const runLstm = useCallback(async (trigger: "manual" | "auto" = "manual") => {
     try {
       setLstmLoading(true);
       setLstmError(null);
@@ -500,20 +504,22 @@ export default function SalesForecastingPage() {
 
       // Train per-product (sequential to avoid GPU/memory spikes)
       const results: LstmDemandResult[] = [];
-      const products = (data.products || []).slice(0, Math.min(12, lstmLimit));
+      const autoMode = trigger === "auto";
+      const products = (data.products || []).slice(0, Math.min(autoMode ? 6 : 12, lstmLimit));
+      const effectiveEpochs = autoMode ? Math.max(4, Math.min(lstmEpochs, 8)) : lstmEpochs;
       setLstmProgress({ current: 0, total: products.length, label: "Preparing…" });
       for (const p of products) {
         setLstmProgress({
           current: results.length + 1,
           total: products.length,
-          label: `Training ${p.product_name}`,
+          label: `Training ${p.product_name}${autoMode ? " (timed)" : ""}`,
         });
         const r = await trainAndForecastDemandLSTM({
           labels: p.labels,
           quantities: p.quantities,
           lookback: lstmLookback,
           horizon: lstmHorizon,
-          epochs: lstmEpochs,
+          epochs: effectiveEpochs,
         });
         const delta = r.recent_total > 0 ? (r.predicted_total - r.recent_total) / r.recent_total : 0;
         results.push({
@@ -534,6 +540,7 @@ export default function SalesForecastingPage() {
 
       results.sort((a, b) => b.predicted_total_units - a.predicted_total_units);
       setLstmResults(results);
+      setLstmLastRunAt(new Date().toISOString());
     } catch (e: unknown) {
       setLstmError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -546,8 +553,78 @@ export default function SalesForecastingPage() {
     if (autoRunDone) return;
     setAutoRunDone(true);
     void run();
-    void runLstm();
-  }, [autoRunDone, run, runLstm]);
+  }, [autoRunDone, run]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const savedEnabled = window.localStorage.getItem("salesForecast.lstmAutoTrainEnabled");
+      const savedMinutes = window.localStorage.getItem("salesForecast.lstmAutoTrainMinutes");
+      const savedLastRun = window.localStorage.getItem("salesForecast.lstmLastRunAt");
+
+      if (savedEnabled !== null) {
+        setLstmAutoTrainEnabled(savedEnabled === "true");
+      }
+      if (savedMinutes !== null) {
+        const parsed = Number(savedMinutes);
+        if (Number.isFinite(parsed)) {
+          setLstmAutoTrainMinutes(Math.max(5, Math.min(180, Math.floor(parsed))));
+        }
+      }
+      if (savedLastRun) {
+        setLstmLastRunAt(savedLastRun);
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("salesForecast.lstmAutoTrainEnabled", String(lstmAutoTrainEnabled));
+      window.localStorage.setItem("salesForecast.lstmAutoTrainMinutes", String(lstmAutoTrainMinutes));
+      if (lstmLastRunAt) {
+        window.localStorage.setItem("salesForecast.lstmLastRunAt", lstmLastRunAt);
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  }, [lstmAutoTrainEnabled, lstmAutoTrainMinutes, lstmLastRunAt]);
+
+  useEffect(() => {
+    if (!lstmAutoTrainEnabled) {
+      setLstmNextAutoRunAt(null);
+      return;
+    }
+    setLstmNextAutoRunAt(Date.now() + lstmAutoTrainMinutes * 60_000);
+  }, [lstmAutoTrainEnabled, lstmAutoTrainMinutes]);
+
+  useEffect(() => {
+    if (!lstmAutoTrainEnabled || !lstmNextAutoRunAt) return;
+
+    const timer = window.setInterval(() => {
+      if (lstmLoading) return;
+      if (Date.now() >= lstmNextAutoRunAt) {
+        void runLstm("auto");
+        setLstmNextAutoRunAt(Date.now() + lstmAutoTrainMinutes * 60_000);
+      }
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [lstmAutoTrainEnabled, lstmAutoTrainMinutes, lstmLoading, lstmNextAutoRunAt, runLstm]);
+
+  const runLstmNow = useCallback(async () => {
+    await runLstm("manual");
+    if (lstmAutoTrainEnabled) {
+      setLstmNextAutoRunAt(Date.now() + lstmAutoTrainMinutes * 60_000);
+    }
+  }, [lstmAutoTrainEnabled, lstmAutoTrainMinutes, runLstm]);
+
+  const skipNextTimedRun = useCallback(() => {
+    if (!lstmAutoTrainEnabled) return;
+    setLstmNextAutoRunAt(Date.now() + lstmAutoTrainMinutes * 60_000);
+  }, [lstmAutoTrainEnabled, lstmAutoTrainMinutes]);
 
   const exportPdf = useCallback(async () => {
     try {
@@ -870,11 +947,62 @@ export default function SalesForecastingPage() {
           </div>
           <button
             className="px-4 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
-            onClick={runLstm}
+            onClick={() => void runLstm("manual")}
             disabled={lstmLoading}
           >
             {lstmLoading ? "Training…" : "Run LSTM Ranking"}
           </button>
+        </div>
+
+        <div className="rounded border bg-gray-50 p-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <label className="flex items-center gap-2 text-sm text-gray-800">
+              <input
+                type="checkbox"
+                checked={lstmAutoTrainEnabled}
+                onChange={(e) => setLstmAutoTrainEnabled(e.target.checked)}
+              />
+              Enable timed LSTM training
+            </label>
+            <div>
+              <label className="block text-xs text-gray-700 mb-1">Run every (minutes)</label>
+              <input
+                className="w-full px-3 py-2 border rounded text-black"
+                type="number"
+                min={5}
+                max={180}
+                value={lstmAutoTrainMinutes}
+                onChange={(e) => setLstmAutoTrainMinutes(Math.max(5, Math.min(180, Number(e.target.value || 30))))}
+                disabled={!lstmAutoTrainEnabled}
+              />
+            </div>
+            <div className="text-xs text-gray-700 flex flex-col justify-center">
+              <div>
+                Last run: {lstmLastRunAt ? new Date(lstmLastRunAt).toLocaleString() : "Not yet"}
+              </div>
+              <div>
+                Next timed run: {lstmAutoTrainEnabled && lstmNextAutoRunAt ? new Date(lstmNextAutoRunAt).toLocaleTimeString() : "Disabled"}
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              type="button"
+              className="px-3 py-1 rounded border border-indigo-300 bg-indigo-600 text-white text-xs hover:bg-indigo-700 disabled:opacity-50"
+              onClick={() => void runLstmNow()}
+              disabled={lstmLoading}
+            >
+              Run now
+            </button>
+            <button
+              type="button"
+              className="px-3 py-1 rounded border border-gray-300 bg-white text-gray-800 text-xs hover:bg-gray-100 disabled:opacity-50"
+              onClick={skipNextTimedRun}
+              disabled={!lstmAutoTrainEnabled || lstmLoading}
+            >
+              Skip next timed run
+            </button>
+          </div>
         </div>
 
         {lstmProgress && (

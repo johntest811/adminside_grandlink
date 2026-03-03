@@ -9,6 +9,21 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch(() => {
+        clearTimeout(timer);
+        resolve(null);
+      });
+  });
+}
+
 // GET all products
 export async function GET() {
   try {
@@ -95,42 +110,46 @@ export async function POST(req: Request) {
 
     console.log("✅ Product created successfully:", product.id);
 
-    // Log activity for admin dashboard
+    const sideEffects: Promise<unknown>[] = [];
+
     if (currentAdmin) {
-      await logActivity({
-        admin_id: currentAdmin.id,
-        admin_name: currentAdmin.username,
-        action: "create",
-        entity_type: "products",
-        entity_id: product.id,
-        details: `Created new product: ${product.name}`,
-        metadata: {
-          product_name: product.name,
-          price: product.price,
-          inventory: product.inventory
-        }
-      });
+      sideEffects.push(
+        logActivity({
+          admin_id: currentAdmin.id,
+          admin_name: currentAdmin.username,
+          action: "create",
+          entity_type: "products",
+          entity_id: product.id,
+          details: `Created new product: ${product.name}`,
+          metadata: {
+            product_name: product.name,
+            price: product.price,
+            inventory: product.inventory,
+          },
+        })
+      );
 
-      // Create admin notification about product creation
-      await notifyProductCreated(
-        product.name, 
-        currentAdmin.username, 
-        product.type || 'General'
+      sideEffects.push(
+        notifyProductCreated(
+          product.name,
+          currentAdmin.username,
+          product.type || "General"
+        )
       );
     }
 
-    // Send notification to users about new product
-    try {
-      await adminNotificationService.notifyNewProduct(
-        product.name,
-        product.id,
-        currentAdmin?.username || 'Admin'
-      );
-      console.log("🔔 User notifications sent for new product");
-    } catch (notificationError) {
-      console.error("❌ Failed to send user notifications:", notificationError);
-      // Don't fail the request if user notification fails
-    }
+    sideEffects.push(
+      withTimeout(
+        adminNotificationService.notifyNewProduct(
+          product.name,
+          product.id,
+          currentAdmin?.username || "Admin"
+        ),
+        1500
+      )
+    );
+
+    await Promise.allSettled(sideEffects);
 
     return NextResponse.json({ product }, { status: 201 });
   } catch (err: any) {
