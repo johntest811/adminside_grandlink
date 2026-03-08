@@ -8,10 +8,22 @@ import { notifyProductUpdated, notifyProductFileUploaded } from "@/app/lib/notif
 import ThreeDModelViewer from "@/components/ThreeDModelViewer";
 import RichTextEditor from "@/components/RichTextEditor";
 import ToastPopup, { type ToastPopupState } from "@/components/ToastPopup";
+import {
+  buildAdditionalFeaturesHtml,
+  createFeatureOptionsByCategory,
+  getCategoryFeatureOptions,
+  mergeFeatureOptions,
+  parseFeatureItems,
+  PRODUCT_CATEGORY_OPTIONS,
+  PRODUCT_FORM_TABS,
+  type ProductFormTabKey,
+  stripRichText,
+} from "../../products/productFormConfig";
 
 const ALLOWED_3D_EXTENSIONS = ["fbx", "glb", "gltf"] as const;
 
 type WeatherKey = "sunny" | "rainy" | "night" | "foggy";
+type SkyboxKey = "default" | WeatherKey;
 const WEATHER_KEYS: WeatherKey[] = ["sunny", "rainy", "night", "foggy"];
 type FrameFinish = "default" | "matteBlack" | "matteGray" | "narra" | "walnut";
 
@@ -56,7 +68,7 @@ type Product = {
   fbx_url?: string;
   fbx_urls?: string[];
   house_model_url?: string | null;
-  skyboxes?: Partial<Record<WeatherKey, string | null>>;
+  skyboxes?: Partial<Record<SkyboxKey, string | null>>;
   fullproductname?: string;
   additionalfeatures?: string;
   inventory?: number;
@@ -76,10 +88,13 @@ export default function EditProductPage() {
   const [show3DViewer, setShow3DViewer] = useState(false);
   const [currentFbxIndex, setCurrentFbxIndex] = useState(0);
   const [uploadingFbx, setUploadingFbx] = useState(false);
-  const [uploadingHouseModel, setUploadingHouseModel] = useState(false);
   const [uploadingImages, setUploadingImages] = useState(false);
   const [uploadingSkyboxes, setUploadingSkyboxes] = useState(false);
   const [previewWeather, setPreviewWeather] = useState<WeatherKey>("sunny");
+  const [activeTab, setActiveTab] = useState<ProductFormTabKey>("identity");
+  const [selectedFeatureOptions, setSelectedFeatureOptions] = useState<string[]>([]);
+  const [featureOptionsByCategory, setFeatureOptionsByCategory] = useState<Record<string, string[]>>(() => createFeatureOptionsByCategory());
+  const [newFeatureOption, setNewFeatureOption] = useState("");
 
   useEffect(() => {
     if (!message) return;
@@ -157,7 +172,7 @@ export default function EditProductPage() {
     }
   };
 
-  const persistSkyboxes = async (skyboxes: Partial<Record<WeatherKey, string | null>> | null) => {
+  const persistSkyboxes = async (skyboxes: Partial<Record<SkyboxKey, string | null>> | null) => {
     try {
       const res = await fetch(`/api/products/${productId}`, {
         method: 'PUT',
@@ -181,33 +196,6 @@ export default function EditProductPage() {
     } catch (err) {
       console.error('persistSkyboxes error:', err);
       setMessage(`Warning: skyboxes saved locally but failed to persist: ${String((err as any)?.message || err)}`);
-    }
-  };
-
-  const persistHouseModel = async (houseModelUrl: string | null) => {
-    try {
-      const res = await fetch(`/api/products/${productId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: JSON.stringify(currentAdmin || {})
-        },
-        body: JSON.stringify({ house_model_url: houseModelUrl || null }),
-      });
-
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j?.error || `Failed to persist house model (${res.status})`);
-      }
-
-      const j = await res.json().catch(() => null);
-      if (j?.product) {
-        setOriginalProduct((prev) => ({ ...(prev || {} as any), ...j.product } as Product));
-        setProduct((prev) => ({ ...(prev || {} as any), ...j.product } as Product));
-      }
-    } catch (err) {
-      console.error('persistHouseModel error:', err);
-      setMessage(`Warning: house model saved locally but failed to persist: ${String((err as any)?.message || err)}`);
     }
   };
 
@@ -281,6 +269,18 @@ export default function EditProductPage() {
     if (productId && currentAdmin) fetchProduct();
   }, [productId, currentAdmin]);
 
+  useEffect(() => {
+    if (!originalProduct) return;
+    const existingFeatures = parseFeatureItems(originalProduct.additionalfeatures || "");
+    const nextMap = createFeatureOptionsByCategory();
+    if (originalProduct.category) {
+      nextMap[originalProduct.category] = mergeFeatureOptions(nextMap[originalProduct.category], existingFeatures);
+    }
+    setFeatureOptionsByCategory(nextMap);
+    setSelectedFeatureOptions(existingFeatures);
+    setNewFeatureOption("");
+  }, [originalProduct]);
+
   // Enhanced change handler with logging
   const handleChange = async (field: keyof Product, value: any) => {
     if (!product || !currentAdmin) return;
@@ -314,10 +314,93 @@ export default function EditProductPage() {
     }
   };
 
+  const selectedCategoryFeatures = product?.category
+    ? featureOptionsByCategory[product.category] ?? getCategoryFeatureOptions(product.category)
+    : [];
+
+  const syncAdditionalFeatures = (nextSelected: string[]) => {
+    setSelectedFeatureOptions(nextSelected);
+    const nextHtml = buildAdditionalFeaturesHtml(nextSelected);
+    setProduct((prev) => (prev ? { ...prev, additionalfeatures: nextHtml } : prev));
+  };
+
+  const handleCategorySelection = async (nextCategory: string) => {
+    if (!product) return;
+    await handleChange("category", nextCategory);
+    setNewFeatureOption("");
+    const nextOptions = featureOptionsByCategory[nextCategory] ?? getCategoryFeatureOptions(nextCategory);
+    const filteredSelected = selectedFeatureOptions.filter((item) => nextOptions.includes(item));
+    syncAdditionalFeatures(filteredSelected);
+  };
+
+  const handleFeatureToggle = (feature: string) => {
+    const exists = selectedFeatureOptions.includes(feature);
+    const nextSelected = exists
+      ? selectedFeatureOptions.filter((item) => item !== feature)
+      : [...selectedFeatureOptions, feature];
+    syncAdditionalFeatures(nextSelected);
+  };
+
+  const handleAddFeatureOption = () => {
+    if (!product?.category) return;
+    const nextFeature = newFeatureOption.trim();
+    if (!nextFeature) return;
+
+    const nextOptions = mergeFeatureOptions(selectedCategoryFeatures, [nextFeature]);
+    setFeatureOptionsByCategory((prev) => ({
+      ...prev,
+      [product.category!]: nextOptions,
+    }));
+    setNewFeatureOption("");
+
+    if (!selectedFeatureOptions.includes(nextFeature)) {
+      syncAdditionalFeatures([...selectedFeatureOptions, nextFeature]);
+    }
+  };
+
+  const handleRemoveFeatureOption = (feature: string) => {
+    if (!product?.category) return;
+    setFeatureOptionsByCategory((prev) => ({
+      ...prev,
+      [product.category!]: (prev[product.category!] ?? []).filter((item) => item !== feature),
+    }));
+    syncAdditionalFeatures(selectedFeatureOptions.filter((item) => item !== feature));
+  };
+
+  const getUpdateValidation = (): { tab: ProductFormTabKey; message: string } | null => {
+    if (!product) return { tab: "identity", message: "Product data not loaded. Please try again." };
+    if (!String(product.name || "").trim()) {
+      return { tab: "identity", message: "Product code is required before saving the product." };
+    }
+    if (!String(product.fullproductname || "").trim()) {
+      return { tab: "identity", message: "Product name is required before saving the product." };
+    }
+    if (!stripRichText(product.description || "").trim()) {
+      return { tab: "identity", message: "Product description is required before saving the product." };
+    }
+    if (!String(product.category || "").trim()) {
+      return { tab: "classification", message: "Product category is required before saving the product." };
+    }
+    if (product.price === undefined || product.price === null || Number.isNaN(Number(product.price))) {
+      return { tab: "details", message: "Price (PHP) is required before saving the product." };
+    }
+    if (product.inventory === undefined || product.inventory === null || Number.isNaN(Number(product.inventory))) {
+      return { tab: "details", message: "Inventory is required before saving the product." };
+    }
+    return null;
+  };
+
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!product || !originalProduct || !currentAdmin) {
       setMessage("Product data not loaded. Please try again.");
+      return;
+    }
+
+    const validation = getUpdateValidation();
+    if (validation) {
+      setActiveTab(validation.tab);
+      setMessage(validation.message);
       return;
     }
 
@@ -638,21 +721,21 @@ export default function EditProductPage() {
     }
   };
 
-  const getCurrentSkyboxes = (): Partial<Record<WeatherKey, string | null>> => {
+  const getCurrentSkyboxes = (): Partial<Record<SkyboxKey, string | null>> => {
     const raw = (product as any)?.skyboxes;
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw as any;
     return {};
   };
 
-  const handleUploadSkybox = async (weather: WeatherKey, file: File) => {
+  const handleUploadSkybox = async (skyboxKey: SkyboxKey, file: File) => {
     if (!currentAdmin || !product) return;
     setUploadingSkyboxes(true);
-    setMessage(`Uploading ${weather} skybox...`);
+    setMessage(`Uploading ${skyboxKey} skybox...`);
 
     try {
-      const url = await uploadFile(file, `skyboxes/${weather}`, productId);
+      const url = await uploadFile(file, `skyboxes/${skyboxKey}`, productId);
       const current = getCurrentSkyboxes();
-      const next = { ...current, [weather]: url };
+      const next = { ...current, [skyboxKey]: url };
 
       await handleChange('skyboxes', next);
       await persistSkyboxes(next);
@@ -664,9 +747,9 @@ export default function EditProductPage() {
         entity_type: 'product_skybox',
         entity_id: product.id,
         page: 'UpdateProducts',
-        details: `Uploaded ${weather} skybox for "${product.name}": ${file.name}`,
+        details: `Uploaded ${skyboxKey} skybox for "${product.name}": ${file.name}`,
         metadata: {
-          weather,
+          skyboxKey,
           fileName: file.name,
           fileSize: file.size,
           skyboxUrl: url,
@@ -687,12 +770,12 @@ export default function EditProductPage() {
     }
   };
 
-  const handleRemoveSkybox = async (weather: WeatherKey) => {
+  const handleRemoveSkybox = async (skyboxKey: SkyboxKey) => {
     if (!currentAdmin || !product) return;
     const current = getCurrentSkyboxes();
-    if (!current[weather]) return;
+    if (!current[skyboxKey]) return;
 
-    const next = { ...current, [weather]: null };
+    const next = { ...current, [skyboxKey]: null };
     await handleChange('skyboxes', next);
     await persistSkyboxes(next);
 
@@ -703,82 +786,10 @@ export default function EditProductPage() {
       entity_type: 'product_skybox',
       entity_id: product.id,
       page: 'UpdateProducts',
-      details: `Removed ${weather} skybox from "${product.name}"`,
+      details: `Removed ${skyboxKey} skybox from "${product.name}"`,
       metadata: {
-        weather,
-        removedUrl: current[weather],
-        productName: product.name,
-        productId: product.id,
-        adminAccount: currentAdmin.username,
-        timestamp: new Date().toISOString()
-      }
-    });
-  };
-
-  const handleHouseModelUpload = async (file: File) => {
-    if (!currentAdmin || !product) return;
-
-    if (!isAllowed3DFile(file)) {
-      setMessage(
-        `Unsupported house model file. Allowed: ${ALLOWED_3D_EXTENSIONS.map((x) => `.${x}`).join(", ")}`
-      );
-      return;
-    }
-
-    setUploadingHouseModel(true);
-    setMessage('Uploading house model...');
-
-    try {
-      const url = await uploadFile(file, 'house-models', productId);
-      await handleChange('house_model_url', url);
-      await persistHouseModel(url);
-
-      await logActivity({
-        admin_id: currentAdmin.id,
-        admin_name: currentAdmin.username,
-        action: 'upload',
-        entity_type: 'house_3d_model_file',
-        entity_id: product.id,
-        page: 'UpdateProducts',
-        details: `Uploaded house model for "${product.name}": ${file.name}`,
-        metadata: {
-          fileName: file.name,
-          fileSize: file.size,
-          houseModelUrl: url,
-          productName: product.name,
-          productId: product.id,
-          adminAccount: currentAdmin.username,
-          timestamp: new Date().toISOString()
-        }
-      });
-
-      setMessage('House model uploaded successfully');
-      setTimeout(() => setMessage(''), 2500);
-    } catch (error) {
-      console.error('House model upload error:', error);
-      setMessage('Error uploading house model');
-    } finally {
-      setUploadingHouseModel(false);
-    }
-  };
-
-  const handleRemoveHouseModel = async () => {
-    if (!currentAdmin || !product || !product.house_model_url) return;
-
-    const removed = product.house_model_url;
-    await handleChange('house_model_url', null);
-    await persistHouseModel(null);
-
-    await logActivity({
-      admin_id: currentAdmin.id,
-      admin_name: currentAdmin.username,
-      action: 'delete',
-      entity_type: 'house_3d_model_file',
-      entity_id: product.id,
-      page: 'UpdateProducts',
-      details: `Removed house model from "${product.name}"`,
-      metadata: {
-        removedUrl: removed,
+        skyboxKey,
+        removedUrl: current[skyboxKey],
         productName: product.name,
         productId: product.id,
         adminAccount: currentAdmin.username,
@@ -942,7 +953,12 @@ export default function EditProductPage() {
   };
 
   const currentFbxUrls = getCurrentFbxUrls();
-  const previewSkyboxUrl = (product?.skyboxes && (product.skyboxes as any)[previewWeather]) ? (product.skyboxes as any)[previewWeather] : null;
+  const currentSkyboxes = getCurrentSkyboxes();
+  const previewSkyboxSource = currentSkyboxes[previewWeather]
+    ? `${previewWeather} custom skybox`
+    : currentSkyboxes.default
+    ? "default skybox fallback"
+    : null;
 
   if (loading) {
     return (
@@ -1006,9 +1022,9 @@ export default function EditProductPage() {
                     {k.charAt(0).toUpperCase() + k.slice(1)}
                   </button>
                 ))}
-                {!previewSkyboxUrl && (
-                  <span className="text-[11px] text-gray-500">No skybox set for this weather.</span>
-                )}
+                <span className="text-[11px] text-gray-500">
+                  {previewSkyboxSource ? `Using ${previewSkyboxSource}.` : "No skybox set for this weather."}
+                </span>
               </div>
             </div>
 
@@ -1018,7 +1034,6 @@ export default function EditProductPage() {
                 initialIndex={currentFbxIndex}
                 weather={previewWeather}
                 frameFinish={materialToFrameFinish(product.material)}
-                houseModelUrl={product.house_model_url || undefined}
                 productCategory={product?.category ?? product?.type ?? null}
                 skyboxes={product.skyboxes || null}
                 productDimensions={{
@@ -1033,434 +1048,513 @@ export default function EditProductPage() {
         </div>
       )}
       
-      <form onSubmit={handleUpdate} className="bg-white shadow rounded-lg p-6 space-y-6 max-w-4xl mx-auto text-black">
-        {/* Basic Information */}
-        <div className="border-b border-gray-200 pb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Basic Information</h2>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block font-medium mb-1 text-black">Product Name *</label>
-              <input
-                type="text"
-                value={product.name}
-                onChange={e => handleChange("name", e.target.value)}
-                className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block font-medium mb-1 text-black">Full Product Name</label>
-              <input
-                type="text"
-                value={product.fullproductname || ""}
-                onChange={e => handleChange("fullproductname", e.target.value)}
-                className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-
-            <div>
-              <label className="block font-medium mb-1 text-black">Price (₱) *</label>
-              <input
-                type="number"
-                step="0.01"
-                value={product.price}
-                onChange={e => handleChange("price", Number(e.target.value))}
-                className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500"
-                required
-              />
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <label className="block font-medium mb-1 text-black">Description</label>
-            <RichTextEditor
-              value={String(product.description || "")}
-              onChange={(next) => handleChange("description", next)}
-            />
-          </div>
-
-          <div className="mt-4">
-            <label className="block font-medium mb-1 text-black">Additional Features</label>
-            <RichTextEditor
-              value={String(product.additionalfeatures || "")}
-              onChange={(next) => handleChange("additionalfeatures", next)}
-            />
-          </div>
+      <form onSubmit={handleUpdate} className="bg-white shadow rounded-lg p-6 space-y-6 max-w-5xl mx-auto text-black">
+        <div className="grid gap-3 md:grid-cols-4">
+          {PRODUCT_FORM_TABS.map((tab, index) => {
+            const isActive = tab.key === activeTab;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setActiveTab(tab.key)}
+                className={`rounded-xl border px-4 py-3 text-left transition-all ${
+                  isActive
+                    ? "border-indigo-600 bg-indigo-600 text-white shadow-md"
+                    : "border-gray-200 bg-white text-gray-800 hover:border-indigo-300"
+                }`}
+              >
+                <div className="text-xs font-semibold uppercase tracking-[0.2em]">Step {index + 1}</div>
+                <div className="mt-1 text-base font-bold">{tab.label}</div>
+                <div className={`mt-1 text-xs ${isActive ? "text-indigo-100" : "text-gray-500"}`}>
+                  {tab.description}
+                </div>
+              </button>
+            );
+          })}
         </div>
 
-        {/* Categories and Types */}
-        <div className="border-b border-gray-200 pb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Categories & Specifications</h2>
-          
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block font-medium mb-1 text-black">Category *</label>
-              <select
-                value={product.category ?? ""}
-                onChange={e => handleChange("category", e.target.value)}
-                className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500"
-                required
-              >
-                <option value="">Select Category</option>
-                <option value="Doors">Doors</option>
-                <option value="Windows">Windows</option>
-                <option value="Enclosures">Enclosures</option>
-                <option value="Casement">Casement</option>
-                <option value="Sliding">Sliding</option>
-                <option value="Railings">Railings</option>
-                <option value="Canopy">Canopy</option>
-                <option value="Curtain Wall">Curtain Wall</option>
-              </select>
+        {activeTab === "identity" && (
+          <div className="rounded-2xl border border-gray-200 bg-gray-50 p-6">
+            <h2 className="mb-4 text-xl font-semibold text-gray-900">Product Code, Name, and Description</h2>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-1 block font-medium text-black">Product Code *</label>
+                <input
+                  type="text"
+                  value={product.name}
+                  onChange={(e) => handleChange("name", e.target.value)}
+                  className="w-full rounded border px-3 py-2 text-black bg-white focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block font-medium text-black">Product Name *</label>
+                <input
+                  type="text"
+                  value={product.fullproductname || ""}
+                  onChange={(e) => handleChange("fullproductname", e.target.value)}
+                  className="w-full rounded border px-3 py-2 text-black bg-white focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
             </div>
 
-            <div>
-              <label className="block font-medium mb-1 text-black">Type</label>
-              <select
-                value={product.type || ""}
-                onChange={e => handleChange("type", e.target.value)}
-                className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="">Select Type</option>
-                <option value="Tinted">Tinted</option>
-                <option value="Clear">Clear</option>
-                <option value="Frosted">Frosted</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block font-medium mb-1 text-black">Material</label>
-              <select
-                value={product.material || ""}
-                onChange={e => handleChange("material", e.target.value)}
-                className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="">Select Material</option>
-                <option value="Glass">Glass</option>
-                <option value="Wood">Wood</option>
-                <option value="Metal">Metal</option>
-                <option value="Aluminum">Aluminum</option>
-                <option value="Steel">Steel</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        {/* Dimensions */}
-        <div className="border-b border-gray-200 pb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Dimensions</h2>
-          
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <label className="block font-medium mb-1 text-black">Height (cm)</label>
-              <input
-                type="number"
-                step="0.01"
-                value={product.height || ""}
-                onChange={e => handleChange("height", Number(e.target.value) || undefined)}
-                className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-            <div>
-              <label className="block font-medium mb-1 text-black">Width (cm)</label>
-              <input
-                type="number"
-                step="0.01"
-                value={product.width || ""}
-                onChange={e => handleChange("width", Number(e.target.value) || undefined)}
-                className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-            <div>
-              <label className="block font-medium mb-1 text-black">Thickness (cm)</label>
-              <input
-                type="number"
-                step="0.01"
-                value={product.thickness || ""}
-                onChange={e => handleChange("thickness", Number(e.target.value) || undefined)}
-                className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500"
+            <div className="mt-4">
+              <label className="mb-1 block font-medium text-black">Product Description *</label>
+              <RichTextEditor
+                value={String(product.description || "")}
+                onChange={(next) => handleChange("description", next)}
               />
             </div>
           </div>
-        </div>
+        )}
 
-        {/* 3D Models Management - NOW INSIDE FORM */}
-        <div className="border-b border-gray-200 pb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">
-            3D Models Management ({currentFbxUrls.length} files)
-          </h2>
+        {activeTab === "classification" && (
+          <div className="rounded-2xl border border-gray-200 bg-gray-50 p-6">
+            <h2 className="mb-4 text-xl font-semibold text-gray-900">Product Category and Additional Features</h2>
 
-          <div className="mb-6 p-4 bg-gray-50 border rounded-lg">
-            <h3 className="text-md font-semibold text-gray-900 mb-2">House Context Model</h3>
-            <div className="text-sm text-gray-500 mb-3">
-              Optional: this model is shown on the website 3D viewer as the house context for the product.
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.2fr)]">
+              <div className="rounded-xl border border-gray-200 bg-white p-5">
+                <label className="mb-2 block font-medium text-black">Product Category *</label>
+                <select
+                  value={product.category ?? ""}
+                  onChange={(e) => handleCategorySelection(e.target.value)}
+                  className="w-full rounded border px-3 py-2 text-black bg-white focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">Select Category</option>
+                  {PRODUCT_CATEGORY_OPTIONS.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-white p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900">Preloaded Additional Features</h3>
+                    <p className="mt-1 text-xs text-gray-500">Checked items will appear as bullet points on the website product page.</p>
+                  </div>
+                  <div className="rounded-full bg-gray-50 px-3 py-1 text-xs font-semibold text-indigo-700 ring-1 ring-gray-200">
+                    {selectedFeatureOptions.length} selected
+                  </div>
+                </div>
+
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                  <input
+                    type="text"
+                    value={newFeatureOption}
+                    onChange={(e) => setNewFeatureOption(e.target.value)}
+                    placeholder={product.category ? "Create a new feature checkbox for this category" : "Select a category first"}
+                    disabled={!product.category}
+                    className="flex-1 rounded border px-3 py-2 text-sm text-black bg-white focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddFeatureOption}
+                    disabled={!product.category || !newFeatureOption.trim()}
+                    className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Add Feature
+                  </button>
+                </div>
+
+                {product.category ? (
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    {selectedCategoryFeatures.map((feature) => {
+                      const checked = selectedFeatureOptions.includes(feature);
+                      return (
+                        <div
+                          key={feature}
+                          className={`flex items-start gap-3 rounded-lg border p-3 text-sm transition ${
+                            checked
+                              ? "border-indigo-600 bg-indigo-50"
+                              : "border-gray-200 bg-gray-50 hover:border-indigo-300"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => handleFeatureToggle(feature)}
+                            className="mt-1 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+                            <span className="text-gray-700">{feature}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveFeatureOption(feature)}
+                              className="shrink-0 rounded px-2 py-1 text-[11px] font-semibold text-red-600 transition hover:bg-red-50"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-sm text-gray-500">
+                    Select a category first to load the matching feature checkboxes.
+                  </div>
+                )}
+
+                <div className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                  <div className="mb-2 text-sm font-semibold text-gray-900">Website Preview</div>
+                  {product.additionalfeatures ? (
+                    <div
+                      className="blog-content text-sm text-gray-700"
+                      dangerouslySetInnerHTML={{ __html: product.additionalfeatures }}
+                    />
+                  ) : (
+                    <div className="text-sm text-gray-500">No additional features selected yet.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "details" && (
+          <div className="rounded-2xl border border-gray-200 bg-gray-50 p-6">
+            <h2 className="mb-4 text-xl font-semibold text-gray-900">Product Details</h2>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+              <div className="xl:col-span-2">
+                <label className="mb-1 block font-medium text-black">Price (PHP) *</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={product.price}
+                  onChange={(e) => handleChange("price", Number(e.target.value))}
+                  className="w-full rounded border px-3 py-2 text-black bg-white focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div className="xl:col-span-2">
+                <label className="mb-1 block font-medium text-black">Inventory *</label>
+                <input
+                  type="number"
+                  value={product.inventory ?? ""}
+                  onChange={(e) => handleChange("inventory", Number(e.target.value))}
+                  className="w-full rounded border px-3 py-2 text-black bg-white focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div className="rounded-xl border border-dashed border-gray-300 bg-white px-4 py-3 text-sm text-gray-500 xl:col-span-1">
+                Height, width, and thickness are optional but useful for 3D scaling.
+              </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 mb-3">
-              <label className="px-3 py-2 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 cursor-pointer transition-colors">
-                {product.house_model_url ? 'Replace House Model' : 'Upload House Model'}
+            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div>
+                <label className="mb-1 block font-medium text-black">Height</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={product.height || ""}
+                  onChange={(e) => handleChange("height", Number(e.target.value) || undefined)}
+                  className="w-full rounded border px-3 py-2 text-black bg-white focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block font-medium text-black">Width</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={product.width || ""}
+                  onChange={(e) => handleChange("width", Number(e.target.value) || undefined)}
+                  className="w-full rounded border px-3 py-2 text-black bg-white focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block font-medium text-black">Thickness</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={product.thickness || ""}
+                  onChange={(e) => handleChange("thickness", Number(e.target.value) || undefined)}
+                  className="w-full rounded border px-3 py-2 text-black bg-white focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "files" && (
+          <div className="space-y-6 rounded-2xl border border-gray-200 bg-gray-50 p-6">
+            <div className="rounded-xl border border-gray-200 bg-white p-5">
+              <h2 className="mb-4 text-xl font-semibold text-gray-900">
+                3D Models Management ({currentFbxUrls.length} files)
+              </h2>
+
+              <div className="mb-4">
+                <label className="block font-medium mb-1 text-black">Upload New 3D Model Files (.fbx, .glb, .gltf)</label>
                 <input
                   type="file"
                   accept=".fbx,.glb,.gltf"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) handleHouseModelUpload(f);
-                  }}
+                  multiple
+                  onChange={handleFbxUpload}
+                  disabled={uploadingFbx}
+                  className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
                 />
-              </label>
-
-              <button
-                type="button"
-                onClick={handleRemoveHouseModel}
-                disabled={!product.house_model_url || uploadingHouseModel}
-                className="px-3 py-2 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition-colors disabled:opacity-50"
-              >
-                Remove
-              </button>
-            </div>
-
-            {uploadingHouseModel && (
-              <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded text-blue-800 text-sm">
-                Uploading house model...
-              </div>
-            )}
-
-            {product.house_model_url ? (
-              <a
-                href={product.house_model_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-600 underline text-xs break-all"
-              >
-                {product.house_model_url.split('/').pop() || product.house_model_url}
-              </a>
-            ) : (
-              <div className="text-xs text-gray-500">No house model uploaded.</div>
-            )}
-          </div>
-          
-          <div className="mb-4">
-            <label className="block font-medium mb-1 text-black">Upload New 3D Model Files (.fbx, .glb, .gltf)</label>
-            <input
-              type="file"
-              accept=".fbx,.glb,.gltf"
-              multiple
-              onChange={handleFbxUpload}
-              disabled={uploadingFbx}
-              className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
-            />
-            <div className="text-sm text-gray-500 mt-1">
-              Select multiple 3D model files to upload. Files will be automatically saved to the product.
-            </div>
-          </div>
-
-          {uploadingFbx && (
-            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-800">
-              <div className="flex items-center">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
-                Uploading 3D model files...
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-2">
-            {currentFbxUrls.map((url, index) => (
-              <div key={index} className="flex items-center justify-between p-3 bg-gray-100 rounded-lg border">
-                <div className="flex-1">
-                  <div className="font-medium text-sm">3D Model {index + 1}</div>
-                  <a 
-                    href={url} 
-                    target="_blank" 
-                    rel="noopener noreferrer" 
-                    className="text-blue-600 underline text-xs break-all"
-                  >
-                    {url.split('/').pop() || url}
-                  </a>
-                </div>
-                <div className="flex items-center space-x-2 ml-4">
-                  <button
-                    type="button"
-                    onClick={() => handleOpen3DViewer(index)}
-                    className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 transition-colors"
-                  >
-                    View 3D
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveFbx(url, index)}
-                    className="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition-colors"
-                  >
-                    Remove
-                  </button>
+                <div className="text-sm text-gray-500 mt-1">
+                  Select multiple 3D model files to upload. Files will be automatically saved to the product.
                 </div>
               </div>
-            ))}
-          </div>
 
-          {currentFbxUrls.length > 0 && (
-            <div className="mt-4">
-              <button
-                type="button"
-                onClick={() => handleOpen3DViewer(0)}
-                className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 transition-colors"
-              >
-                View All 3D Models ({currentFbxUrls.length})
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Images Management (unlimited) */}
-        <div className="border-b border-gray-200 pb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">
-            Images Management ({getCurrentImages().length} files)
-          </h2>
-
-          <div className="mb-4">
-            <label className="block font-medium mb-1 text-black">Upload Images</label>
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={handleImagesUpload}
-              disabled={uploadingImages}
-              className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
-            />
-            <div className="text-sm text-gray-500 mt-1">
-              You can upload any number of images. They will be added to this product.
-            </div>
-          </div>
-
-          {uploadingImages && (
-            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-800">
-              <div className="flex items-center">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
-                Uploading images...
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-2">
-            {getCurrentImages().map((url, index) => (
-              <div key={index} className="flex items-center justify-between p-3 bg-gray-100 rounded-lg border">
-                <div className="flex items-center gap-3 flex-1">
-                  <img src={url} alt={`Image ${index + 1}`} className="w-20 h-20 object-cover rounded border" />
-                  <div className="flex-1">
-                    <div className="font-medium text-sm">Image {index + 1}</div>
-                    <a
-                      href={url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-600 underline text-xs break-all"
-                    >
-                      {url.split('/').pop() || url}
-                    </a>
+              {uploadingFbx && (
+                <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-blue-800">
+                  <div className="flex items-center">
+                    <div className="mr-2 h-4 w-4 animate-spin rounded-full border-b-2 border-blue-600"></div>
+                    Uploading 3D model files...
                   </div>
                 </div>
-                <div className="flex items-center space-x-2 ml-4">
-                  <label className="px-3 py-1 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 transition-colors cursor-pointer">
-                    Replace
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f) handleReplaceImage(index, f);
-                      }}
-                    />
-                  </label>
+              )}
+
+              <div className="space-y-2">
+                {currentFbxUrls.map((url, index) => (
+                  <div key={index} className="flex items-center justify-between rounded-lg border bg-gray-50 p-3">
+                    <div className="flex-1">
+                      <div className="text-sm font-medium">3D Model {index + 1}</div>
+                      <a 
+                        href={url} 
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        className="text-xs break-all text-blue-600 underline"
+                      >
+                        {url.split('/').pop() || url}
+                      </a>
+                    </div>
+                    <div className="ml-4 flex items-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => handleOpen3DViewer(index)}
+                        className="rounded bg-blue-600 px-3 py-1 text-sm text-white transition-colors hover:bg-blue-700"
+                      >
+                        View 3D
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveFbx(url, index)}
+                        className="rounded bg-red-600 px-3 py-1 text-sm text-white transition-colors hover:bg-red-700"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {currentFbxUrls.length > 0 && (
+                <div className="mt-4">
                   <button
                     type="button"
-                    onClick={() => handleRemoveImage(url, index)}
-                    className="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition-colors"
+                    onClick={() => handleOpen3DViewer(0)}
+                    className="rounded-lg bg-blue-600 px-6 py-2 font-medium text-white transition-colors hover:bg-blue-700"
                   >
-                    Remove
+                    View All 3D Models ({currentFbxUrls.length})
                   </button>
                 </div>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-gray-200 bg-white p-5">
+              <h2 className="mb-4 text-xl font-semibold text-gray-900">
+                Images Management ({getCurrentImages().length} files)
+              </h2>
+
+              <div className="mb-4">
+                <label className="block font-medium mb-1 text-black">Upload Images</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleImagesUpload}
+                  disabled={uploadingImages}
+                  className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+                />
+                <div className="text-sm text-gray-500 mt-1">
+                  You can upload any number of images. They will be added to this product.
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
 
-        {/* Skyboxes Management */}
-        <div className="border-b border-gray-200 pb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-2">Skyboxes by Weather</h2>
-          <div className="text-sm text-gray-500 mb-4">
-            Upload one equirectangular image (JPG/PNG) per weather. This will be used as the 3D background on the website and in the admin preview.
-          </div>
+              {uploadingImages && (
+                <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-blue-800">
+                  <div className="flex items-center">
+                    <div className="mr-2 h-4 w-4 animate-spin rounded-full border-b-2 border-blue-600"></div>
+                    Uploading images...
+                  </div>
+                </div>
+              )}
 
-          {uploadingSkyboxes && (
-            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-800">
-              <div className="flex items-center">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
-                Uploading skybox...
+              <div className="space-y-2">
+                {getCurrentImages().map((url, index) => (
+                  <div key={index} className="flex items-center justify-between rounded-lg border bg-gray-50 p-3">
+                    <div className="flex flex-1 items-center gap-3">
+                      <img src={url} alt={`Image ${index + 1}`} className="h-20 w-20 rounded border object-cover" />
+                      <div className="flex-1">
+                        <div className="text-sm font-medium">Image {index + 1}</div>
+                        <a
+                          href={url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs break-all text-blue-600 underline"
+                        >
+                          {url.split('/').pop() || url}
+                        </a>
+                      </div>
+                    </div>
+                    <div className="ml-4 flex items-center space-x-2">
+                      <label className="cursor-pointer rounded bg-indigo-600 px-3 py-1 text-sm text-white transition-colors hover:bg-indigo-700">
+                        Replace
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) handleReplaceImage(index, f);
+                          }}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveImage(url, index)}
+                        className="rounded bg-red-600 px-3 py-1 text-sm text-white transition-colors hover:bg-red-700"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
-          )}
 
-          <div className="space-y-2">
-            {WEATHER_KEYS.map((weatherKey) => {
-              const sky = getCurrentSkyboxes();
-              const url = sky?.[weatherKey] || null;
-              return (
-                <div key={weatherKey} className="flex items-center justify-between p-3 bg-gray-100 rounded-lg border">
-                  <div className="flex items-center gap-3 flex-1">
-                    <div className="w-28 h-16 bg-white border rounded overflow-hidden flex items-center justify-center">
-                      {url ? (
-                        <img src={url} alt={`${weatherKey} skybox`} className="w-full h-full object-cover" />
+            <div className="rounded-xl border border-gray-200 bg-white p-5">
+              <h2 className="mb-2 text-xl font-semibold text-gray-900">Default & Custom Skyboxes</h2>
+              <div className="mb-4 text-sm text-gray-500">
+                Upload one default skybox for this product, then optionally override it with weather-specific custom skyboxes. The viewers will use a weather custom skybox first, then the default fallback.
+              </div>
+
+              {uploadingSkyboxes && (
+                <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-blue-800">
+                  <div className="flex items-center">
+                    <div className="mr-2 h-4 w-4 animate-spin rounded-full border-b-2 border-blue-600"></div>
+                    Uploading skybox...
+                  </div>
+                </div>
+              )}
+
+              <div className="mb-4 rounded-lg border bg-gray-50 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-1 items-center gap-3">
+                    <div className="flex h-16 w-28 items-center justify-center overflow-hidden rounded border bg-white">
+                      {currentSkyboxes.default ? (
+                        <img src={currentSkyboxes.default} alt="default skybox" className="h-full w-full object-cover" />
                       ) : (
                         <span className="text-xs text-gray-400">No skybox</span>
                       )}
                     </div>
                     <div className="flex-1">
-                      <div className="font-medium text-sm capitalize">{weatherKey}</div>
-                      {url ? (
+                      <div className="text-sm font-medium">Default Skybox</div>
+                      {currentSkyboxes.default ? (
                         <a
-                          href={url}
+                          href={currentSkyboxes.default}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-blue-600 underline text-xs break-all"
+                          className="text-xs break-all text-blue-600 underline"
                         >
-                          {url.split('/').pop() || url}
+                          {currentSkyboxes.default.split('/').pop() || currentSkyboxes.default}
                         </a>
                       ) : (
-                        <div className="text-xs text-gray-500">Upload an image to enable this weather skybox.</div>
+                        <div className="text-xs text-gray-500">Used when no weather-specific skybox is available.</div>
                       )}
                     </div>
                   </div>
 
-                  <div className="flex items-center space-x-2 ml-4">
-                    <label className="px-3 py-1 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 transition-colors cursor-pointer">
-                      {url ? 'Replace' : 'Upload'}
+                  <div className="ml-4 flex items-center space-x-2">
+                    <label className="cursor-pointer rounded bg-indigo-600 px-3 py-1 text-sm text-white transition-colors hover:bg-indigo-700">
+                      {currentSkyboxes.default ? 'Replace' : 'Upload'}
                       <input
                         type="file"
                         accept="image/*"
                         className="hidden"
                         onChange={(e) => {
                           const f = e.target.files?.[0];
-                          if (f) handleUploadSkybox(weatherKey, f);
+                          if (f) handleUploadSkybox("default", f);
                         }}
                       />
                     </label>
                     <button
                       type="button"
-                      onClick={() => handleRemoveSkybox(weatherKey)}
-                      disabled={!url}
-                      className="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition-colors disabled:opacity-50"
+                      onClick={() => handleRemoveSkybox("default")}
+                      disabled={!currentSkyboxes.default}
+                      className="rounded bg-red-600 px-3 py-1 text-sm text-white transition-colors hover:bg-red-700 disabled:opacity-50"
                     >
                       Remove
                     </button>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        </div>
+              </div>
 
-        {/* Action Buttons */}
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Custom Skyboxes by Weather</div>
+              <div className="space-y-2">
+                {WEATHER_KEYS.map((weatherKey) => {
+                  const url = currentSkyboxes?.[weatherKey] || null;
+                  return (
+                    <div key={weatherKey} className="flex items-center justify-between rounded-lg border bg-gray-50 p-3">
+                      <div className="flex flex-1 items-center gap-3">
+                        <div className="flex h-16 w-28 items-center justify-center overflow-hidden rounded border bg-white">
+                          {url ? (
+                            <img src={url} alt={`${weatherKey} skybox`} className="h-full w-full object-cover" />
+                          ) : (
+                            <span className="text-xs text-gray-400">No skybox</span>
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <div className="text-sm font-medium capitalize">{weatherKey}</div>
+                          {url ? (
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs break-all text-blue-600 underline"
+                            >
+                              {url.split('/').pop() || url}
+                            </a>
+                          ) : (
+                            <div className="text-xs text-gray-500">Upload an image to override the default skybox for this weather.</div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="ml-4 flex items-center space-x-2">
+                        <label className="cursor-pointer rounded bg-indigo-600 px-3 py-1 text-sm text-white transition-colors hover:bg-indigo-700">
+                          {url ? 'Replace' : 'Upload'}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) handleUploadSkybox(weatherKey, f);
+                            }}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveSkybox(weatherKey)}
+                          disabled={!url}
+                          className="rounded bg-red-600 px-3 py-1 text-sm text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="flex gap-4 pt-4">
           <button
             type="submit"

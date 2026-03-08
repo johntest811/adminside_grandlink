@@ -13,6 +13,7 @@ function getUrlExtension(url: string): string {
 }
 
 type WeatherKey = "sunny" | "rainy" | "night" | "foggy";
+type SkyboxKey = WeatherKey | "default";
 
 type ModelUnits = "mm" | "cm" | "m";
 type FrameFinish = "default" | "matteBlack" | "matteGray" | "narra" | "walnut";
@@ -47,7 +48,7 @@ export type ThreeDModelViewerProps = {
   weather: WeatherKey;
   frameFinish?: FrameFinish;
   onFrameFinishChange?: (finish: FrameFinish) => void;
-  skyboxes?: Partial<Record<WeatherKey, string | null>> | null;
+  skyboxes?: Partial<Record<SkyboxKey, string | null>> | null;
   productDimensions?: {
     width?: number | string | null;
     height?: number | string | null;
@@ -121,6 +122,17 @@ function normalizeCategoryKey(input: unknown): string {
   if (key.includes("canopy")) return "canopy";
   if (key.includes("curtain") || key.includes("curtainwall") || key.includes("curtainwalls")) return "curtainwall";
   return key;
+}
+
+function resolveSkyboxUrl(
+  skyboxes: Partial<Record<SkyboxKey, string | null>> | null | undefined,
+  weather: WeatherKey
+): string {
+  if (!skyboxes || typeof skyboxes !== "object") return "";
+  const customSkybox = skyboxes[weather];
+  const defaultSkybox = skyboxes.default;
+  const rawUrl = customSkybox || defaultSkybox;
+  return typeof rawUrl === "string" ? rawUrl.trim() : "";
 }
 
 export default function ThreeDModelViewer({
@@ -845,9 +857,7 @@ export default function ThreeDModelViewer({
 
       scene.environment = null;
 
-      const sb = skyboxesRef.current;
-      const skyUrlRaw = sb && typeof sb === "object" ? (sb as any)[type] : null;
-      const skyUrl = typeof skyUrlRaw === "string" ? skyUrlRaw.trim() : "";
+      const skyUrl = resolveSkyboxUrl(skyboxesRef.current, type);
       if (skyUrl) {
         activeSkyboxUrl = skyUrl;
         const loader = new THREE.TextureLoader();

@@ -1,72 +1,243 @@
 "use client";
-import { useEffect, useState, useMemo } from "react";
+
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
-import { logActivity } from "@/app/lib/activity";
-// charts
-import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, PointElement, LineElement, Tooltip, Legend } from "chart.js";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  PointElement,
+  LineElement,
+  Tooltip,
+  Legend,
+} from "chart.js";
 import { Bar } from "react-chartjs-2";
-import { CalendarDays, Clock3 } from "lucide-react";
+import {
+  Activity,
+  BarChart3,
+  BellRing,
+  Boxes,
+  Clock3,
+  RefreshCcw,
+  ShoppingCart,
+  TriangleAlert,
+} from "lucide-react";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, PointElement, LineElement, Tooltip, Legend);
 
-// Helper utils for activity rendering
-const parseMetadata = (m: any) => {
-  if (!m) return null;
-  if (typeof m === "string") {
-    try { return JSON.parse(m); } catch { return { raw: m }; }
+type ChartGranularity = "day" | "week" | "month";
+
+type ActivityLog = {
+  id: string | number;
+  admin_name: string;
+  action: string;
+  entity_type: string;
+  details: string;
+  page?: string;
+  metadata?: string | Record<string, unknown> | null;
+  created_at: string;
+};
+
+type ActiveUserEvent = {
+  user_id: string;
+  updated_at: string;
+};
+
+type OrderEvent = {
+  id?: string;
+  status?: string | null;
+  order_status?: string | null;
+  created_at: string;
+};
+
+type LowStockProduct = {
+  id: string;
+  name: string;
+  category?: string | null;
+  inventory?: number | null;
+};
+
+type TaskItem = {
+  id: string;
+  task_name?: string | null;
+  product_name?: string | null;
+  status?: string | null;
+  due_date?: string | null;
+};
+
+type Announcement = {
+  id: string | number;
+  title?: string | null;
+  message: string;
+  priority?: "low" | "medium" | "high" | string | null;
+  created_at: string;
+  expires_at?: string | null;
+};
+
+type MetricCard = {
+  title: string;
+  value: number;
+  subtitle: string;
+  accentClass: string;
+  icon: typeof Boxes;
+};
+
+type Bucket = {
+  key: string;
+  label: string;
+  start: Date;
+  end: Date;
+};
+
+const SUCCESS_STATUSES = new Set(["completed", "approved", "ready_for_delivery", "delivered"]);
+const LOW_STOCK_THRESHOLD = 5;
+const LOOKBACK_DAYS = 730;
+
+function toInputDate(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function startOfDay(date: Date) {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function endOfDay(date: Date) {
+  const next = new Date(date);
+  next.setHours(23, 59, 59, 999);
+  return next;
+}
+
+function parseDateInput(value: string, fallback: Date) {
+  if (!value) return new Date(fallback);
+  const parsed = new Date(`${value}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? new Date(fallback) : parsed;
+}
+
+function normalizeDateRange(startInput: string, endInput: string, fallbackDays: number) {
+  const fallbackEnd = new Date();
+  const fallbackStart = addDays(fallbackEnd, -(fallbackDays - 1));
+  const parsedStart = startOfDay(parseDateInput(startInput, fallbackStart));
+  const parsedEnd = endOfDay(parseDateInput(endInput, fallbackEnd));
+
+  if (parsedStart.getTime() <= parsedEnd.getTime()) {
+    return { start: parsedStart, end: parsedEnd };
   }
-  return m;
-};
 
-const getPageDisplayName = (page?: string) => {
-  if (!page) return null;
-  const map: Record<string, string> = {
-    dashboard: "Dashboard",
-    inventory: "Inventory",
-    products: "Products",
-    "order_management": "Order Management",
-    "accepted-orders": "Accepted Orders",
-    "cancelled-orders": "Cancelled Orders",
-    inquiries: "Inquiries",
-    reports: "Reports",
-    settings: "Settings",
-    "settings/audit": "Audit Logs",
-    admins: "Admins",
-    "user-accounts": "User Accounts",
-    calendar: "Calendar",
-    task: "Tasks",
-  };
-  return map[page] || page;
-};
+  return { start: startOfDay(parsedEnd), end: endOfDay(parsedStart) };
+}
 
-const getActionColor = (action?: string) => {
-  switch ((action || "").toLowerCase()) {
+function buildBuckets(start: Date, end: Date, granularity: ChartGranularity): Bucket[] {
+  const buckets: Bucket[] = [];
+
+  if (granularity === "day") {
+    let cursor = startOfDay(start);
+    while (cursor.getTime() <= end.getTime()) {
+      const bucketStart = startOfDay(cursor);
+      const bucketEnd = endOfDay(cursor);
+      buckets.push({
+        key: toInputDate(bucketStart),
+        label: bucketStart.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+        start: bucketStart,
+        end: bucketEnd,
+      });
+      cursor = addDays(cursor, 1);
+    }
+    return buckets;
+  }
+
+  if (granularity === "week") {
+    let cursor = startOfDay(start);
+    while (cursor.getTime() <= end.getTime()) {
+      const bucketStart = startOfDay(cursor);
+      const bucketEnd = endOfDay(addDays(bucketStart, 6));
+      const clippedEnd = bucketEnd.getTime() > end.getTime() ? endOfDay(end) : bucketEnd;
+      buckets.push({
+        key: `${toInputDate(bucketStart)}-${toInputDate(clippedEnd)}`,
+        label: `${bucketStart.toLocaleDateString(undefined, { month: "short", day: "numeric" })} - ${clippedEnd.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`,
+        start: bucketStart,
+        end: clippedEnd,
+      });
+      cursor = addDays(bucketStart, 7);
+    }
+    return buckets;
+  }
+
+  let cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+  while (cursor.getTime() <= end.getTime()) {
+    const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+    const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0, 23, 59, 59, 999);
+    const clippedStart = monthStart.getTime() < start.getTime() ? startOfDay(start) : monthStart;
+    const clippedEnd = monthEnd.getTime() > end.getTime() ? endOfDay(end) : monthEnd;
+    buckets.push({
+      key: `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, "0")}`,
+      label: monthStart.toLocaleDateString(undefined, { month: "short", year: "numeric" }),
+      start: clippedStart,
+      end: clippedEnd,
+    });
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+  }
+
+  return buckets;
+}
+
+function normalizeOrderStatus(status?: string | null, orderStatus?: string | null) {
+  return String(orderStatus || status || "").trim().toLowerCase();
+}
+
+function parseMetadata(metadata?: string | Record<string, unknown> | null) {
+  if (!metadata) return null;
+  if (typeof metadata === "string") {
+    try {
+      return JSON.parse(metadata) as Record<string, unknown>;
+    } catch {
+      return { raw: metadata };
+    }
+  }
+  return metadata;
+}
+
+function formatTimeAgo(iso: string) {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const seconds = Math.floor(diffMs / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleString();
+}
+
+function getActivityAccent(action?: string) {
+  switch (String(action || "").toLowerCase()) {
     case "create":
     case "add":
-    case "accept_order":
-    case "reserve_order":
-      return "border-green-500 bg-green-50";
-    case "view":
-      return "border-gray-400 bg-gray-100";
+      return "border-emerald-500 bg-emerald-50";
     case "update":
-    case "stock":
     case "change":
-    case "order":
+    case "stock":
       return "border-blue-500 bg-blue-50";
     case "delete":
-    case "cancelled":
     case "cancel":
+    case "cancelled":
       return "border-red-500 bg-red-50";
-    case "login":
-    case "logout":
-      return "border-gray-400 bg-gray-50";
     default:
-      return "border-indigo-500 bg-indigo-50";
+      return "border-slate-400 bg-slate-50";
   }
-};
+}
 
-const getActionIcon = (action?: string) => {
-  switch ((action || "").toLowerCase()) {
+function getActivityIcon(action?: string) {
+  switch (String(action || "").toLowerCase()) {
     case "create":
     case "add":
       return "➕";
@@ -75,979 +246,749 @@ const getActionIcon = (action?: string) => {
       return "♻️";
     case "delete":
       return "🗑️";
-    case "stock":
-      return "📦";
-    case "order":
-    case "accept_order":
-    case "reserve_order":
-      return "🧾";
-    case "login":
-      return "🔐";
-    case "logout":
-      return "🔓";
-    case "cancelled":
     case "cancel":
+    case "cancelled":
       return "⛔";
+    case "upload":
+      return "📤";
     default:
       return "📝";
   }
-};
-
-const formatTimeAgo = (iso: string) => {
-  const diff = Date.now() - new Date(iso).getTime();
-  const s = Math.floor(diff / 1000);
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  if (d < 7) return `${d}d ago`;
-  return new Date(iso).toLocaleString();
-};
-
-type ActivityLog = {
-  id: string | number;
-  admin_id: string;
-  admin_name: string;
-  action: string;
-  entity_type: string;
-  entity_id?: string;
-  details: string;
-  page?: string;
-  metadata?: string;
-  created_at: string;
-};
+}
 
 export default function DashboardPage() {
+  const today = useMemo(() => new Date(), []);
+  const defaultEnd = useMemo(() => toInputDate(today), [today]);
+  const defaultStart = useMemo(() => toInputDate(addDays(today, -29)), [today]);
+
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
   const [recentActivities, setRecentActivities] = useState<ActivityLog[]>([]);
-  // Removed averagePrice from stats
-  const [stats, setStats] = useState({
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [myTasks, setMyTasks] = useState<TaskItem[]>([]);
+  const [lowStockProducts, setLowStockProducts] = useState<LowStockProduct[]>([]);
+  const [activeUserEvents, setActiveUserEvents] = useState<ActiveUserEvent[]>([]);
+  const [orderEvents, setOrderEvents] = useState<OrderEvent[]>([]);
+  const [metrics, setMetrics] = useState({
     totalProducts: 0,
-    numberOfSales: 0,
-    totalUserAccounts: 0,
-    activeUsers: 0,
+    totalUsers: 0,
     pendingOrders: 0,
+    cancelledOrders: 0,
+    successfulSales: 0,
+    lowStockCount: 0,
   });
 
-  const [, setDailySales] = useState<{ date: string; amount: number }[]>([]);
-  const [, setWeeklySales] = useState<{ label: string; amount: number }[]>([]);
-  // New: Orders status summary (last 30 days)
-  const [, setOrdersStatusCounts] = useState<{ successful: number; cancelled: number; pending: number }>({
-    successful: 0,
-    cancelled: 0,
-    pending: 0,
-  });
-  // NEW: Orders by Status timeframes
-  const [ordersStatusTab, setOrdersStatusTab] = useState<"day" | "week" | "month">("day");
-  const [ordersStatusDay, setOrdersStatusDay] = useState<Array<{ label: string; successful: number; cancelled: number; pending: number }>>([]);
-  const [ordersStatusWeek, setOrdersStatusWeek] = useState<Array<{ label: string; successful: number; cancelled: number; pending: number }>>([]);
-  const [ordersStatusMonth, setOrdersStatusMonth] = useState<Array<{ label: string; successful: number; cancelled: number; pending: number }>>([]);
-
-  // NEW: Active Users timeframes
-  const [activeTab, setActiveTab] = useState<"day" | "week" | "month">("day");
-  const [activeUsersDay, setActiveUsersDay] = useState<{ label: string; count: number }[]>([]);
-  const [activeUsersWeek, setActiveUsersWeek] = useState<{ label: string; count: number }[]>([]);
-  const [activeUsersMonth, setActiveUsersMonth] = useState<{ label: string; count: number }[]>([]);
-  const [announcements, setAnnouncements] = useState<any[]>([]);
-  const [upcomingEvents, setUpcomingEvents] = useState<any[]>([]);
-  const [myTasks, setMyTasks] = useState<any[]>([]);
+  const [activeGranularity, setActiveGranularity] = useState<ChartGranularity>("day");
+  const [ordersGranularity, setOrdersGranularity] = useState<ChartGranularity>("day");
+  const [activeStartDate, setActiveStartDate] = useState(defaultStart);
+  const [activeEndDate, setActiveEndDate] = useState(defaultEnd);
+  const [ordersStartDate, setOrdersStartDate] = useState(defaultStart);
+  const [ordersEndDate, setOrdersEndDate] = useState(defaultEnd);
 
   useEffect(() => {
-    // Load current admin from localStorage
-    const loadCurrentAdmin = () => {
-      try {
-        console.log("🔍 Loading current admin from localStorage...");
-        const sessionData = localStorage.getItem('adminSession');
-        if (sessionData) {
-          const admin = JSON.parse(sessionData);
-          console.log("✅ Admin loaded from session:", admin);
-          setCurrentAdmin(admin);
-        } else {
-          console.log("❌ No admin session found");
-        }
-      } catch (error) {
-        console.error("💥 Error loading admin session:", error);
-      }
-    };
-
-    loadCurrentAdmin();
-  }, []);
-
-  useEffect(() => {
-    // Fetch ALL recent activities for dashboard display
-    const fetchRecentActivities = async () => {
-      try {
-        console.log("📋 Fetching ALL activities for dashboard...");
-        const { data, error } = await supabase
-          .from("activity_logs")
-          .select("*")
-          .order("created_at", { ascending: false })
-          .limit(100);
-
-        if (error) {
-          console.error("❌ Activities fetch error:", error);
-          setRecentActivities([]);
-          return;
-        }
-        
-        console.log("✅ All activities fetched:", data?.length || 0);
-        setRecentActivities(data || []);
-      } catch (e) {
-        console.error("💥 Activities fetch exception:", e);
-        setRecentActivities([]);
-      }
-    };
-
-    // Initial fetch
-    fetchRecentActivities();
-
-    // Set up real-time subscription for ALL activities
-    const channel = supabase
-      .channel("dashboard_all_activity_logs")
-      .on("postgres_changes", { 
-        event: "INSERT", 
-        schema: "public", 
-        table: "activity_logs"
-      }, () => {
-        console.log("🔄 Real-time activity update received (all activities)");
-        fetchRecentActivities();
-      })
-      .subscribe();
-
-    // Cleanup function
-    return () => {
-      try { 
-        supabase.removeChannel(channel); 
-      } catch (e) {
-        console.error("Error removing channel:", e);
-      }
-    };
-  }, []); // Empty dependency array - no dependencies that change
-
-  useEffect(() => {
-    fetchMetrics();
-  }, []);
-
-  useEffect(() => {
-    const fetchDashboardExtras = async () => {
-      try {
-        const nowIso = new Date().toISOString();
-        const { data: eventsData } = await supabase
-          .from("calendar_events")
-          .select("id, title, start, end, location")
-          .gte("start", nowIso)
-          .order("start", { ascending: true })
-          .limit(6);
-        setUpcomingEvents(eventsData || []);
-      } catch (e) {
-        console.error("Failed to fetch calendar events for dashboard", e);
-        setUpcomingEvents([]);
-      }
-
-      if (!currentAdmin?.id) {
-        setMyTasks([]);
-        return;
-      }
-
-      try {
-        const { data: tasksData } = await supabase
-          .from("tasks")
-          .select("id, task_name, status, due_date, product_name")
-          .eq("assigned_admin_id", currentAdmin.id)
-          .neq("status", "completed")
-          .order("due_date", { ascending: true })
-          .limit(6);
-        setMyTasks(tasksData || []);
-      } catch (e) {
-        console.error("Failed to fetch current admin tasks", e);
-        setMyTasks([]);
-      }
-    };
-
-    fetchDashboardExtras();
-  }, [currentAdmin?.id]);
-
-  const fetchMetrics = async () => {
     try {
-      // Products count
-      {
-        const { count } = await supabase.from("products").select("*", { count: "exact", head: true });
-        setStats((s) => ({ ...s, totalProducts: count || 0 }));
-      }
-
-      // Payment sessions (completed)
-      const startOfMonth = new Date(); startOfMonth.setDate(1); startOfMonth.setHours(0,0,0,0);
-      const last30 = new Date(Date.now() - 30*24*60*60*1000);
-      const last365 = new Date(Date.now() - 365*24*60*60*1000);
-
-      await supabase
-        .from("payment_sessions")
-        .select("amount, status, created_at")
-        .gte("created_at", startOfMonth.toISOString());
-
-      // Daily sales (last 10 days) for the line chart below
-      const { data: sessions30 } = await supabase
-        .from("payment_sessions")
-        .select("amount, status, created_at")
-        .gte("created_at", last30.toISOString());
-
-      const completed30 = (sessions30 || []).filter((s: any) => s.status === "completed");
-      const byDaySales = new Map<string, number>();
-      completed30.forEach((s: any) => {
-        const d = new Date(s.created_at).toLocaleDateString();
-        byDaySales.set(d, (byDaySales.get(d) || 0) + Number(s.amount || 0));
-      });
-      const last10 = Array.from(byDaySales.entries())
-        .sort((a, b) => new Date(a[0]).getTime() - new Date(b[0]).getTime())
-        .slice(-10)
-        .map(([date, amount]) => ({ date, amount }));
-
-      // Weekly sales (last 7 days buckets)
-      const weekday = ["S","M","T","W","T","F","S"];
-      const now = new Date();
-      const week: { label: string; amount: number }[] = [];
-      for (let i = 6; i >= 0; i--) {
-        const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-        const label = weekday[d.getDay()];
-        const key = d.toLocaleDateString();
-        week.push({ label, amount: byDaySales.get(key) || 0 });
-      }
-
-      // Active users (distinct user_id updated in last 30d for KPI)
-      const { data: recentItems } = await supabase
-        .from("user_items")
-        .select("user_id, updated_at")
-        .gte("updated_at", last30.toISOString())
-        .limit(5000);
-      const activeUsers = new Set((recentItems || []).map((r: any) => r.user_id)).size;
-
-      // Pending orders (not completed/cancelled)
-      const { count: pendingOrders } = await supabase
-        .from("user_items")
-        .select("*", { count: "exact", head: true })
-        .not("order_status", "in", `("completed","cancelled")`);
-
-      // Orders by Status (last 30 days) for dashboard summary
-      const { data: orders30 } = await supabase
-        .from("user_items")
-        .select("status, order_status, created_at, item_type")
-        .gte("created_at", last30.toISOString())
-        .in("item_type", ["order", "reservation"]) 
-        .limit(20000);
-
-      const successStatuses = ["completed", "approved", "ready_for_delivery", "delivered"];
-      const statusCounts = { successful: 0, cancelled: 0, pending: 0 } as {
-        successful: number; cancelled: number; pending: number;
-      };
-      (orders30 || []).forEach((o: any) => {
-        const s = String(o.order_status || o.status || "").toLowerCase();
-        if (successStatuses.includes(s)) statusCounts.successful += 1;
-        else if (s === "cancelled") statusCounts.cancelled += 1;
-        else statusCounts.pending += 1;
-      });
-      setOrdersStatusCounts(statusCounts);
-
-      // KPI: Number of Sales = completed/delivered orders in the current month
-      let numberOfSales = 0;
-      try {
-        const { data: ordersMonth } = await supabase
-          .from("user_items")
-          .select("status, order_status, created_at, item_type")
-          .gte("created_at", startOfMonth.toISOString())
-          .in("item_type", ["order", "reservation"])
-          .limit(50000);
-        numberOfSales = (ordersMonth || []).filter((o: any) => {
-          const s = String(o.order_status || o.status || "").toLowerCase();
-          return successStatuses.includes(s);
-        }).length;
-      } catch {
-        numberOfSales = 0;
-      }
-
-      // KPI: Total user accounts
-      let totalUserAccounts = 0;
-      try {
-        const res = await fetch("/api/admin-users");
-        if (res.ok) {
-          const result = await res.json();
-          totalUserAccounts = Array.isArray(result?.users) ? result.users.length : 0;
-        }
-      } catch {
-        totalUserAccounts = 0;
-      }
-
-      // NEW: Pull 12 months of user_items activity for day/week/month aggregation
-      const { data: items365 } = await supabase
-        .from("user_items")
-        .select("user_id, updated_at")
-        .gte("updated_at", last365.toISOString())
-        .limit(20000);
-
-      const items = (items365 || []).map((r: any) => ({ user_id: r.user_id, updated_at: r.updated_at }));
-
-      // NEW: Pull orders with statuses for the same 12 months window
-      const { data: orders365 } = await supabase
-        .from("user_items")
-        .select("status, order_status, created_at, item_type")
-        .gte("created_at", last365.toISOString())
-        .in("item_type", ["order", "reservation"]) 
-        .limit(50000);
-
-      // Helpers
-      const ymd = (d: Date) => {
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, "0");
-        const day = String(d.getDate()).padStart(2, "0");
-        return `${y}-${m}-${day}`;
-      };
-      const startOfWeek = (d: Date) => {
-        const n = new Date(d);
-        const day = n.getDay(); // 0=Sun
-        n.setDate(n.getDate() - day + 1); // Monday start
-        n.setHours(0,0,0,0);
-        return n;
-      };
-      // Aggregate: Daily last 14 days
-      const last14: { label: string; count: number }[] = [];
-      const last14Status: Array<{ label: string; successful: number; cancelled: number; pending: number }> = [];
-      for (let i = 13; i >= 0; i--) {
-        const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate() - i);
-        const key = ymd(d);
-        const set = new Set<string>();
-        items.forEach((row) => {
-          const rd = new Date(row.updated_at);
-          if (ymd(rd) === key) set.add(row.user_id);
-        });
-        last14.push({ label: new Date(key).toLocaleDateString(), count: set.size });
-
-        // Orders by status for this day
-        const buckets = { successful: 0, cancelled: 0, pending: 0 };
-        (orders365 || []).forEach((o: any) => {
-          const day = ymd(new Date(o.created_at));
-          const s = String(o.order_status || o.status || "");
-          if (day === key) {
-            if (["completed","approved","ready_for_delivery","delivered"].includes(s)) buckets.successful += 1;
-            else if (s === "cancelled") buckets.cancelled += 1;
-            else buckets.pending += 1;
-          }
-        });
-        last14Status.push({ label: new Date(key).toLocaleDateString(), ...buckets });
-      }
-
-      // Aggregate: Weekly last 8 weeks
-      const last8w: { label: string; count: number }[] = [];
-      const last8wStatus: Array<{ label: string; successful: number; cancelled: number; pending: number }> = [];
-      for (let i = 7; i >= 0; i--) {
-        const end = new Date(); end.setHours(23,59,59,999); end.setDate(end.getDate() - (i * 7));
-        const start = startOfWeek(new Date(end));
-        const set = new Set<string>();
-        items.forEach((row) => {
-          const rd = new Date(row.updated_at);
-          if (rd >= start && rd <= end) set.add(row.user_id);
-        });
-        const label = `${start.toLocaleDateString()}–${end.toLocaleDateString()}`;
-        last8w.push({ label, count: set.size });
-
-        const buckets = { successful: 0, cancelled: 0, pending: 0 };
-        (orders365 || []).forEach((o: any) => {
-          const rd = new Date(o.created_at);
-          const s = String(o.order_status || o.status || "");
-          if (rd >= start && rd <= end) {
-            if (["completed","approved","ready_for_delivery","delivered"].includes(s)) buckets.successful += 1;
-            else if (s === "cancelled") buckets.cancelled += 1;
-            else buckets.pending += 1;
-          }
-        });
-        last8wStatus.push({ label, ...buckets });
-      }
-
-      // Aggregate: Monthly last 12 months
-      const last12m: { label: string; count: number }[] = [];
-      const last12mStatus: Array<{ label: string; successful: number; cancelled: number; pending: number }> = [];
-      for (let i = 11; i >= 0; i--) {
-        const d = new Date(); d.setDate(1); d.setHours(0,0,0,0); d.setMonth(d.getMonth() - i);
-        const start = new Date(d);
-        const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
-        const set = new Set<string>();
-        items.forEach((row) => {
-          const rd = new Date(row.updated_at);
-          if (rd >= start && rd <= end) set.add(row.user_id);
-        });
-        const label = `${start.toLocaleString(undefined, { month: "short" })} ${start.getFullYear()}`;
-        last12m.push({ label, count: set.size });
-
-        const buckets = { successful: 0, cancelled: 0, pending: 0 };
-        (orders365 || []).forEach((o: any) => {
-          const rd = new Date(o.created_at);
-          const s = String(o.order_status || o.status || "");
-          if (rd >= start && rd <= end) {
-            if (["completed","approved","ready_for_delivery","delivered"].includes(s)) buckets.successful += 1;
-            else if (s === "cancelled") buckets.cancelled += 1;
-            else buckets.pending += 1;
-          }
-        });
-        last12mStatus.push({ label, ...buckets });
-      }
-
-      setActiveUsersDay(last14);
-      setActiveUsersWeek(last8w);
-      setActiveUsersMonth(last12m);
-
-  // Update Orders by Status timeframes
-  setOrdersStatusDay(last14Status);
-  setOrdersStatusWeek(last8wStatus);
-  setOrdersStatusMonth(last12mStatus);
-
-      setStats({
-        totalProducts: (await supabase.from("products").select("*", { count: "exact", head: true })).count || 0,
-        numberOfSales,
-        totalUserAccounts,
-        activeUsers,
-        pendingOrders: pendingOrders || 0,
-      });
-
-    setDailySales(last10);
-    setWeeklySales(week);
-    } catch (e) {
-      console.error("metrics error:", e);
+      const sessionData = localStorage.getItem("adminSession");
+      if (!sessionData) return;
+      setCurrentAdmin(JSON.parse(sessionData));
+    } catch (error) {
+      console.error("Failed to load admin session", error);
     }
-  };
+  }, []);
 
-  // NEW: Active Users chart data (Daily/Weekly/Monthly)
-  const activeUsersChartData = useMemo(() => {
-    const source =
-      activeTab === "day" ? activeUsersDay :
-      activeTab === "week" ? activeUsersWeek : activeUsersMonth;
+  useEffect(() => {
+    if (!currentAdmin) return;
 
-    return {
-      labels: source.map((s) => s.label),
+    const fetchDashboard = async () => {
+      const monthStart = new Date();
+      monthStart.setDate(1);
+      monthStart.setHours(0, 0, 0, 0);
+
+      const last30Start = addDays(new Date(), -29);
+      last30Start.setHours(0, 0, 0, 0);
+
+      const lookbackStart = addDays(new Date(), -(LOOKBACK_DAYS - 1));
+      lookbackStart.setHours(0, 0, 0, 0);
+
+      try {
+        const [
+          totalProductsResult,
+          lowStockResult,
+          pendingOrdersResult,
+          monthlyOrdersResult,
+          ordersHistoryResult,
+          activeUsersResult,
+          activitiesResult,
+          announcementsResult,
+          tasksResult,
+          adminUsersResult,
+        ] = await Promise.all([
+          supabase.from("products").select("id", { count: "exact", head: true }),
+          supabase
+            .from("products")
+            .select("id, name, inventory, category")
+            .lte("inventory", LOW_STOCK_THRESHOLD)
+            .order("inventory", { ascending: true })
+            .limit(12),
+          supabase
+            .from("user_items")
+            .select("id", { count: "exact", head: true })
+            .in("item_type", ["order", "reservation"])
+            .not("order_status", "in", '("completed","cancelled")'),
+          supabase
+            .from("user_items")
+            .select("status, order_status, created_at, item_type")
+            .gte("created_at", monthStart.toISOString())
+            .in("item_type", ["order", "reservation"])
+            .limit(50000),
+          supabase
+            .from("user_items")
+            .select("id, status, order_status, created_at, item_type")
+            .gte("created_at", lookbackStart.toISOString())
+            .in("item_type", ["order", "reservation"])
+            .limit(50000),
+          supabase
+            .from("user_items")
+            .select("user_id, updated_at")
+            .gte("updated_at", lookbackStart.toISOString())
+            .limit(50000),
+          supabase.from("activity_logs").select("*").order("created_at", { ascending: false }).limit(30),
+          supabase
+            .from("notifications")
+            .select("id, title, message, priority, created_at, expires_at")
+            .contains("metadata", { kind: "announcement" })
+            .order("created_at", { ascending: false })
+            .limit(6),
+          supabase
+            .from("tasks")
+            .select("id, task_name, status, due_date, product_name")
+            .eq("assigned_admin_id", currentAdmin.id)
+            .neq("status", "completed")
+            .order("due_date", { ascending: true })
+            .limit(6),
+          fetch("/api/admin-users", { cache: "no-store" }).then(async (res) => {
+            if (!res.ok) return { users: [] as unknown[] };
+            return await res.json();
+          }),
+        ]);
+
+        const monthlySales = ((monthlyOrdersResult.data || []) as OrderEvent[]).filter((row) =>
+          SUCCESS_STATUSES.has(normalizeOrderStatus(row.status, row.order_status))
+        ).length;
+
+        const cancelledLast30 = ((ordersHistoryResult.data || []) as OrderEvent[]).filter((row) => {
+          const createdAt = new Date(row.created_at).getTime();
+          return createdAt >= last30Start.getTime() && normalizeOrderStatus(row.status, row.order_status) === "cancelled";
+        }).length;
+
+        const nowIso = new Date().toISOString();
+
+        setMetrics({
+          totalProducts: totalProductsResult.count || 0,
+          totalUsers: Array.isArray(adminUsersResult?.users) ? adminUsersResult.users.length : 0,
+          pendingOrders: pendingOrdersResult.count || 0,
+          cancelledOrders: cancelledLast30,
+          successfulSales: monthlySales,
+          lowStockCount: (lowStockResult.data || []).length,
+        });
+
+        setLowStockProducts((lowStockResult.data || []) as LowStockProduct[]);
+        setActiveUserEvents(((activeUsersResult.data || []) as ActiveUserEvent[]).filter((row) => !!row.user_id));
+        setOrderEvents((ordersHistoryResult.data || []) as OrderEvent[]);
+        setRecentActivities((activitiesResult.data || []) as ActivityLog[]);
+        setAnnouncements(
+          ((announcementsResult.data || []) as Announcement[]).filter((item) => !item.expires_at || item.expires_at > nowIso)
+        );
+        setMyTasks((tasksResult.data || []) as TaskItem[]);
+      } catch (error) {
+        console.error("Failed to load dashboard", error);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    };
+
+    setRefreshing(true);
+    fetchDashboard();
+  }, [currentAdmin, refreshNonce]);
+
+  const activeRange = useMemo(
+    () => normalizeDateRange(activeStartDate, activeEndDate, 30),
+    [activeStartDate, activeEndDate]
+  );
+
+  const ordersRange = useMemo(
+    () => normalizeDateRange(ordersStartDate, ordersEndDate, 30),
+    [ordersStartDate, ordersEndDate]
+  );
+
+  const activeUserBuckets = useMemo(() => {
+    const buckets = buildBuckets(activeRange.start, activeRange.end, activeGranularity);
+    return buckets.map((bucket) => {
+      const users = new Set<string>();
+      activeUserEvents.forEach((event) => {
+        const updatedAt = new Date(event.updated_at).getTime();
+        if (updatedAt >= bucket.start.getTime() && updatedAt <= bucket.end.getTime()) {
+          users.add(event.user_id);
+        }
+      });
+      return { label: bucket.label, count: users.size };
+    });
+  }, [activeGranularity, activeRange.end, activeRange.start, activeUserEvents]);
+
+  const ordersStatusBuckets = useMemo(() => {
+    const buckets = buildBuckets(ordersRange.start, ordersRange.end, ordersGranularity);
+    return buckets.map((bucket) => {
+      const counts = { successful: 0, cancelled: 0, pending: 0 };
+      orderEvents.forEach((event) => {
+        const createdAt = new Date(event.created_at).getTime();
+        if (createdAt < bucket.start.getTime() || createdAt > bucket.end.getTime()) return;
+        const normalized = normalizeOrderStatus(event.status, event.order_status);
+        if (SUCCESS_STATUSES.has(normalized)) counts.successful += 1;
+        else if (normalized === "cancelled") counts.cancelled += 1;
+        else counts.pending += 1;
+      });
+      return { label: bucket.label, ...counts };
+    });
+  }, [orderEvents, ordersGranularity, ordersRange.end, ordersRange.start]);
+
+  const activeUsersInRange = useMemo(() => {
+    const unique = new Set<string>();
+    activeUserEvents.forEach((event) => {
+      const updatedAt = new Date(event.updated_at).getTime();
+      if (updatedAt >= activeRange.start.getTime() && updatedAt <= activeRange.end.getTime()) {
+        unique.add(event.user_id);
+      }
+    });
+    return unique.size;
+  }, [activeRange.end, activeRange.start, activeUserEvents]);
+
+  const activeAverage = useMemo(() => {
+    if (!activeUserBuckets.length) return 0;
+    const total = activeUserBuckets.reduce((sum, bucket) => sum + bucket.count, 0);
+    return total / activeUserBuckets.length;
+  }, [activeUserBuckets]);
+
+  const orderRangeTotals = useMemo(() => {
+    return ordersStatusBuckets.reduce(
+      (totals, bucket) => ({
+        successful: totals.successful + bucket.successful,
+        cancelled: totals.cancelled + bucket.cancelled,
+        pending: totals.pending + bucket.pending,
+      }),
+      { successful: 0, cancelled: 0, pending: 0 }
+    );
+  }, [ordersStatusBuckets]);
+
+  const activeUsersChartData = useMemo(
+    () => ({
+      labels: activeUserBuckets.map((bucket) => bucket.label),
       datasets: [
         {
           label: "Active Users",
-          data: source.map((s) => s.count),
-          backgroundColor: "rgba(16,185,129,0.8)", // emerald
-          borderColor: "rgba(16,185,129,1)",
+          data: activeUserBuckets.map((bucket) => bucket.count),
+          backgroundColor: "rgba(15, 118, 110, 0.85)",
+          borderColor: "rgba(15, 118, 110, 1)",
+          borderRadius: 8,
+          maxBarThickness: 34,
         },
       ],
-    };
-  }, [activeTab, activeUsersDay, activeUsersWeek, activeUsersMonth]);
+    }),
+    [activeUserBuckets]
+  );
 
-  // Orders by Status chart data (stacked), switchable Day/Week/Month
-  const ordersByStatusData = useMemo(() => {
-    const source =
-      ordersStatusTab === "day" ? ordersStatusDay :
-      ordersStatusTab === "week" ? ordersStatusWeek : ordersStatusMonth;
-
-    const labels = source.map((s) => s.label);
-    const succ = source.map((s) => s.successful);
-    const canc = source.map((s) => s.cancelled);
-    const pend = source.map((s) => s.pending);
-
-    return {
-      labels,
+  const ordersByStatusData = useMemo(
+    () => ({
+      labels: ordersStatusBuckets.map((bucket) => bucket.label),
       datasets: [
-        { label: "Successful", data: succ, backgroundColor: "#16A34A", stack: 's' },
-        { label: "Cancelled", data: canc, backgroundColor: "#DC2626", stack: 's' },
-        { label: "Pending", data: pend, backgroundColor: "#F59E0B", stack: 's' },
+        {
+          label: "Successful",
+          data: ordersStatusBuckets.map((bucket) => bucket.successful),
+          backgroundColor: "#16A34A",
+          borderRadius: 6,
+          stack: "orders",
+        },
+        {
+          label: "Cancelled",
+          data: ordersStatusBuckets.map((bucket) => bucket.cancelled),
+          backgroundColor: "#DC2626",
+          borderRadius: 6,
+          stack: "orders",
+        },
+        {
+          label: "Pending",
+          data: ordersStatusBuckets.map((bucket) => bucket.pending),
+          backgroundColor: "#F59E0B",
+          borderRadius: 6,
+          stack: "orders",
+        },
       ],
-    };
-  }, [ordersStatusTab, ordersStatusDay, ordersStatusWeek, ordersStatusMonth]);
+    }),
+    [ordersStatusBuckets]
+  );
 
-  const miniCalendarData = useMemo(() => {
-    const today = new Date();
-    const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-    const startOffset = firstOfMonth.getDay();
-    const gridStart = new Date(firstOfMonth);
-    gridStart.setDate(firstOfMonth.getDate() - startOffset);
+  const metricCards = useMemo<MetricCard[]>(
+    () => [
+      {
+        title: "Needs Restock",
+        value: metrics.lowStockCount,
+        subtitle: `Inventory at ${LOW_STOCK_THRESHOLD} or below`,
+        accentClass: "from-red-500/15 to-red-50 text-red-700",
+        icon: TriangleAlert,
+      },
+      {
+        title: "Cancelled Orders",
+        value: metrics.cancelledOrders,
+        subtitle: "Last 30 days",
+        accentClass: "from-rose-500/15 to-rose-50 text-rose-700",
+        icon: ShoppingCart,
+      },
+      {
+        title: "Pending Orders",
+        value: metrics.pendingOrders,
+        subtitle: "Open orders and reservations",
+        accentClass: "from-amber-500/15 to-amber-50 text-amber-700",
+        icon: Clock3,
+      },
+      {
+        title: "Sales This Month",
+        value: metrics.successfulSales,
+        subtitle: "Successful deliveries and approvals",
+        accentClass: "from-emerald-500/15 to-emerald-50 text-emerald-700",
+        icon: BarChart3,
+      },
+      {
+        title: "Total Products",
+        value: metrics.totalProducts,
+        subtitle: `${metrics.totalUsers.toLocaleString()} user accounts tracked`,
+        accentClass: "from-sky-500/15 to-sky-50 text-sky-700",
+        icon: Boxes,
+      },
+    ],
+    [metrics.cancelledOrders, metrics.lowStockCount, metrics.pendingOrders, metrics.successfulSales, metrics.totalProducts, metrics.totalUsers]
+  );
 
-    const toLocalDateKey = (date: Date) =>
-      `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-        date.getDate()
-      ).padStart(2, "0")}`;
-
-    const eventsByDate = new Map<string, any[]>();
-    upcomingEvents.forEach((event) => {
-      if (!event?.start) return;
-      const eventDate = new Date(event.start);
-      if (Number.isNaN(eventDate.getTime())) return;
-      const key = toLocalDateKey(eventDate);
-      const existing = eventsByDate.get(key) || [];
-      existing.push(event);
-      eventsByDate.set(key, existing);
-    });
-
-    const days = Array.from({ length: 42 }, (_, index) => {
-      const date = new Date(gridStart);
-      date.setDate(gridStart.getDate() + index);
-      const key = toLocalDateKey(date);
-      const isCurrentMonth = date.getMonth() === today.getMonth();
-      const isToday =
-        date.getDate() === today.getDate() &&
-        date.getMonth() === today.getMonth() &&
-        date.getFullYear() === today.getFullYear();
-
-      return {
-        key,
-        date,
-        dayNumber: date.getDate(),
-        isCurrentMonth,
-        isToday,
-        events: eventsByDate.get(key) || [],
-      };
-    });
-
-    return {
-      monthLabel: today.toLocaleString(undefined, { month: "long", year: "numeric" }),
-      weekDays: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
-      days,
-    };
-  }, [upcomingEvents]);
-
-  // ADD: test helpers to avoid runtime ReferenceError
-  const testActivityLogging = async () => {
-    try {
-      const adminId = currentAdmin?.id || "anonymous";
-      const adminName = currentAdmin?.username || "Admin";
-      const payload = {
-        admin_id: adminId,
-        admin_name: adminName,
-        action: "test",
-        entity_type: "dashboard",
-        details: "Manual test activity from dashboard",
-        page: "dashboard",
-        metadata: JSON.stringify({ source: "test_button", at: new Date().toISOString() }),
-      };
-
-      // Try helper if available, otherwise insert directly
-      try {
-        await (logActivity as any)(payload);
-      } catch {
-        await supabase.from("activity_logs").insert(payload);
-      }
-
-      alert("Activity log written.");
-    } catch (e: any) {
-      console.error("testActivityLogging failed:", e);
-      alert(`Failed: ${e.message || e}`);
-    }
-  };
-
-  const testSupabaseConnection = async () => {
-    try {
-      const { error } = await supabase
-        .from("products")
-        .select("id", { head: true, count: "exact" });
-      if (error) throw error;
-      alert("Supabase connection OK.");
-    } catch (e: any) {
-      console.error("testSupabaseConnection failed:", e);
-      alert(`Supabase error: ${e.message || e}`);
-    }
-  };
-
-  useEffect(() => {
-    const fetchAnnouncements = async () => {
-      try {
-        const { data, error } = await supabase
-          .from("notifications")
-          .select("*")
-          .contains("metadata", { kind: "announcement" })
-          .order("created_at", { ascending: false })
-          .limit(10);
-        if (error) throw error;
-        const nowIso = new Date().toISOString();
-        setAnnouncements(
-          (data || []).filter((a: any) => !a.expires_at || a.expires_at > nowIso)
-        );
-      } catch (e) {
-        console.error("Announcements fetch error:", e);
-        setAnnouncements([]);
-      }
-    };
-    fetchAnnouncements();
-    const ch = supabase
-      .channel("dashboard_announcements")
-      .on("postgres_changes", { event: "*", schema: "public", table: "notifications" }, () => {
-        fetchAnnouncements();
-      })
-      .subscribe();
-    return () => {
-      try { supabase.removeChannel(ch); } catch {}
-    };
-  }, []);
+  if (!currentAdmin && loading) {
+    return <div className="min-h-screen flex items-center justify-center text-slate-600">Loading dashboard...</div>;
+  }
 
   return (
-    <div className="min-h-screen bg-gray-100 p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-black">Dashboard</h1>
-        <div className="flex items-center gap-4">
-          <button onClick={testActivityLogging} className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">🧪 Test Activity Log</button>
-          <button onClick={testSupabaseConnection} className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">🔌 Test Supabase</button>
-          <div className="text-sm text-black">Welcome back, {currentAdmin?.username || "Admin"}</div>
-        </div>
-      </div>
-
-      {/* KPI Cards (removed Average Price, 4 columns) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center">
-            <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white text-sm">📊</div>
-            <div className="ml-4">
-              <div className="text-sm font-medium text-black">Number of Sales</div>
-              <div className="text-2xl font-bold text-black">{stats.numberOfSales.toLocaleString()}</div>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100 p-6 md:p-8 space-y-6">
+      <section className="rounded-3xl border border-slate-200 bg-white/90 shadow-sm">
+        <div className="flex flex-col gap-4 p-6 md:flex-row md:items-center md:justify-between md:p-8">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-slate-600">
+              <Activity className="h-3.5 w-3.5" />
+              Admin Command Center
             </div>
+            <h1 className="mt-3 text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">Dashboard</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600 md:text-base">
+              Focused operational overview for stock, orders, activity, and customer movement. Built for faster admin decisions.
+            </p>
+          </div>
+
+          <div className="flex flex-col items-start gap-3 md:items-end">
+            <div className="text-sm text-slate-500">
+              Signed in as <span className="font-semibold text-slate-700">{currentAdmin?.username || "Admin"}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setLoading(true);
+                setRefreshing(true);
+                setRefreshNonce((value) => value + 1);
+              }}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-400 hover:bg-slate-50"
+            >
+              <RefreshCcw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+              Refresh Dashboard
+            </button>
           </div>
         </div>
+      </section>
 
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center">
-            <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center text-white text-sm">💵</div>
-            <div className="ml-4">
-              <div className="text-sm font-medium text-black">Total User Accounts</div>
-              <div className="text-2xl font-bold text-black">{stats.totalUserAccounts.toLocaleString()}</div>
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+        {metricCards.map((card) => {
+          const Icon = card.icon;
+          return (
+            <article key={card.title} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold text-slate-600">{card.title}</p>
+                  <p className="mt-3 text-3xl font-bold text-slate-900">{card.value.toLocaleString()}</p>
+                  <p className="mt-2 text-xs leading-5 text-slate-500">{card.subtitle}</p>
+                </div>
+                <div className={`rounded-2xl bg-gradient-to-br p-3 ${card.accentClass}`}>
+                  <Icon className="h-5 w-5" />
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </section>
+
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <article className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Active Users Overview</h2>
+              <p className="mt-1 text-sm text-slate-500">Track active customer activity across a custom reporting window.</p>
             </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center">
-            <div className="w-8 h-8 bg-indigo-500 rounded-full flex items-center justify-center text-white text-sm">👥</div>
-            <div className="ml-4">
-              <div className="text-sm font-medium text-black">Active Users (30d)</div>
-              <div className="text-2xl font-bold text-black">{stats.activeUsers.toLocaleString()}</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center">
-            <div className="w-8 h-8 bg-yellow-500 rounded-full flex items-center justify-center text-white text-sm">🛒</div>
-            <div className="ml-4">
-              <div className="text-sm font-medium text-black">Pending Orders</div>
-              <div className="text-2xl font-bold text-black">{stats.pendingOrders.toLocaleString()}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Charts row: Active Users (left) + Sales Analytics (right) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Active Users Overview (moved into grid) */}
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-black">Active Users Overview</h2>
-            <div className="inline-flex rounded-md border overflow-hidden">
-              <button
-                onClick={() => setActiveTab("day")}
-                className={`px-3 py-1.5 text-sm ${activeTab === "day" ? "bg-emerald-600 text-white" : "bg-white text-black hover:bg-gray-50"}`}
-              >
-                Daily
-              </button>
-              <button
-                onClick={() => setActiveTab("week")}
-                className={`px-3 py-1.5 text-sm border-l ${activeTab === "week" ? "bg-emerald-600 text-white" : "bg-white text-black hover:bg-gray-50"}`}
-              >
-                Weekly
-              </button>
-              <button
-                onClick={() => setActiveTab("month")}
-                className={`px-3 py-1.5 text-sm border-l ${activeTab === "month" ? "bg-emerald-600 text-white" : "bg-white text-black hover:bg-gray-50"}`}
-              >
-                Monthly
-              </button>
-            </div>
-          </div>
-          <Bar
-            data={activeUsersChartData}
-            options={{
-              responsive: true,
-              plugins: { legend: { display: false }, tooltip: { enabled: true } },
-              scales: {
-                x: { ticks: { color: "#000" } },
-                y: {
-                  ticks: { color: "#000" },
-                  beginAtZero: true,
-                  suggestedMax: Math.max(5, ...((activeUsersChartData.datasets[0].data as number[]) || [0])) + 2,
-                },
-              },
-            }}
-          />
-        </div>
-
-        {/* Orders by Status – Daily / Weekly / Monthly */}
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-black">Orders by Status</h2>
-            <div className="flex gap-2">
-              {(["day","week","month"] as const).map((t) => (
+            <div className="flex flex-wrap gap-2">
+              {(["day", "week", "month"] as const).map((value) => (
                 <button
-                  key={t}
-                  onClick={() => setOrdersStatusTab(t)}
-                  className={`px-3 py-1 rounded text-sm border ${ordersStatusTab===t? 'bg-emerald-600 text-white border-emerald-700' : 'bg-white text-black border-gray-300 hover:bg-gray-100'}`}
+                  key={value}
+                  type="button"
+                  onClick={() => setActiveGranularity(value)}
+                  className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${
+                    activeGranularity === value
+                      ? "bg-teal-600 text-white shadow-sm"
+                      : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
                 >
-                  {t === 'day' ? 'Daily' : t === 'week' ? 'Weekly' : 'Monthly'}
+                  {value === "day" ? "Daily" : value === "week" ? "Weekly" : "Monthly"}
                 </button>
               ))}
             </div>
           </div>
-          <Bar
-            data={ordersByStatusData}
-            options={{
-              responsive: true,
-              plugins: { legend: { display: true } },
-              scales: {
-                x: { stacked: true, ticks: { color: '#000' } },
-                y: { stacked: true, beginAtZero: true, ticks: { color: '#000' } },
-              },
-            }}
-          />
-        </div>
-      </div>
 
-      {/* Dashboard quick panels: Calendar + My Tasks */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <CalendarDays className="h-5 w-5 text-red-700" />
-              <h2 className="text-lg font-semibold text-black">Upcoming Calendar</h2>
-            </div>
-            <a href="/dashboard/calendar" className="text-sm text-black underline">Open Calendar</a>
+          <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <label className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Start Date</span>
+              <input
+                type="date"
+                value={activeStartDate}
+                onChange={(event) => setActiveStartDate(event.target.value)}
+                className="w-full bg-transparent text-sm font-medium text-slate-900 outline-none"
+              />
+            </label>
+            <label className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">End Date</span>
+              <input
+                type="date"
+                value={activeEndDate}
+                onChange={(event) => setActiveEndDate(event.target.value)}
+                className="w-full bg-transparent text-sm font-medium text-slate-900 outline-none"
+              />
+            </label>
           </div>
 
-          <div className="rounded border p-3">
-            <div className="text-sm font-semibold text-black mb-2">{miniCalendarData.monthLabel}</div>
-            <div className="grid grid-cols-7 gap-1 text-[11px] text-gray-600 mb-1">
-              {miniCalendarData.weekDays.map((day) => (
-                <div key={day} className="text-center font-medium">{day}</div>
-              ))}
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl bg-teal-50 px-4 py-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-teal-700">Unique Users</div>
+              <div className="mt-2 text-2xl font-bold text-teal-900">{activeUsersInRange.toLocaleString()}</div>
             </div>
-            <div className="grid grid-cols-7 gap-1">
-              {miniCalendarData.days.map((day) => (
-                <div
-                  key={day.key}
-                  className={`h-10 rounded border p-1 text-xs flex flex-col items-center justify-between ${
-                    day.isCurrentMonth ? "bg-white text-black" : "bg-gray-50 text-gray-400"
-                  } ${day.isToday ? "border-red-500" : "border-gray-200"}`}
-                  title={
-                    day.events.length
-                      ? `${day.events.length} event${day.events.length > 1 ? "s" : ""}`
-                      : "No events"
-                  }
+            <div className="rounded-2xl bg-slate-50 px-4 py-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Average per Bucket</div>
+              <div className="mt-2 text-2xl font-bold text-slate-900">{activeAverage.toFixed(1)}</div>
+            </div>
+            <div className="rounded-2xl bg-slate-50 px-4 py-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Granularity</div>
+              <div className="mt-2 text-2xl font-bold capitalize text-slate-900">{activeGranularity}</div>
+            </div>
+          </div>
+
+          <div className="mt-6 rounded-2xl border border-slate-100 bg-slate-50 p-4">
+            <Bar
+              data={activeUsersChartData}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: { display: false },
+                },
+                scales: {
+                  x: { ticks: { color: "#475569" }, grid: { display: false } },
+                  y: { beginAtZero: true, ticks: { color: "#475569" }, grid: { color: "rgba(148,163,184,0.2)" } },
+                },
+              }}
+              height={280}
+            />
+          </div>
+        </article>
+
+        <article className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Orders by Status</h2>
+              <p className="mt-1 text-sm text-slate-500">Analyze successful, cancelled, and pending orders inside a custom reporting window.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {(["day", "week", "month"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setOrdersGranularity(value)}
+                  className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${
+                    ordersGranularity === value
+                      ? "bg-indigo-600 text-white shadow-sm"
+                      : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
                 >
-                  <span className="leading-none">{day.dayNumber}</span>
-                  {day.events.length > 0 ? (
-                    <span className="w-2 h-2 rounded-full bg-red-600" />
-                  ) : (
-                    <span className="w-2 h-2" />
-                  )}
-                </div>
+                  {value === "day" ? "Daily" : value === "week" ? "Weekly" : "Monthly"}
+                </button>
               ))}
             </div>
           </div>
 
-          {upcomingEvents.length === 0 ? (
-            <div className="text-sm text-gray-600 mt-3">No upcoming events.</div>
-          ) : (
-            <div className="space-y-2 mt-3">
-              {upcomingEvents.slice(0, 3).map((event) => (
-                <div key={event.id} className="rounded border p-2">
-                  <div className="text-sm font-semibold text-black">{event.title}</div>
-                  <div className="text-xs text-gray-600 mt-0.5">{event.start ? new Date(event.start).toLocaleString() : "No date"}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-indigo-700">
-                <Clock3 className="h-4 w-4" />
-              </span>
-              <h2 className="text-lg font-semibold text-black">My Tasks</h2>
-            </div>
-            <a href="/dashboard/task/employeetask" className="text-sm text-black underline">Open Tasks</a>
+          <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <label className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Start Date</span>
+              <input
+                type="date"
+                value={ordersStartDate}
+                onChange={(event) => setOrdersStartDate(event.target.value)}
+                className="w-full bg-transparent text-sm font-medium text-slate-900 outline-none"
+              />
+            </label>
+            <label className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">End Date</span>
+              <input
+                type="date"
+                value={ordersEndDate}
+                onChange={(event) => setOrdersEndDate(event.target.value)}
+                className="w-full bg-transparent text-sm font-medium text-slate-900 outline-none"
+              />
+            </label>
           </div>
 
-          {myTasks.length === 0 ? (
-            <div className="text-sm text-gray-600">No active tasks assigned to this account.</div>
-          ) : (
-            <div className="space-y-3">
-              {myTasks.map((task) => (
-                <div key={task.id} className="rounded-lg border border-gray-200 p-3 hover:bg-gray-50 transition-colors">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold text-black truncate">{task.task_name || task.product_name || `Task #${task.id}`}</div>
-                      <div className="text-xs text-gray-600 mt-0.5">{task.due_date ? `Due ${new Date(task.due_date).toLocaleDateString()}` : "No due date"}</div>
-                    </div>
-                    <span className="shrink-0 px-2 py-0.5 rounded-full text-[11px] font-medium bg-indigo-100 text-indigo-700">
-                      {task.status || "pending"}
-                    </span>
-                  </div>
-                </div>
-              ))}
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl bg-emerald-50 px-4 py-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Successful</div>
+              <div className="mt-2 text-2xl font-bold text-emerald-900">{orderRangeTotals.successful.toLocaleString()}</div>
             </div>
-          )}
-        </div>
-      </div>
-
-      {/* Announcements */}
-      <div className="bg-white rounded-lg shadow">
-        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-black">Announcements</h2>
-          <a
-            href="/dashboard/announcement"
-            className="text-sm text-black underline"
-            title="Manage announcements"
-          >
-            Manage
-          </a>
-        </div>
-        <div className="p-6">
-          {announcements.length === 0 ? (
-            <div className="text-black">No announcements</div>
-          ) : (
-            <ul className="space-y-3">
-              {announcements.slice(0, 5).map((a: any) => (
-                <li key={a.id} className="p-4 rounded border">
-                  <div className="flex items-start gap-3">
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                        a.priority === "high"
-                          ? "bg-red-100 text-red-700"
-                          : a.priority === "low"
-                          ? "bg-emerald-100 text-emerald-700"
-                          : "bg-amber-100 text-amber-700"
-                      }`}
-                    >
-                      {a.priority || "medium"}
-                    </span>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <div className="font-semibold text-black">{a.title}</div>
-                        <div className="text-xs text-black/70">
-                          {new Date(a.created_at).toLocaleString()}
-                        </div>
-                      </div>
-                      <div className="text-sm text-black mt-1">{a.message}</div>
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-
-      {/* ALL Recent Activities Section - unchanged */}
-      <div className="bg-white rounded-lg shadow">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-900">All Recent Activities</h2>
-            <div className="text-sm text-gray-500">
-              System-wide • {recentActivities.length} total activities
+            <div className="rounded-2xl bg-rose-50 px-4 py-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-rose-700">Cancelled</div>
+              <div className="mt-2 text-2xl font-bold text-rose-900">{orderRangeTotals.cancelled.toLocaleString()}</div>
+            </div>
+            <div className="rounded-2xl bg-amber-50 px-4 py-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">Pending</div>
+              <div className="mt-2 text-2xl font-bold text-amber-900">{orderRangeTotals.pending.toLocaleString()}</div>
             </div>
           </div>
-        </div>
-        
-        {/* Fully Scrollable Activities Container */}
-        <div className="max-h-96 overflow-y-auto">
-          <div className="p-6">
-            {recentActivities.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
-                <div className="text-4xl mb-4">📝</div>
-                <div className="text-lg font-medium mb-2">No recent activities</div>
-                <div className="text-sm">System activities will appear here</div>
+
+          <div className="mt-6 rounded-2xl border border-slate-100 bg-slate-50 p-4">
+            <Bar
+              data={ordersByStatusData}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: { position: "top" as const, labels: { color: "#334155" } },
+                },
+                scales: {
+                  x: { stacked: true, ticks: { color: "#475569" }, grid: { display: false } },
+                  y: { stacked: true, beginAtZero: true, ticks: { color: "#475569" }, grid: { color: "rgba(148,163,184,0.2)" } },
+                },
+              }}
+              height={280}
+            />
+          </div>
+        </article>
+      </section>
+
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+        <article className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Restock Watchlist</h2>
+              <p className="mt-1 text-sm text-slate-500">Products that need immediate stock attention.</p>
+            </div>
+            <div className="rounded-2xl bg-red-50 px-4 py-2 text-sm font-semibold text-red-700">
+              {lowStockProducts.length} flagged
+            </div>
+          </div>
+
+          <div className="mt-5 space-y-3">
+            {lowStockProducts.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                No products are currently below the restock threshold.
               </div>
             ) : (
-              <div className="space-y-4">
-                {recentActivities.map((activity) => {
-                  const metadata = parseMetadata(activity.metadata);
-                  const pageDisplay = getPageDisplayName(activity.page);
-                  
-
-                  return (
-                    <div key={String(activity.id)} className={`flex items-start gap-4 p-4 rounded-lg border-l-4 ${getActionColor(activity.action)}`}>
-                      <div className="flex-shrink-0">
-                        <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center">
-                          <span className="text-lg">{getActionIcon(activity.action)}</span>
-                        </div>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-3 mb-2">
-                          <span className="text-sm font-medium text-gray-900 capitalize">
-                            {activity.action} {activity.entity_type}
-                          </span>
-                          {pageDisplay && (
-                            <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full font-medium">
-                              {pageDisplay}
-                            </span>
-                          )}
-                          <span className="text-xs text-gray-500 ml-auto">
-                            {formatTimeAgo(activity.created_at)}
-                          </span>
-                        </div>
-                        
-                        <div className="text-sm text-gray-700 mb-2">
-                          {activity.details}
-                        </div>
-                        
-                        {metadata && (
-                          <div className="grid grid-cols-2 gap-3 text-xs bg-white rounded p-3 border">
-                            {metadata.productName && (
-                              <div>
-                                <span className="font-medium text-gray-600">Product:</span> 
-                                <span className="text-gray-900 ml-1">{metadata.productName}</span>
-                              </div>
-                            )}
-                            
-                            {metadata.oldInventory !== undefined && metadata.newInventory !== undefined && (
-                              <div>
-                                <span className="font-medium text-gray-600">Inventory:</span> 
-                                <span className="text-gray-900 ml-1">
-                                  {metadata.oldInventory} → {metadata.newInventory}
-                                  {metadata.inventoryChange && (
-                                    <span className={`ml-1 ${metadata.inventoryChange > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                      ({metadata.inventoryChange > 0 ? '+' : ''}{metadata.inventoryChange})
-                                    </span>
-                                  )}
-                                </span>
-                              </div>
-                            )}
-                            
-                            {metadata.category && (
-                              <div>
-                                <span className="font-medium text-gray-600">Category:</span> 
-                                <span className="text-gray-900 ml-1">{metadata.category}</span>
-                              </div>
-                            )}
-                            
-                            {metadata.price !== undefined && (
-                              <div>
-                                <span className="font-medium text-gray-600">Price:</span> 
-                                <span className="text-gray-900 ml-1">₱{metadata.price}</span>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        
-                        <div className="text-xs text-gray-400 mt-2">
-                          {new Date(activity.created_at).toLocaleString()} • Admin: {activity.admin_name}
-                        </div>
+              lowStockProducts.map((product) => {
+                const stockLevel = Number(product.inventory || 0);
+                const critical = stockLevel <= 0;
+                return (
+                  <div key={product.id} className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">{product.name}</div>
+                      <div className="mt-1 text-xs text-slate-500">{product.category || "Uncategorized"}</div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className={`rounded-full px-3 py-1 text-xs font-semibold ${critical ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+                        {critical ? "Out of stock" : "Low stock"}
+                      </span>
+                      <div className="text-right">
+                        <div className="text-xs uppercase tracking-wide text-slate-400">Inventory</div>
+                        <div className="text-lg font-bold text-slate-900">{stockLevel}</div>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
+                  </div>
+                );
+              })
             )}
           </div>
+        </article>
+
+        <div className="grid grid-cols-1 gap-6">
+          <article className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="rounded-2xl bg-indigo-50 p-3 text-indigo-700">
+                  <Clock3 className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900">My Tasks</h2>
+                  <p className="mt-1 text-sm text-slate-500">Open assignments for this admin account.</p>
+                </div>
+              </div>
+              <a href="/dashboard/task/employeetask" className="text-sm font-semibold text-slate-700 underline">View all</a>
+            </div>
+
+            <div className="mt-5 space-y-3">
+              {myTasks.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                  No active tasks assigned to this account.
+                </div>
+              ) : (
+                myTasks.map((task) => (
+                  <div key={task.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">{task.task_name || task.product_name || `Task ${task.id}`}</div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {task.due_date ? `Due ${new Date(task.due_date).toLocaleDateString()}` : "No due date"}
+                        </div>
+                      </div>
+                      <span className="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700 capitalize">
+                        {task.status || "pending"}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </article>
+
+          <article className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="rounded-2xl bg-amber-50 p-3 text-amber-700">
+                  <BellRing className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900">Announcements</h2>
+                  <p className="mt-1 text-sm text-slate-500">Current internal notices for the admin team.</p>
+                </div>
+              </div>
+              <a href="/dashboard/announcement" className="text-sm font-semibold text-slate-700 underline">Manage</a>
+            </div>
+
+            <div className="mt-5 space-y-3">
+              {announcements.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                  No announcements available.
+                </div>
+              ) : (
+                announcements.map((announcement) => (
+                  <div key={announcement.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm font-semibold text-slate-900">{announcement.title || "Announcement"}</div>
+                      <span
+                        className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                          announcement.priority === "high"
+                            ? "bg-red-100 text-red-700"
+                            : announcement.priority === "low"
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-amber-100 text-amber-700"
+                        }`}
+                      >
+                        {announcement.priority || "medium"}
+                      </span>
+                    </div>
+                    <div className="mt-2 text-sm leading-6 text-slate-600">{announcement.message}</div>
+                    <div className="mt-3 text-xs text-slate-400">{new Date(announcement.created_at).toLocaleString()}</div>
+                  </div>
+                ))
+              )}
+            </div>
+          </article>
         </div>
-      </div>
+      </section>
+
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-slate-900">Recent Activity</h2>
+            <p className="mt-1 text-sm text-slate-500">Latest admin and system activity across products, inventory, and orders.</p>
+          </div>
+          <div className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-600">
+            {recentActivities.length} recent entries
+          </div>
+        </div>
+
+        <div className="mt-5 max-h-[34rem] space-y-4 overflow-y-auto pr-1">
+          {recentActivities.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+              No recent activity logged yet.
+            </div>
+          ) : (
+            recentActivities.map((activityLog) => {
+              const metadata = parseMetadata(activityLog.metadata);
+              return (
+                <article key={String(activityLog.id)} className={`rounded-2xl border-l-4 p-4 ${getActivityAccent(activityLog.action)}`}>
+                  <div className="flex gap-4">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-lg shadow-sm">
+                      {getActivityIcon(activityLog.action)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                        <div>
+                          <div className="text-sm font-semibold capitalize text-slate-900">
+                            {activityLog.action} {activityLog.entity_type}
+                          </div>
+                          <div className="mt-1 text-sm leading-6 text-slate-600">{activityLog.details}</div>
+                        </div>
+                        <div className="text-xs font-medium text-slate-400">{formatTimeAgo(activityLog.created_at)}</div>
+                      </div>
+
+                      {metadata ? (
+                        <div className="mt-3 grid grid-cols-1 gap-2 rounded-2xl border border-white/70 bg-white/70 p-3 text-xs text-slate-500 md:grid-cols-2">
+                          {metadata.productName ? (
+                            <div>
+                              <span className="font-semibold text-slate-600">Product:</span> {String(metadata.productName)}
+                            </div>
+                          ) : null}
+                          {metadata.category ? (
+                            <div>
+                              <span className="font-semibold text-slate-600">Category:</span> {String(metadata.category)}
+                            </div>
+                          ) : null}
+                          {metadata.price !== undefined ? (
+                            <div>
+                              <span className="font-semibold text-slate-600">Price:</span> ₱{String(metadata.price)}
+                            </div>
+                          ) : null}
+                          {metadata.oldInventory !== undefined && metadata.newInventory !== undefined ? (
+                            <div>
+                              <span className="font-semibold text-slate-600">Inventory:</span> {String(metadata.oldInventory)} → {String(metadata.newInventory)}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      <div className="mt-3 text-xs text-slate-400">
+                        {new Date(activityLog.created_at).toLocaleString()} • Admin: {activityLog.admin_name}
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+      </section>
     </div>
   );
 }
