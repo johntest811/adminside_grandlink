@@ -115,7 +115,6 @@ export default function DashboardLayout({
       dropdown: [
         { name: 'Assigned Task', path: '/dashboard/task/assigntask' },
         { name: 'Employee Task', path: '/dashboard/task/employeetask' },
-        { name: 'Admin Task', path: '/dashboard/task/admintask' },
       ],
     },
     // { name: 'Orders', path: '/dashboard/orders', icon: '🛒' },

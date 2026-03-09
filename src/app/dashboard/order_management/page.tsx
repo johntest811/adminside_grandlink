@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { adminNotificationService } from "@/utils/notificationHelper";
 
 type UserItem = {
@@ -552,6 +553,22 @@ export default function OrdersPage() {
                         })
                       )}
                     </div>
+                    {['approved', 'in_production', 'quality_check', 'packaging'].includes(String(stage || '')) ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Link
+                          href={`/dashboard/task/assigntask?orderId=${encodeURIComponent(r.id)}`}
+                          className="text-xs font-semibold bg-white text-blue-700 border border-blue-200 px-2 py-1 rounded hover:bg-blue-50 transition-colors"
+                        >
+                          Setup Workflow
+                        </Link>
+                        <Link
+                          href={`/dashboard/task/employeetask?orderId=${encodeURIComponent(r.id)}`}
+                          className="text-xs font-semibold bg-white text-emerald-700 border border-emerald-200 px-2 py-1 rounded hover:bg-emerald-50 transition-colors"
+                        >
+                          Review Stages
+                        </Link>
+                      </div>
+                    ) : null}
                   </td>
                 </tr>
               );

@@ -31,6 +31,42 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, error: "Missing userItemId or newStatus" }, { status: 400 });
       }
 
+      const websiteBase = (
+        process.env.NEXT_PUBLIC_USER_WEBSITE_URL ||
+        process.env.NEXT_PUBLIC_WEBSITE_URL ||
+        "https://grandlnik-website.vercel.app"
+      ).replace(/\/$/, "");
+
+      try {
+        const websiteResponse = await fetch(`${websiteBase}/api/update-order-status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userItemId,
+            newStatus,
+            adminName: payload?.adminName || null,
+            adminNotes: payload?.adminNotes || null,
+            estimatedDeliveryDate: payload?.estimatedDeliveryDate || null,
+            skipUpdate: true,
+          }),
+          cache: "no-store",
+        });
+
+        const websiteJson = await websiteResponse.json().catch(() => ({}));
+        if (websiteResponse.ok) {
+          return NextResponse.json({
+            success: true,
+            proxied: true,
+            message: websiteJson?.message || "Notification processed",
+            invoiceEmailSent: websiteJson?.invoiceEmailSent || false,
+          });
+        }
+
+        console.warn("Website order-status proxy failed, using admin fallback:", websiteJson?.error || websiteResponse.statusText);
+      } catch (proxyError) {
+        console.warn("Website order-status proxy error, using admin fallback:", proxyError);
+      }
+
       const { data: orderData, error: orderErr } = await supabaseAdmin
         .from("user_items")
         .select("*")

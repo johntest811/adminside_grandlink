@@ -2,8 +2,31 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Users, Wrench, PlayCircle, Plus } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import {
+  ArrowLeft,
+  CalendarClock,
+  CheckCircle2,
+  ClipboardList,
+  Factory,
+  Save,
+  Users,
+  Wrench,
+} from "lucide-react";
 import { supabase } from "../../../Clients/Supabase/SupabaseClients";
+import {
+  PRODUCTION_ROLE_CONFIGS,
+  PRODUCTION_ROLE_LABELS,
+  PRODUCTION_STAGES,
+  buildRoleAssignmentsFromWorkflow,
+  buildStagePlansFromAssignments,
+  buildWorkflowMembers,
+  clampPercent,
+  createEmptyRoleAssignments,
+  ensureProductionWorkflow,
+  getProductionRoleForAdmin,
+  type ProductionRoleKey,
+} from "../workflowShared";
 
 type AdminUser = {
   id: string;
@@ -22,6 +45,7 @@ type OrderOption = {
   customer_name: string | null;
   order_status: string | null;
   created_at: string;
+  meta?: Record<string, unknown> | null;
 };
 
 type AdminSession = {
@@ -46,218 +70,432 @@ type TaskRow = {
   status: string;
 };
 
-type UserItemMeta = {
-  production_percent?: number;
-  production_updates?: unknown[];
-  final_qc?: unknown;
-  [key: string]: unknown;
+type UserItemRecord = {
+  id: string;
+  meta?: Record<string, unknown> | null;
+  progress_history?: unknown[];
+  order_status?: string | null;
+  status?: string | null;
 };
 
-export default function AssignTaskPage() {
-  const [adminSession, setAdminSession] = useState<AdminSession | null>(null);
+const ACTIVE_PRODUCTION_STAGES = new Set([
+  "in_production",
+  "quality_check",
+  "packaging",
+  "ready_for_delivery",
+  "out_for_delivery",
+  "completed",
+]);
 
+export default function AssignTaskPage() {
+  const searchParams = useSearchParams();
+  const [adminSession, setAdminSession] = useState<AdminSession | null>(null);
   const [employees, setEmployees] = useState<AdminUser[]>([]);
   const [orders, setOrders] = useState<OrderOption[]>([]);
-
-  const [teamSelectionIds, setTeamSelectionIds] = useState<string[]>([]);
-  const [teamBusy, setTeamBusy] = useState(false);
-
-  const [selectedOrderId, setSelectedOrderId] = useState<string>("");
+  const [selectedOrderId, setSelectedOrderId] = useState("");
+  const [selectedOrderRecord, setSelectedOrderRecord] = useState<UserItemRecord | null>(null);
+  const [existingTasks, setExistingTasks] = useState<TaskRow[]>([]);
+  const [roleAssignments, setRoleAssignments] = useState<Record<ProductionRoleKey, string[]>>(createEmptyRoleAssignments());
+  const [estimatedCompletionDate, setEstimatedCompletionDate] = useState("");
+  const [savingWorkflow, setSavingWorkflow] = useState(false);
   const [startingProduction, setStartingProduction] = useState(false);
-
-  const [tasks, setTasks] = useState<TaskRow[]>([]);
-  const [loadingTasks, setLoadingTasks] = useState(false);
-
-  const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [creatingTask, setCreatingTask] = useState(false);
-  const [newTask, setNewTask] = useState({
-    task_name: "",
-    assigned_admin_id: "",
-    start_date: new Date().toISOString().slice(0, 10),
-    due_date: "",
-  });
+  const [loadingOrderContext, setLoadingOrderContext] = useState(false);
 
   const isLeader = useMemo(() => {
-    const r = adminSession?.role;
-    const p = (adminSession?.position || "").toLowerCase();
-    if (r === "superadmin") return true;
-    if (r === "manager") return true;
-    if (r === "admin") return true;
-    return p.includes("team") || p.includes("lead") || p.includes("super") || p.includes("manager") || p.includes("supervisor");
-  }, [adminSession?.role, adminSession?.position]);
+    const r = String(adminSession?.role || "").toLowerCase();
+    const p = String(adminSession?.position || "").toLowerCase();
+    return (
+      r === "superadmin" ||
+      r === "manager" ||
+      r === "admin" ||
+      r === "team_leader" ||
+      p.includes("lead") ||
+      p.includes("team") ||
+      p.includes("manager") ||
+      p.includes("supervisor")
+    );
+  }, [adminSession?.position, adminSession?.role]);
 
   useEffect(() => {
     try {
       const raw = localStorage.getItem("adminSession");
       if (raw) setAdminSession(JSON.parse(raw));
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, []);
 
   useEffect(() => {
     (async () => {
-      // Load employees
-      const { data: empData, error: empErr } = await supabase
-        .from("admins")
-        .select("id, username, full_name, employee_number, role, position, is_active")
-        .eq("is_active", true)
-        .order("full_name", { ascending: true });
+      const [{ data: empData, error: empErr }, { data: orderData, error: orderErr }] = await Promise.all([
+        supabase
+          .from("admins")
+          .select("id, username, full_name, employee_number, role, position, is_active")
+          .eq("is_active", true)
+          .order("full_name", { ascending: true }),
+        supabase
+          .from("user_items")
+          .select("id, product_id, customer_name, status, order_status, created_at, meta, products(name)")
+          .in("item_type", ["order", "reservation"])
+          .order("created_at", { ascending: false })
+          .limit(400),
+      ]);
 
-      if (!empErr) setEmployees((empData || []) as AdminUser[]);
-
-      // Load candidate orders
-      const { data: orderData, error: orderErr } = await supabase
-        .from("user_items")
-        .select("id, product_id, customer_name, status, order_status, created_at, products(name)")
-        .in("item_type", ["order", "reservation"])
-        .order("created_at", { ascending: false })
-        .limit(400);
+      if (!empErr) {
+        setEmployees((empData || []) as AdminUser[]);
+      }
 
       if (orderErr) {
         console.error("Failed to load orders", orderErr);
-      } else {
-        const allowed = new Set(["accepted", "approved", "in_production"]);
-        const mapped: OrderOption[] = (orderData || [])
-          .map((row: unknown) => {
-          const r = row as {
+        return;
+      }
+
+      const allowed = new Set(["accepted", "approved", "in_production", "quality_check", "packaging"]);
+      const mapped: OrderOption[] = (orderData || [])
+        .map((row: unknown) => {
+          const current = row as {
             id: string;
             product_id: string;
             customer_name?: string | null;
             status?: string | null;
             order_status?: string | null;
             created_at: string;
+            meta?: Record<string, unknown> | null;
             products?: { name?: string | null } | null;
           };
-
-          const stage = String(r.order_status || r.status || "");
+          const stage = String(current.order_status || current.status || "");
           if (!allowed.has(stage)) return null;
-
           return {
-            user_item_id: r.id,
-            product_id: r.product_id,
-            product_name: r.products?.name || "(Unknown Product)",
-            customer_name: r.customer_name || null,
-            order_status: (r.order_status || r.status || null) as string | null,
-            created_at: r.created_at,
+            user_item_id: current.id,
+            product_id: current.product_id,
+            product_name: current.products?.name || "(Unknown Product)",
+            customer_name: current.customer_name || null,
+            order_status: (current.order_status || current.status || null) as string | null,
+            created_at: current.created_at,
+            meta: current.meta || {},
           };
-          })
-          .filter(Boolean) as OrderOption[];
-        setOrders(mapped);
-      }
+        })
+        .filter(Boolean) as OrderOption[];
+
+      setOrders(mapped);
     })();
   }, []);
 
   useEffect(() => {
-    // Load team members + tasks for selected order
+    const orderId = searchParams?.get("orderId") || "";
+    if (!orderId || selectedOrderId) return;
+    setSelectedOrderId(orderId);
+  }, [searchParams, selectedOrderId]);
+
+  useEffect(() => {
     (async () => {
       if (!selectedOrderId) {
-        setTeamSelectionIds([]);
-        setTasks([]);
+        setSelectedOrderRecord(null);
+        setExistingTasks([]);
+        setEstimatedCompletionDate("");
+        setRoleAssignments(createEmptyRoleAssignments());
         return;
       }
 
-      const { data, error } = await supabase
-        .from("order_team_members")
-        .select("admin_id")
-        .eq("user_item_id", selectedOrderId);
+      setLoadingOrderContext(true);
+      try {
+        const [{ data: orderRow, error: orderErr }, { data: taskRows, error: taskErr }, { data: teamRows, error: teamErr }] = await Promise.all([
+          supabase.from("user_items").select("id, meta, progress_history, order_status, status").eq("id", selectedOrderId).single(),
+          supabase.from("tasks").select("*").eq("user_item_id", selectedOrderId).order("id", { ascending: true }),
+          supabase.from("order_team_members").select("admin_id").eq("user_item_id", selectedOrderId),
+        ]);
 
-      if (error) {
-        console.error("Failed to load order team", error);
-        setTeamSelectionIds([]);
-        setTasks([]);
-        return;
+        if (orderErr) throw orderErr;
+        if (taskErr) throw taskErr;
+        if (teamErr) throw teamErr;
+
+        const record = (orderRow || null) as UserItemRecord | null;
+        setSelectedOrderRecord(record);
+        setExistingTasks((taskRows || []) as TaskRow[]);
+
+        const workflow = ensureProductionWorkflow(record?.meta?.production_workflow);
+        const nextAssignments = buildRoleAssignmentsFromWorkflow(workflow);
+        const fallbackTeamIds = (teamRows || [])
+          .map((row: { admin_id?: string | null }) => String(row.admin_id || ""))
+          .filter(Boolean);
+
+        if (fallbackTeamIds.length > 0) {
+          for (const adminId of fallbackTeamIds) {
+            const employee = employees.find((item) => item.id === adminId);
+            const roleKey = employee ? getProductionRoleForAdmin(employee) : null;
+            if (roleKey && !nextAssignments[roleKey].includes(adminId)) {
+              nextAssignments[roleKey].push(adminId);
+            }
+          }
+        }
+
+        setRoleAssignments(nextAssignments);
+        setEstimatedCompletionDate(
+          String(workflow.estimated_completion_date || record?.meta?.production_estimated_completion_date || "")
+        );
+      } catch (error) {
+        console.error("Failed to load order context", error);
+        setSelectedOrderRecord(null);
+        setExistingTasks([]);
+        setEstimatedCompletionDate("");
+        setRoleAssignments(createEmptyRoleAssignments());
+      } finally {
+        setLoadingOrderContext(false);
       }
-
-      const ids = (data || [])
-        .map((r: unknown) => String((r as { admin_id?: unknown }).admin_id || ""))
-        .filter(Boolean);
-      setTeamSelectionIds(ids);
-
-      setLoadingTasks(true);
-      const { data: tData, error: tErr } = await supabase
-        .from("tasks")
-        .select("*")
-        .eq("user_item_id", selectedOrderId)
-        .order("id", { ascending: true });
-      if (tErr) {
-        console.error("Failed to load tasks", tErr);
-        setTasks([]);
-      } else {
-        setTasks((tData || []) as TaskRow[]);
-      }
-      setLoadingTasks(false);
     })();
-  }, [selectedOrderId]);
+  }, [employees, selectedOrderId]);
 
-  const saveTeam = async () => {
-    if (!selectedOrderId) {
-      alert("Please select an order first.");
-      return;
+  const selectedOrder = useMemo(
+    () => orders.find((order) => order.user_item_id === selectedOrderId) || null,
+    [orders, selectedOrderId]
+  );
+
+  const productionEmployeesByRole = useMemo(() => {
+    const grouped = Object.fromEntries(PRODUCTION_ROLE_CONFIGS.map((role) => [role.key, [] as AdminUser[]])) as Record<
+      ProductionRoleKey,
+      AdminUser[]
+    >;
+
+    for (const employee of employees) {
+      if (employee.is_active === false) continue;
+      const roleKey = getProductionRoleForAdmin(employee);
+      if (!roleKey) continue;
+      grouped[roleKey].push(employee);
     }
-    if (teamSelectionIds.length === 0) {
-      alert("Please select at least one employee.");
-      return;
-    }
 
-    setTeamBusy(true);
-    try {
-      // Replace team membership for this order:
-      // 1) delete existing
-      const { error: delErr } = await supabase
-        .from("order_team_members")
-        .delete()
-        .eq("user_item_id", selectedOrderId);
-      if (delErr) throw delErr;
+    return grouped;
+  }, [employees]);
 
-      // 2) insert selected
-      const payload = teamSelectionIds.map((adminId) => ({
-        user_item_id: selectedOrderId,
-        admin_id: adminId,
-        created_by_admin_id: adminSession?.id || null,
-      }));
+  const workflowPreview = useMemo(() => {
+    const stagePlans = buildStagePlansFromAssignments(roleAssignments);
+    const teamMembers = buildWorkflowMembers(employees, roleAssignments);
+    return { stagePlans, teamMembers };
+  }, [employees, roleAssignments]);
 
-      const { error: insErr } = await supabase.from("order_team_members").insert(payload);
-      if (insErr) throw insErr;
+  const stageCoverageIssues = useMemo(
+    () => workflowPreview.stagePlans.filter((stage) => stage.assigned_admin_ids.length === 0),
+    [workflowPreview.stagePlans]
+  );
 
-      alert("✅ Production team saved.");
-    } catch (e: any) {
-      console.error("saveTeam error", e);
-      alert("❌ Failed to save team: " + (e?.message || "Unknown error"));
-    } finally {
-      setTeamBusy(false);
-    }
+  const selectedTeamCount = workflowPreview.teamMembers.length;
+
+  const setRoleMember = (roleKey: ProductionRoleKey, adminId: string, checked: boolean) => {
+    setRoleAssignments((prev) => {
+      const current = prev[roleKey] || [];
+      return {
+        ...prev,
+        [roleKey]: checked ? Array.from(new Set([...current, adminId])) : current.filter((id) => id !== adminId),
+      };
+    });
   };
 
-  const selectedOrder = useMemo(() => orders.find((o) => o.user_item_id === selectedOrderId) || null, [orders, selectedOrderId]);
+  const buildTaskBlueprints = () => {
+    const taskBlueprints: Array<{
+      stageKey: (typeof PRODUCTION_STAGES)[number]["key"];
+      stageLabel: string;
+      roleKey: ProductionRoleKey;
+      roleLabel: string;
+      admin: AdminUser;
+    }> = [];
 
-  const teamEmployees = useMemo(() => {
-    const set = new Set(teamSelectionIds);
-    return employees.filter((e) => set.has(e.id));
-  }, [employees, teamSelectionIds]);
+    for (const stage of PRODUCTION_STAGES) {
+      for (const roleKey of stage.roleKeys) {
+        for (const adminId of roleAssignments[roleKey] || []) {
+          const admin = employees.find((item) => item.id === adminId);
+          if (!admin) continue;
+          taskBlueprints.push({
+            stageKey: stage.key,
+            stageLabel: stage.label,
+            roleKey,
+            roleLabel: PRODUCTION_ROLE_LABELS[roleKey],
+            admin,
+          });
+        }
+      }
+    }
 
-  const startProduction = async () => {
-    if (!selectedOrderId) {
+    return taskBlueprints;
+  };
+
+  const syncWorkflow = async () => {
+    if (!selectedOrder || !selectedOrderRecord) {
       alert("Please select an order first.");
       return;
     }
     if (!isLeader) {
-      alert("Only Superadmin / Team Leader can start production.");
+      alert("Only leaders can configure the production workflow.");
+      return;
+    }
+    if (!estimatedCompletionDate) {
+      alert("Please set an estimated completion date.");
+      return;
+    }
+    if (selectedTeamCount === 0) {
+      alert("Please assign at least one production employee.");
+      return;
+    }
+    if (stageCoverageIssues.length > 0) {
+      alert(`Please cover all four stages before saving. Missing: ${stageCoverageIssues.map((item) => item.label).join(", ")}`);
+      return;
+    }
+
+    setSavingWorkflow(true);
+    try {
+      const currentStage = String(selectedOrderRecord.order_status || selectedOrderRecord.status || "");
+      const existingTaskIds = existingTasks.map((task) => task.id).filter(Boolean);
+      let hasUpdates = false;
+
+      if (existingTaskIds.length) {
+        const { data: updateRows, error: updateErr } = await supabase
+          .from("task_updates")
+          .select("id")
+          .in("task_id", existingTaskIds)
+          .limit(1);
+        if (updateErr) throw updateErr;
+        hasUpdates = (updateRows || []).length > 0;
+      }
+
+      if (hasUpdates) {
+        alert("This order already has submitted production evidence. Please manage it from Employee Task to avoid losing live progress.");
+        return;
+      }
+
+      const blueprints = buildTaskBlueprints();
+      const short = selectedOrder.user_item_id.slice(0, 6).toUpperCase();
+
+      if (existingTaskIds.length > 0) {
+        if (ACTIVE_PRODUCTION_STAGES.has(currentStage) && currentStage !== "in_production") {
+          alert("This order is already beyond production setup. Use Employee Task to review instead of rebuilding the workflow.");
+          return;
+        }
+
+        const { error: deleteErr } = await supabase.from("tasks").delete().eq("user_item_id", selectedOrder.user_item_id);
+        if (deleteErr) throw deleteErr;
+      }
+
+      const payload = blueprints.map((blueprint, index) => ({
+        task_number: `ORD-${short}-${String(index + 1).padStart(2, "0")}`,
+        product_name: selectedOrder.product_name,
+        task_name: `${blueprint.stageLabel} • ${blueprint.roleLabel}`,
+        user_item_id: selectedOrder.user_item_id,
+        product_id: selectedOrder.product_id,
+        assigned_admin_id: blueprint.admin.id,
+        employee_name: blueprint.admin.full_name || blueprint.admin.username,
+        employee_number: blueprint.admin.employee_number || "",
+        start_date: new Date().toISOString().slice(0, 10),
+        due_date: estimatedCompletionDate,
+        status: "Pending",
+      }));
+
+      const { data: createdTasks, error: insertErr } = await supabase.from("tasks").insert(payload).select("*");
+      if (insertErr) throw insertErr;
+
+      const insertedTasks = (createdTasks || []) as TaskRow[];
+      const stagePlans = buildStagePlansFromAssignments(roleAssignments);
+      const taskRegistry = insertedTasks
+        .map((task) => {
+          const blueprint = blueprints.find(
+            (item) => item.admin.id === task.assigned_admin_id && `${item.stageLabel} • ${item.roleLabel}` === task.task_name
+          );
+          if (!blueprint) return null;
+          return {
+            task_id: task.id,
+            assigned_admin_id: blueprint.admin.id,
+            employee_name: blueprint.admin.full_name || blueprint.admin.username,
+            employee_number: blueprint.admin.employee_number || null,
+            role_key: blueprint.roleKey,
+            role_label: blueprint.roleLabel,
+            stage_key: blueprint.stageKey,
+            stage_label: blueprint.stageLabel,
+            due_date: task.due_date,
+          };
+        })
+        .filter(Boolean);
+
+      const stageMap = new Map(stagePlans.map((stage) => [stage.key, { ...stage, task_ids: [] as number[] }]));
+      for (const entry of taskRegistry) {
+        if (!entry) continue;
+        stageMap.get(entry.stage_key)?.task_ids.push(entry.task_id);
+      }
+
+      const teamMembers = buildWorkflowMembers(employees, roleAssignments);
+      const workflow = ensureProductionWorkflow({
+        estimated_completion_date: estimatedCompletionDate,
+        final_product_images: selectedOrderRecord.meta?.production_final_images as string[] | undefined,
+        final_product_note: (selectedOrderRecord.meta?.production_final_note as string | undefined) || null,
+        started_at: (selectedOrderRecord.meta?.production_workflow as { started_at?: string | null } | undefined)?.started_at || null,
+        last_updated_at: new Date().toISOString(),
+        team_members: teamMembers,
+        task_registry: taskRegistry,
+        stage_plans: Array.from(stageMap.values()),
+      });
+
+      const uniqueAdminIds = Array.from(new Set(teamMembers.map((item) => item.admin_id)));
+      const { error: deleteTeamErr } = await supabase.from("order_team_members").delete().eq("user_item_id", selectedOrder.user_item_id);
+      if (deleteTeamErr) throw deleteTeamErr;
+
+      if (uniqueAdminIds.length > 0) {
+        const { error: insertTeamErr } = await supabase.from("order_team_members").insert(
+          uniqueAdminIds.map((adminId) => ({
+            user_item_id: selectedOrder.user_item_id,
+            admin_id: adminId,
+            created_by_admin_id: adminSession?.id || null,
+          }))
+        );
+        if (insertTeamErr) throw insertTeamErr;
+      }
+
+      const nextMeta = {
+        ...(selectedOrderRecord.meta || {}),
+        production_estimated_completion_date: estimatedCompletionDate,
+        production_final_images: workflow.final_product_images,
+        production_final_note: workflow.final_product_note,
+        production_workflow: workflow,
+      };
+
+      const { error: updateErr } = await supabase
+        .from("user_items")
+        .update({ meta: nextMeta, updated_at: new Date().toISOString() })
+        .eq("id", selectedOrder.user_item_id);
+      if (updateErr) throw updateErr;
+
+      setExistingTasks(insertedTasks);
+      setSelectedOrderRecord((prev) => (prev ? { ...prev, meta: nextMeta } : prev));
+      alert("✅ Production workflow saved. Stage tasks were generated successfully.");
+    } catch (error: any) {
+      console.error("syncWorkflow error", error);
+      alert(`❌ Failed to save workflow: ${error?.message || "Unknown error"}`);
+    } finally {
+      setSavingWorkflow(false);
+    }
+  };
+
+  const startProduction = async () => {
+    if (!selectedOrderRecord || !selectedOrder) {
+      alert("Please select an order first.");
+      return;
+    }
+    if (!isLeader) {
+      alert("Only leaders can start production.");
+      return;
+    }
+    if (existingTasks.length === 0) {
+      alert("Please save the production workflow first.");
       return;
     }
 
     setStartingProduction(true);
     try {
-      const { data: ui, error: uiErr } = await supabase
-        .from("user_items")
-        .select("id, meta, progress_history")
-        .eq("id", selectedOrderId)
-        .single();
-      if (uiErr || !ui) throw uiErr;
-
       const nowIso = new Date().toISOString();
-      const meta = ((ui as { meta?: UserItemMeta }).meta || {}) as UserItemMeta;
-      const history = Array.isArray((ui as { progress_history?: unknown }).progress_history)
-        ? ((ui as { progress_history?: unknown[] }).progress_history as unknown[])
-        : [];
+      const meta = { ...(selectedOrderRecord.meta || {}) } as Record<string, unknown>;
+      const workflow = ensureProductionWorkflow(meta.production_workflow);
+      const history = Array.isArray(selectedOrderRecord.progress_history) ? selectedOrderRecord.progress_history : [];
+      const nextWorkflow = ensureProductionWorkflow({
+        ...workflow,
+        estimated_completion_date: estimatedCompletionDate,
+        started_at: workflow.started_at || nowIso,
+        last_updated_at: nowIso,
+      });
 
       const { error } = await supabase
         .from("user_items")
@@ -266,356 +504,365 @@ export default function AssignTaskPage() {
           order_status: "in_production",
           meta: {
             ...meta,
-            production_percent: Number.isFinite(Number(meta.production_percent)) ? meta.production_percent : 0,
+            production_percent: clampPercent(Number(meta.production_percent || 0)),
+            production_estimated_completion_date: estimatedCompletionDate,
+            production_workflow: nextWorkflow,
           },
           progress_history: [{ status: "in_production", updated_at: nowIso }, ...history],
           updated_at: nowIso,
         })
-        .eq("id", selectedOrderId);
+        .eq("id", selectedOrder.user_item_id);
       if (error) throw error;
 
-      alert("✅ Production started (order moved to In Production). ");
-    } catch (e: any) {
-      console.error("startProduction error", e);
-      alert("❌ Failed to start production: " + (e?.message || "Unknown error"));
+      setSelectedOrderRecord((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: "in_production",
+              order_status: "in_production",
+              meta: {
+                ...(prev.meta || {}),
+                production_workflow: nextWorkflow,
+                production_estimated_completion_date: estimatedCompletionDate,
+              },
+            }
+          : prev
+      );
+      alert("✅ Production started. The order is now visible in Employee Task for stage review.");
+    } catch (error: any) {
+      console.error("startProduction error", error);
+      alert(`❌ Failed to start production: ${error?.message || "Unknown error"}`);
     } finally {
       setStartingProduction(false);
     }
   };
 
-  const createTask = async () => {
-    if (!selectedOrderId || !selectedOrder) {
-      alert("Please select an order first.");
-      return;
-    }
-
-    // If the leader is already setting tasks, ensure the item is actually in production.
-    // This matches the expected workflow: once a team is assigned + tasks created, production begins.
-    const currentStage = String(selectedOrder.order_status || "");
-    if (currentStage !== "in_production") {
-      if (!isLeader) {
-        alert("Only Superadmin / Team Leader can start production.");
-        return;
-      }
-      const ok = window.confirm(
-        `This order is currently '${currentStage || "(unknown)"}'. Start production now (move to In Production) before creating tasks?`
-      );
-      if (ok) {
-        await startProduction();
-      }
-    }
-
-    if (!newTask.task_name.trim()) {
-      alert("Please enter a task name.");
-      return;
-    }
-    if (!newTask.assigned_admin_id) {
-      alert("Please assign this task to an employee.");
-      return;
-    }
-    if (!newTask.start_date || !newTask.due_date) {
-      alert("Please set start and due dates.");
-      return;
-    }
-
-    const assignee = employees.find((e) => e.id === newTask.assigned_admin_id);
-    if (!assignee) {
-      alert("Invalid assignee.");
-      return;
-    }
-
-    setCreatingTask(true);
-    try {
-      const seq = tasks.length + 1;
-      const short = selectedOrder.user_item_id.slice(0, 6).toUpperCase();
-      const task_number = `ORD-${short}-${String(seq).padStart(2, "0")}`;
-
-      const payload = {
-        task_number,
-        product_name: selectedOrder.product_name,
-        task_name: newTask.task_name.trim(),
-        user_item_id: selectedOrder.user_item_id,
-        product_id: selectedOrder.product_id,
-        assigned_admin_id: assignee.id,
-        employee_name: assignee.full_name || assignee.username,
-        employee_number: assignee.employee_number || "",
-        start_date: newTask.start_date,
-        due_date: newTask.due_date,
-        status: "Pending",
-      };
-
-      const { error } = await supabase.from("tasks").insert([payload]);
-      if (error) throw error;
-
-      const { data: tData } = await supabase
-        .from("tasks")
-        .select("*")
-        .eq("user_item_id", selectedOrderId)
-        .order("id", { ascending: true });
-      setTasks((tData || []) as TaskRow[]);
-
-      setCreateModalOpen(false);
-      setNewTask({
-        task_name: "",
-        assigned_admin_id: "",
-        start_date: new Date().toISOString().slice(0, 10),
-        due_date: "",
-      });
-      alert("✅ Task created.");
-    } catch (e: any) {
-      console.error("createTask error", e);
-      alert("❌ Failed to create task: " + (e?.message || "Unknown error"));
-    } finally {
-      setCreatingTask(false);
-    }
-  };
+  const currentWorkflow = useMemo(
+    () => ensureProductionWorkflow(selectedOrderRecord?.meta?.production_workflow),
+    [selectedOrderRecord?.meta]
+  );
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
-      <div className="mb-6 flex items-center justify-between gap-3">
-        <Link
-          href="/dashboard/task/admintask"
-          className="inline-flex items-center gap-2 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg shadow hover:bg-gray-300 transition"
-        >
-          <ArrowLeft size={18} />
-          Back to Review
-        </Link>
+    <div className="mx-auto max-w-7xl space-y-6 p-6">
+      <div className="flex flex-col gap-3 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <Link
+            href="/dashboard/task/employeetask"
+            className="inline-flex items-center gap-2 text-sm font-medium text-slate-500 transition hover:text-slate-800"
+          >
+            <ArrowLeft size={16} />
+            Back to Employee Task
+          </Link>
+          <div className="mt-3 flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-700">
+              <Factory size={24} />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900">Assign Production Workflow</h1>
+              <p className="text-sm text-slate-500">
+                Build the role-based team, generate the four construction stages, and prepare the order for live production tracking.
+              </p>
+            </div>
+          </div>
+        </div>
 
-        <div className="flex items-center gap-2">
-          <Wrench className="text-blue-700" size={22} />
-          <h1 className="text-2xl font-bold text-blue-700">Production Setup</h1>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Assigned people</div>
+            <div className="mt-1 text-2xl font-bold text-slate-900">{selectedTeamCount}</div>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Generated tasks</div>
+            <div className="mt-1 text-2xl font-bold text-slate-900">{existingTasks.length}</div>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Order stage</div>
+            <div className="mt-1 text-sm font-semibold text-slate-900">
+              {String(selectedOrderRecord?.order_status || selectedOrderRecord?.status || "Not selected").replace(/_/g, " ")}
+            </div>
+          </div>
         </div>
       </div>
 
       {!isLeader ? (
-        <div className="mb-4 rounded border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-900">
-          Only Superadmin / Team Leader should use this page.
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Only leaders can configure the production workflow.
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white shadow-lg rounded-xl p-6 border border-gray-200">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-lg font-semibold text-gray-900">Select Order</div>
-              <div className="text-xs text-gray-500">Pick an approved/accepted order to start production, set team, and create tasks.</div>
+      <div className="grid gap-6 xl:grid-cols-[1.05fr_1.2fr]">
+        <div className="space-y-6">
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center gap-3">
+              <ClipboardList className="text-blue-700" size={20} />
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Select order</h2>
+                <p className="text-sm text-slate-500">Choose the order that needs a production team and stage plan.</p>
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={startProduction}
-              disabled={!selectedOrderId || startingProduction || !isLeader}
-              className="inline-flex items-center gap-2 rounded bg-black px-3 py-2 text-xs text-white disabled:opacity-50"
-            >
-              <PlayCircle size={16} />
-              {startingProduction ? "Starting…" : "Start Production"}
-            </button>
-          </div>
 
-          <div className="mt-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Order</label>
             <select
               value={selectedOrderId}
-              onChange={(e) => setSelectedOrderId(e.target.value)}
-              className="border p-2 rounded w-full text-gray-700"
+              onChange={(event) => setSelectedOrderId(event.target.value)}
+              className="mt-4 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-800 outline-none ring-0 transition focus:border-blue-500"
             >
               <option value="">Select an order…</option>
-              {orders.map((o) => (
-                <option key={o.user_item_id} value={o.user_item_id}>
-                  {o.product_name} • {o.customer_name || "(No customer name)"} • {o.order_status || ""} • {o.user_item_id.slice(0, 8)}…
+              {orders.map((order) => (
+                <option key={order.user_item_id} value={order.user_item_id}>
+                  {order.product_name} • {order.customer_name || "No customer"} • {order.order_status || "—"}
                 </option>
               ))}
             </select>
-          </div>
 
-          <div className="mt-5 rounded-lg border border-gray-200 p-4 bg-gray-50">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Users size={18} className="text-gray-700" />
-                <div>
-                  <div className="text-sm font-semibold text-gray-800">Production Team</div>
-                  <div className="text-xs text-gray-500">Create the employee group working on this order.</div>
+            {selectedOrder ? (
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-lg font-semibold text-slate-900">{selectedOrder.product_name}</div>
+                <div className="mt-1 text-sm text-slate-600">Customer: {selectedOrder.customer_name || "—"}</div>
+                <div className="text-sm text-slate-600">Created: {new Date(selectedOrder.created_at).toLocaleString()}</div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm">
+                    Status: {String(selectedOrder.order_status || "—").replace(/_/g, " ")}
+                  </span>
+                  <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm">
+                    Order ID: {selectedOrder.user_item_id.slice(0, 8)}…
+                  </span>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={saveTeam}
-                disabled={teamBusy || !selectedOrderId || !isLeader}
-                className="px-3 py-2 rounded bg-black text-white text-xs disabled:opacity-50"
-              >
-                {teamBusy ? "Saving…" : "Save Team"}
-              </button>
+            ) : null}
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center gap-3">
+              <CalendarClock className="text-blue-700" size={20} />
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Schedule target</h2>
+                <p className="text-sm text-slate-500">This estimated completion date is shown in the website Order Progress popup.</p>
+              </div>
             </div>
 
-            {!selectedOrderId ? (
-              <div className="mt-3 text-sm text-gray-600">Select an order to manage its team.</div>
+            <input
+              type="date"
+              value={estimatedCompletionDate}
+              onChange={(event) => setEstimatedCompletionDate(event.target.value)}
+              className="mt-4 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-blue-500"
+            />
+
+            <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
+              {estimatedCompletionDate
+                ? `Estimated completion: ${new Date(estimatedCompletionDate).toLocaleDateString()}`
+                : "No estimated completion date set yet."}
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center gap-3">
+              <Users className="text-blue-700" size={20} />
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Required construction roles</h2>
+                <p className="text-sm text-slate-500">
+                  Only employees tagged as Lead Welder, Helper Welder, Sealant Applicator, or Repair Staff can be selected.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              {PRODUCTION_ROLE_CONFIGS.map((role) => {
+                const candidates = productionEmployeesByRole[role.key] || [];
+                return (
+                  <div key={role.key} className="rounded-2xl border border-slate-200 p-4">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">{role.label}</div>
+                        <div className="text-xs text-slate-500">Selected: {(roleAssignments[role.key] || []).length}</div>
+                      </div>
+                      <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                        {candidates.length} eligible account{candidates.length === 1 ? "" : "s"}
+                      </span>
+                    </div>
+
+                    {candidates.length === 0 ? (
+                      <div className="mt-3 rounded-2xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                        No active employee currently matches the {role.label} role.
+                      </div>
+                    ) : (
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        {candidates.map((employee) => {
+                          const checked = (roleAssignments[role.key] || []).includes(employee.id);
+                          return (
+                            <label
+                              key={employee.id}
+                              className={`flex cursor-pointer items-center gap-3 rounded-2xl border px-3 py-3 text-sm transition ${
+                                checked
+                                  ? "border-blue-500 bg-blue-50 text-blue-900"
+                                  : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(event) => setRoleMember(role.key, employee.id, event.target.checked)}
+                              />
+                              <span>
+                                <span className="block font-medium">{employee.full_name || employee.username}</span>
+                                <span className="block text-xs text-slate-500">
+                                  {employee.position || role.label}
+                                  {employee.employee_number ? ` • ${employee.employee_number}` : ""}
+                                </span>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center gap-3">
+              <Wrench className="text-blue-700" size={20} />
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Stage blueprint</h2>
+                <p className="text-sm text-slate-500">
+                  These are the four production stages that employees will submit evidence for in Employee Task.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              {workflowPreview.stagePlans.map((stage) => {
+                const members = workflowPreview.teamMembers.filter((member) =>
+                  member.role_keys.some((roleKey) => stage.required_role_keys.includes(roleKey))
+                );
+                return (
+                  <div key={stage.key} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">{stage.label}</div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          Required roles: {stage.required_role_keys.map((roleKey) => PRODUCTION_ROLE_LABELS[roleKey]).join(", ")}
+                        </div>
+                      </div>
+                      <span
+                        className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${
+                          members.length > 0 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                        }`}
+                      >
+                        {members.length > 0 ? `${members.length} assigned` : "Needs assignee"}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {members.length > 0 ? (
+                        members.map((member) => (
+                          <span
+                            key={`${stage.key}-${member.admin_id}`}
+                            className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-sm"
+                          >
+                            {member.admin_name} • {member.role_labels.filter((label) =>
+                              stage.required_role_keys.some((roleKey) => PRODUCTION_ROLE_LABELS[roleKey] === label)
+                            ).join(", ")}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-xs text-slate-500">No employee is assigned to this stage yet.</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center gap-3">
+              <CheckCircle2 className="text-blue-700" size={20} />
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Saved workflow status</h2>
+                <p className="text-sm text-slate-500">Preview what is already attached to this order before you start production.</p>
+              </div>
+            </div>
+
+            {loadingOrderContext ? (
+              <div className="mt-4 text-sm text-slate-500">Loading order workflow…</div>
+            ) : !selectedOrderId ? (
+              <div className="mt-4 text-sm text-slate-500">Select an order to inspect its workflow plan.</div>
             ) : (
-              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-auto pr-1">
-                {employees
-                  .filter((e) => e.role !== "superadmin")
-                  .map((e) => {
-                    const label = (e.full_name || e.username) + (e.position ? ` • ${e.position}` : "");
-                    const checked = teamSelectionIds.includes(e.id);
-                    return (
-                      <label key={e.id} className="flex items-center gap-2 text-sm text-gray-700">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(ev) => {
-                            setTeamSelectionIds((prev) => {
-                              if (ev.target.checked) return Array.from(new Set([...prev, e.id]));
-                              return prev.filter((id) => id !== e.id);
-                            });
-                          }}
-                        />
-                        <span>{label}</span>
-                      </label>
-                    );
-                  })}
+              <div className="mt-5 space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Estimated completion</div>
+                    <div className="mt-2 text-sm font-semibold text-slate-900">
+                      {currentWorkflow.estimated_completion_date
+                        ? new Date(currentWorkflow.estimated_completion_date).toLocaleDateString()
+                        : "Not set"}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Workflow tasks</div>
+                    <div className="mt-2 text-sm font-semibold text-slate-900">{existingTasks.length}</div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <div className="text-sm font-semibold text-slate-900">Current team</div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {currentWorkflow.team_members.length > 0 ? (
+                      currentWorkflow.team_members.map((member) => (
+                        <span key={member.admin_id} className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
+                          {member.admin_name} • {member.role_labels.join(", ")}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs text-slate-500">No workflow saved yet.</span>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 
-            {selectedOrderId && teamEmployees.length > 0 ? (
-              <div className="mt-3 text-xs text-gray-600">Selected team members: {teamEmployees.length}</div>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="bg-white shadow-lg rounded-xl p-6 border border-gray-200">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-lg font-semibold text-gray-900">Tasks for this Order</div>
-              <div className="text-xs text-gray-500">Assign tasks to employees; employees submit progress; leader approves to send updates to the customer.</div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setCreateModalOpen(true)}
-              disabled={!selectedOrderId || !isLeader}
-              className="inline-flex items-center gap-2 rounded bg-blue-700 px-3 py-2 text-xs text-white disabled:opacity-50"
-            >
-              <Plus size={16} />
-              New Task
-            </button>
-          </div>
-
-          {!selectedOrderId ? (
-            <div className="mt-4 text-sm text-gray-600">Select an order to view and create tasks.</div>
-          ) : loadingTasks ? (
-            <div className="mt-4 text-sm text-gray-600">Loading tasks…</div>
-          ) : tasks.length === 0 ? (
-            <div className="mt-4 text-sm text-gray-600">No tasks yet.</div>
-          ) : (
-            <div className="mt-4 overflow-x-auto border rounded">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 text-gray-700">
-                  <tr>
-                    <th className="p-2 text-left">Task #</th>
-                    <th className="p-2 text-left">Task</th>
-                    <th className="p-2 text-left">Assigned To</th>
-                    <th className="p-2 text-left">Due</th>
-                    <th className="p-2 text-left">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tasks.map((t) => (
-                    <tr key={t.id} className="border-t">
-                      <td className="p-2 font-medium text-gray-800">{t.task_number}</td>
-                      <td className="p-2 text-gray-700">{t.task_name}</td>
-                      <td className="p-2 text-gray-700">{t.employee_name}</td>
-                      <td className="p-2 text-gray-700">{t.due_date}</td>
-                      <td className="p-2 text-gray-700">{t.status}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {createModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40" onClick={() => !creatingTask && setCreateModalOpen(false)} />
-          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-xl p-6 z-10">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="text-lg font-semibold">Create Task</h2>
-                <p className="text-sm text-gray-500">Order: {selectedOrderId ? selectedOrderId.slice(0, 10) + "…" : ""}</p>
-              </div>
+            <div className="mt-6 flex flex-wrap gap-3">
               <button
-                className="text-gray-400 hover:text-gray-600"
-                onClick={() => !creatingTask && setCreateModalOpen(false)}
+                type="button"
+                onClick={syncWorkflow}
+                disabled={!isLeader || savingWorkflow || !selectedOrderId}
+                className="inline-flex items-center gap-2 rounded-2xl bg-blue-700 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                ✕
+                <Save size={16} />
+                {savingWorkflow ? "Saving workflow…" : "Save workflow"}
               </button>
-            </div>
-
-            <label className="text-sm font-medium text-gray-700">Task Name</label>
-            <input
-              className="mt-1 w-full border rounded p-2 text-sm"
-              value={newTask.task_name}
-              onChange={(e) => setNewTask((p) => ({ ...p, task_name: e.target.value }))}
-              placeholder="e.g. Cut aluminum frame"
-            />
-
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-sm font-medium text-gray-700">Start Date</label>
-                <input
-                  type="date"
-                  className="mt-1 w-full border rounded p-2 text-sm"
-                  value={newTask.start_date}
-                  onChange={(e) => setNewTask((p) => ({ ...p, start_date: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-700">Due Date</label>
-                <input
-                  type="date"
-                  className="mt-1 w-full border rounded p-2 text-sm"
-                  value={newTask.due_date}
-                  onChange={(e) => setNewTask((p) => ({ ...p, due_date: e.target.value }))}
-                />
-              </div>
-            </div>
-
-            <div className="mt-4">
-              <label className="text-sm font-medium text-gray-700">Assign To</label>
-              <select
-                className="mt-1 w-full border rounded p-2 text-sm"
-                value={newTask.assigned_admin_id}
-                onChange={(e) => setNewTask((p) => ({ ...p, assigned_admin_id: e.target.value }))}
+              <button
+                type="button"
+                onClick={startProduction}
+                disabled={!isLeader || startingProduction || !selectedOrderId || existingTasks.length === 0}
+                className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <option value="">Select employee…</option>
-                {teamEmployees.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {(e.full_name || e.username) + (e.position ? ` • ${e.position}` : "")}
-                  </option>
-                ))}
-              </select>
-              {selectedOrderId && teamEmployees.length === 0 ? (
-                <p className="text-xs text-red-600 mt-1">Select team members first (left panel), then save team.</p>
+                <Factory size={16} />
+                {startingProduction ? "Starting production…" : "Start production"}
+              </button>
+              {selectedOrderId ? (
+                <Link
+                  href={`/dashboard/task/employeetask?orderId=${encodeURIComponent(selectedOrderId)}`}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  <CheckCircle2 size={16} />
+                  Open Employee Task
+                </Link>
               ) : null}
             </div>
 
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                className="rounded border px-4 py-2 text-sm"
-                onClick={() => setCreateModalOpen(false)}
-                disabled={creatingTask}
-              >
-                Cancel
-              </button>
-              <button
-                className="rounded bg-blue-700 px-4 py-2 text-sm text-white disabled:opacity-50"
-                onClick={createTask}
-                disabled={creatingTask || !isLeader}
-              >
-                {creatingTask ? "Creating…" : "Create"}
-              </button>
-            </div>
+            {stageCoverageIssues.length > 0 ? (
+              <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                Missing stage coverage: {stageCoverageIssues.map((stage) => stage.label).join(", ")}.
+              </div>
+            ) : null}
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
