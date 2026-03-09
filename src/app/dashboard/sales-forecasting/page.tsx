@@ -18,132 +18,22 @@ import autoTable from "jspdf-autotable";
 
 import {
   summarizeForecastDelta,
-  type SalesForecastOutput,
 } from "@/app/lib/salesRandomForest";
+import {
+  FORECASTING_DAY_OPTIONS,
+  getNextScheduledDate,
+  type ForecastingDay,
+  type ForecastingRunMode,
+  type ForecastingSettingsResponse,
+  type LstmDemandResult,
+  type ProductDemandSeriesResponse,
+  type RandomForestSeriesForecast,
+  type SalesSeriesResponse,
+} from "@/app/lib/forecastingShared";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
-type SalesSeriesResponse = {
-  startDate: string;
-  endDate: string;
-  labels: string[];
-  revenue: number[];
-  quantities: number[];
-};
-
-type ProductDemandSeriesResponse = {
-  startDate: string;
-  endDate: string;
-  labels: string[];
-  products: Array<{
-    product_id: string;
-    product_name: string;
-    labels: string[];
-    quantities: number[];
-    total_units: number;
-  }>;
-};
-
 const FIXED_TRAINING_DAYS = 1095;
-
-type LstmDemandResult = {
-  product_id: string;
-  product_name: string;
-  predicted_total_units: number;
-  recent_total_units: number;
-  delta_pct: number;
-  mae_backtest: number;
-  rmse_backtest: number;
-  mape_backtest: number;
-  confidence_score: number;
-};
-
-type RandomForestResponse = {
-  revenue: SalesForecastOutput;
-  units: SalesForecastOutput;
-};
-
-type ForecastingSettings = {
-  autoTrainEnabled: boolean;
-  autoTrainDay: number;
-  lastAutoTrainAt: string | null;
-};
-
-const FORECASTING_DAY_OPTIONS = [
-  { value: 0, label: "Sunday" },
-  { value: 1, label: "Monday" },
-  { value: 2, label: "Tuesday" },
-  { value: 3, label: "Wednesday" },
-  { value: 4, label: "Thursday" },
-  { value: 5, label: "Friday" },
-  { value: 6, label: "Saturday" },
-] as const;
-
-function isSameLocalDay(left: Date, right: Date) {
-  return (
-    left.getFullYear() === right.getFullYear() &&
-    left.getMonth() === right.getMonth() &&
-    left.getDate() === right.getDate()
-  );
-}
-
-function getNextScheduledRunLabel(dayOfWeek: number) {
-  const now = new Date();
-  const target = new Date(now);
-  const diff = (dayOfWeek - now.getDay() + 7) % 7;
-  target.setDate(now.getDate() + diff);
-  if (diff === 0) {
-    return `Today (${target.toLocaleDateString()})`;
-  }
-  return target.toLocaleDateString(undefined, {
-    weekday: "long",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-function computeRegressionMetrics(actual: number[], predicted: number[]) {
-  const n = Math.min(actual.length, predicted.length);
-  if (!n) {
-    return {
-      mae: 0,
-      rmse: 0,
-      mape: 0,
-      bias: 0,
-      sampleSize: 0,
-    };
-  }
-
-  let absErrorSum = 0;
-  let squaredErrorSum = 0;
-  let pctErrorSum = 0;
-  let pctCount = 0;
-  let biasSum = 0;
-
-  for (let index = 0; index < n; index += 1) {
-    const actualValue = Number(actual[index] || 0);
-    const predictedValue = Number(predicted[index] || 0);
-    const error = predictedValue - actualValue;
-
-    absErrorSum += Math.abs(error);
-    squaredErrorSum += error * error;
-    biasSum += error;
-
-    if (Math.abs(actualValue) > 1e-6) {
-      pctErrorSum += Math.abs(error) / Math.abs(actualValue);
-      pctCount += 1;
-    }
-  }
-
-  return {
-    mae: absErrorSum / n,
-    rmse: Math.sqrt(squaredErrorSum / n),
-    mape: pctCount > 0 ? (pctErrorSum / pctCount) * 100 : 0,
-    bias: biasSum / n,
-    sampleSize: n,
-  };
-}
 
 export default function SalesForecastingPage() {
   const trainingDays = FIXED_TRAINING_DAYS;
@@ -153,8 +43,9 @@ export default function SalesForecastingPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [series, setSeries] = useState<SalesSeriesResponse | null>(null);
-  const [revForecast, setRevForecast] = useState<SalesForecastOutput | null>(null);
-  const [qtyForecast, setQtyForecast] = useState<SalesForecastOutput | null>(null);
+  const [revForecast, setRevForecast] = useState<RandomForestSeriesForecast | null>(null);
+  const [qtyForecast, setQtyForecast] = useState<RandomForestSeriesForecast | null>(null);
+  const [rfSource, setRfSource] = useState<string | null>(null);
 
   const revChartRef = useRef<any>(null);
   const qtyChartRef = useRef<any>(null);
@@ -171,22 +62,43 @@ export default function SalesForecastingPage() {
   const [lstmLoading, setLstmLoading] = useState(false);
   const [lstmError, setLstmError] = useState<string | null>(null);
   const [lstmResults, setLstmResults] = useState<LstmDemandResult[] | null>(null);
+  const [lstmAutoTrainEnabled, setLstmAutoTrainEnabled] = useState(false);
+  const [lstmAutoTrainDay, setLstmAutoTrainDay] = useState<ForecastingDay>("monday");
   const [lstmLastRunAt, setLstmLastRunAt] = useState<string | null>(null);
-  const [forecastSettings, setForecastSettings] = useState<ForecastingSettings>({
-    autoTrainEnabled: false,
-    autoTrainDay: 1,
-    lastAutoTrainAt: null,
-  });
-  const [forecastSettingsLoading, setForecastSettingsLoading] = useState(true);
-  const [forecastSettingsSaving, setForecastSettingsSaving] = useState(false);
-  const [autoTraining, setAutoTraining] = useState(false);
-
-  const [lstmProgress, setLstmProgress] = useState<{ current: number; total: number; label: string } | null>(null);
+  const [lstmSource, setLstmSource] = useState<string | null>(null);
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [scheduleMessage, setScheduleMessage] = useState<string | null>(null);
 
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
-  const run = useCallback(async () => {
+  const loadForecastingState = useCallback(async () => {
+    const res = await fetch("/api/forecasting/settings", { cache: "no-store" });
+    const json = (await res.json().catch(() => ({}))) as ForecastingSettingsResponse & { error?: string };
+    if (!res.ok) {
+      throw new Error(json?.error || "Failed to load forecasting settings");
+    }
+
+    setLstmAutoTrainEnabled(Boolean(json.settings.autoTrainEnabled));
+    setLstmAutoTrainDay(json.settings.autoTrainDay);
+    setLstmLastRunAt(json.settings.lastRunAt || null);
+
+    if (json.cache?.randomForest) {
+      setSeries(json.cache.randomForest.series);
+      setRevForecast(json.cache.randomForest.revenue);
+      setQtyForecast(json.cache.randomForest.units);
+      setRfSource(json.cache.randomForest.source);
+    }
+
+    if (json.cache?.lstm) {
+      setLstmResults(json.cache.lstm.results);
+      setLstmSource(json.cache.lstm.source);
+    }
+
+    return json;
+  }, []);
+
+  const run = useCallback(async (mode: ForecastingRunMode = "manual") => {
     try {
       setLoading(true);
       setError(null);
@@ -214,20 +126,52 @@ export default function SalesForecastingPage() {
           lookback,
           horizon,
           backtestDays,
+          persist: true,
+          mode,
         }),
       });
-      const forecastJson = (await forecastRes.json().catch(() => ({}))) as any;
-      if (!forecastRes.ok) throw new Error(forecastJson?.error || "Failed to run Random Forest forecast");
+      const forecastJson = await forecastRes.json().catch(() => ({}));
+      if (!forecastRes.ok) throw new Error(forecastJson?.error || "Failed to run Random Forest forecasting");
 
-      const forecastPayload = forecastJson as RandomForestResponse;
-      setRevForecast(forecastPayload.revenue);
-      setQtyForecast(forecastPayload.units);
+      setRevForecast(forecastJson.revenue);
+      setQtyForecast(forecastJson.units);
+      setRfSource(forecastJson.source || null);
+      setLstmLastRunAt(forecastJson.trainedAt || new Date().toISOString());
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
   }, [backtestDays, horizon, lookback]);
+
+  const saveSchedule = useCallback(async () => {
+    try {
+      setScheduleSaving(true);
+      setScheduleMessage(null);
+
+      const res = await fetch("/api/forecasting/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          settings: {
+            autoTrainEnabled: lstmAutoTrainEnabled,
+            autoTrainDay: lstmAutoTrainDay,
+          },
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as ForecastingSettingsResponse & { error?: string };
+      if (!res.ok) throw new Error(json?.error || "Failed to save forecasting schedule");
+
+      setLstmAutoTrainEnabled(Boolean(json.settings.autoTrainEnabled));
+      setLstmAutoTrainDay(json.settings.autoTrainDay);
+      setLstmLastRunAt(json.settings.lastRunAt || null);
+      setScheduleMessage("Automatic training schedule saved.");
+    } catch (e: unknown) {
+      setScheduleMessage(e instanceof Error ? e.message : String(e));
+    } finally {
+      setScheduleSaving(false);
+    }
+  }, [lstmAutoTrainDay, lstmAutoTrainEnabled]);
 
   const revenueChartData = useMemo(() => {
     if (!revForecast) return null;
@@ -289,49 +233,25 @@ export default function SalesForecastingPage() {
 
   const rfAnalytics = useMemo(() => {
     if (!revForecast || !qtyForecast) return null;
-
-    const buildSeriesAnalytics = (forecast: SalesForecastOutput) => {
-      const actualOverlap: number[] = [];
-      const forecastOverlap: number[] = [];
-      for (let index = 0; index < forecast.actual.length; index += 1) {
-        const actualValue = forecast.actual[index];
-        const forecastValue = forecast.forecast[index];
-        if (Number.isFinite(actualValue) && Number.isFinite(forecastValue)) {
-          actualOverlap.push(Number(actualValue));
-          forecastOverlap.push(Number(forecastValue));
-        }
-      }
-
-      const metrics = computeRegressionMetrics(actualOverlap, forecastOverlap);
-      const delta = summarizeForecastDelta({
-        actual: forecast.actual,
-        forecast: forecast.forecast,
-        horizon: forecast.meta.horizon,
-      });
-
-      const futureValues = forecast.forecast
-        .slice(Math.max(0, forecast.forecast.length - forecast.meta.horizon))
-        .filter((value): value is number => Number.isFinite(value));
-      const futureMean = futureValues.length
-        ? futureValues.reduce((sum, value) => sum + value, 0) / futureValues.length
-        : 0;
-      const futureVariance = futureValues.length > 1
-        ? futureValues.reduce((sum, value) => sum + (value - futureMean) ** 2, 0) / (futureValues.length - 1)
-        : 0;
-      const volatilityPct = futureMean > 0 ? (Math.sqrt(futureVariance) / futureMean) * 100 : 0;
-
-      return {
-        ...metrics,
-        trendPct: delta.pctChange * 100,
-        recentSum: delta.recentSum,
-        futureSum: delta.futureSum,
-        volatilityPct,
-      };
-    };
-
     return {
-      revenue: buildSeriesAnalytics(revForecast),
-      units: buildSeriesAnalytics(qtyForecast),
+      revenue: {
+        rmse: revForecast.rmseBacktest,
+        mape: revForecast.mapeBacktest,
+        trendPct: revForecast.trendPct,
+        recentSum: revForecast.recentSum,
+        futureSum: revForecast.futureSum,
+        volatilityPct: revForecast.volatilityPct,
+        confidenceScore: revForecast.confidenceScore,
+      },
+      units: {
+        rmse: qtyForecast.rmseBacktest,
+        mape: qtyForecast.mapeBacktest,
+        trendPct: qtyForecast.trendPct,
+        recentSum: qtyForecast.recentSum,
+        futureSum: qtyForecast.futureSum,
+        volatilityPct: qtyForecast.volatilityPct,
+        confidenceScore: qtyForecast.confidenceScore,
+      },
     };
   }, [qtyForecast, revForecast]);
 
@@ -367,12 +287,11 @@ export default function SalesForecastingPage() {
     };
   }, [lstmResults]);
 
-  const runLstm = useCallback(async (trigger: "manual" | "auto" = "manual") => {
+  const runLstm = useCallback(async (mode: ForecastingRunMode = "manual") => {
     try {
       setLstmLoading(true);
       setLstmError(null);
       setLstmResults(null);
-      setLstmProgress({ current: 0, total: 1, label: "Preparing demand series…" });
 
       const branchParam = lstmBranch.trim() ? `&branch=${encodeURIComponent(lstmBranch.trim())}` : "";
       const res = await fetch(
@@ -382,32 +301,31 @@ export default function SalesForecastingPage() {
       const json = (await res.json().catch(() => ({}))) as any;
       if (!res.ok) throw new Error(json?.error || "Failed to load product demand series");
       const data = json as ProductDemandSeriesResponse;
-      const autoMode = trigger === "auto";
-      const effectiveLimit = Math.min(autoMode ? 6 : 12, lstmLimit);
-      const products = (data.products || []).slice(0, effectiveLimit);
-      setLstmProgress({ current: 1, total: 1, label: `Training LSTM in FastAPI for ${products.length} product(s)…` });
 
-      const lstmRes = await fetch("/api/forecasting/lstm", {
+      const forecastRes = await fetch("/api/forecasting/lstm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          products,
+          products: data.products,
+          trainingDays: FIXED_TRAINING_DAYS,
+          limit: lstmLimit,
+          branch: lstmBranch.trim(),
           lookback: lstmLookback,
           horizon: lstmHorizon,
           epochs: lstmEpochs,
-          limit: effectiveLimit,
-          autoMode,
+          persist: true,
+          mode,
         }),
       });
-      const lstmJson = (await lstmRes.json().catch(() => ({}))) as any;
-      if (!lstmRes.ok) throw new Error(lstmJson?.error || "Failed to run LSTM demand forecast");
+      const forecastJson = await forecastRes.json().catch(() => ({}));
+      if (!forecastRes.ok) throw new Error(forecastJson?.error || "Failed to run LSTM forecasting");
 
-      setLstmResults(Array.isArray(lstmJson?.results) ? lstmJson.results : []);
-      setLstmLastRunAt(new Date().toISOString());
+      setLstmResults(forecastJson.results || []);
+      setLstmSource(forecastJson.source || null);
+      setLstmLastRunAt(forecastJson.trainedAt || new Date().toISOString());
     } catch (e: unknown) {
       setLstmError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLstmProgress(null);
       setLstmLoading(false);
     }
   }, [lstmBranch, lstmEpochs, lstmHorizon, lstmLimit, lstmLookback]);
@@ -415,86 +333,18 @@ export default function SalesForecastingPage() {
   useEffect(() => {
     if (autoRunDone) return;
     setAutoRunDone(true);
-    void run();
-  }, [autoRunDone, run]);
-
-  useEffect(() => {
-    const loadForecastSettings = async () => {
+    void (async () => {
       try {
-        setForecastSettingsLoading(true);
-        const res = await fetch("/api/forecasting/settings", { cache: "no-store" });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(json?.error || "Failed to load forecasting settings");
-        setForecastSettings((json?.settings || {}) as ForecastingSettings);
-      } catch (e) {
-        console.error("Failed to load forecasting settings", e);
-      } finally {
-        setForecastSettingsLoading(false);
+        const state = await loadForecastingState();
+        if (!state.cache?.randomForest) {
+          await run("manual");
+        }
+      } catch (stateError) {
+        console.error("Failed to load forecasting state", stateError);
+        await run("manual");
       }
-    };
-
-    void loadForecastSettings();
-  }, []);
-
-  const saveForecastSettings = useCallback(async (nextSettings: ForecastingSettings) => {
-    setForecastSettingsSaving(true);
-    try {
-      const res = await fetch("/api/forecasting/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ settings: nextSettings }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error || "Failed to save forecasting settings");
-      const saved = (json?.settings || nextSettings) as ForecastingSettings;
-      setForecastSettings(saved);
-      return saved;
-    } finally {
-      setForecastSettingsSaving(false);
-    }
-  }, []);
-
-  const runScheduledTraining = useCallback(async () => {
-    if (autoTraining || loading || lstmLoading) return;
-    setAutoTraining(true);
-    try {
-      await run();
-      await runLstm("auto");
-      const nextStamp = new Date().toISOString();
-      await saveForecastSettings({
-        ...forecastSettings,
-        lastAutoTrainAt: nextStamp,
-      });
-    } finally {
-      setAutoTraining(false);
-    }
-  }, [autoTraining, forecastSettings, loading, lstmLoading, run, runLstm, saveForecastSettings]);
-
-  const shouldRunAutoTraining = useCallback(() => {
-    if (!forecastSettings.autoTrainEnabled) return false;
-    const now = new Date();
-    if (now.getDay() !== forecastSettings.autoTrainDay) return false;
-    if (!forecastSettings.lastAutoTrainAt) return true;
-    return !isSameLocalDay(now, new Date(forecastSettings.lastAutoTrainAt));
-  }, [forecastSettings]);
-
-  useEffect(() => {
-    if (forecastSettingsLoading) return;
-
-    const checkSchedule = () => {
-      if (shouldRunAutoTraining()) {
-        void runScheduledTraining();
-      }
-    };
-
-    checkSchedule();
-    const timer = window.setInterval(checkSchedule, 60_000);
-    return () => window.clearInterval(timer);
-  }, [forecastSettingsLoading, runScheduledTraining, shouldRunAutoTraining]);
-
-  const runLstmNow = useCallback(async () => {
-    await runLstm("manual");
-  }, [runLstm]);
+    })();
+  }, [autoRunDone, loadForecastingState, run]);
 
   const exportPdf = useCallback(async () => {
     try {
@@ -646,6 +496,11 @@ export default function SalesForecastingPage() {
     }
   };
 
+  const nextScheduledRunAt = useMemo(() => {
+    if (!lstmAutoTrainEnabled) return null;
+    return getNextScheduledDate(lstmAutoTrainDay);
+  }, [lstmAutoTrainDay, lstmAutoTrainEnabled]);
+
   return (
     <div className="space-y-6">
       <div className="bg-white shadow rounded-lg p-6">
@@ -653,7 +508,7 @@ export default function SalesForecastingPage() {
           <div>
             <h1 className="text-2xl font-semibold text-black">Sales Forecasting</h1>
             <p className="mt-2 text-black text-sm">
-              FastAPI-backed Random Forest and LSTM forecasting trained on daily sales data from <span className="font-mono">/api/analytics</span>.
+              Random Forest forecasting trained on daily sales (from <span className="font-mono">/api/analytics/sales-series</span>).
             </p>
           </div>
           <button
@@ -723,7 +578,7 @@ export default function SalesForecastingPage() {
           <div className="flex items-end">
             <button
               className="w-full px-4 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
-              onClick={run}
+              onClick={() => void run("manual")}
               disabled={loading}
             >
               {loading ? "Training…" : "Run Forecast"}
@@ -734,7 +589,7 @@ export default function SalesForecastingPage() {
         {error && <div className="mt-4 text-sm text-red-700">{error}</div>}
 
         {series && revForecast && qtyForecast && (
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
             <div className="p-3 rounded border bg-gray-50 text-black">
               <div className="font-semibold">Range</div>
               <div className="mt-1">{series.startDate} → {series.endDate}</div>
@@ -747,11 +602,15 @@ export default function SalesForecastingPage() {
               <div className="font-semibold">Units MAE (backtest)</div>
               <div className="mt-1">{qtyForecast.maeBacktest.toFixed(2)}</div>
             </div>
+            <div className="p-3 rounded border bg-gray-50 text-black">
+              <div className="font-semibold">Forecast Engine</div>
+              <div className="mt-1 uppercase tracking-wide text-xs">{rfSource || "Unknown"}</div>
+            </div>
           </div>
         )}
 
         {rfAnalytics && (
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-5 gap-3 text-sm">
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-3 text-sm">
             <div className="p-3 rounded border bg-indigo-50 text-black">
               <div className="font-semibold">Revenue RMSE / MAPE</div>
               <div className="mt-1">₱{Math.round(rfAnalytics.revenue.rmse).toLocaleString()} / {rfAnalytics.revenue.mape.toFixed(1)}%</div>
@@ -760,9 +619,13 @@ export default function SalesForecastingPage() {
               <div className="font-semibold">Units RMSE / MAPE</div>
               <div className="mt-1">{rfAnalytics.units.rmse.toFixed(2)} / {rfAnalytics.units.mape.toFixed(1)}%</div>
             </div>
-            <div className="p-3 rounded border bg-violet-50 text-black">
-              <div className="font-semibold">Model Confidence</div>
-              <div className="mt-1">Revenue {revForecast?.confidenceScore.toFixed(0) || "0"}/100 · Units {qtyForecast?.confidenceScore.toFixed(0) || "0"}/100</div>
+            <div className="p-3 rounded border bg-purple-50 text-black">
+              <div className="font-semibold">Revenue Confidence</div>
+              <div className="mt-1">{rfAnalytics.revenue.confidenceScore.toFixed(1)} / 100</div>
+            </div>
+            <div className="p-3 rounded border bg-sky-50 text-black">
+              <div className="font-semibold">Units Confidence</div>
+              <div className="mt-1">{rfAnalytics.units.confidenceScore.toFixed(1)} / 100</div>
             </div>
             <div className="p-3 rounded border bg-green-50 text-black">
               <div className="font-semibold">Forecast Trend (horizon)</div>
@@ -818,10 +681,11 @@ export default function SalesForecastingPage() {
               Predicts which products are likely to be in higher demand next, using an LSTM trained on daily units sold.
               Includes seasonality via month features; optional branch filter uses delivery address branch.
             </p>
+            {lstmSource && <p className="text-xs text-gray-500 mt-1 uppercase tracking-wide">Engine: {lstmSource}</p>}
           </div>
           <button
             className="px-4 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
-            onClick={() => void runLstmNow()}
+            onClick={() => void runLstm("manual")}
             disabled={lstmLoading}
           >
             {lstmLoading ? "Training…" : "Run LSTM Ranking"}
@@ -833,28 +697,18 @@ export default function SalesForecastingPage() {
             <label className="flex items-center gap-2 text-sm text-gray-800">
               <input
                 type="checkbox"
-                checked={forecastSettings.autoTrainEnabled}
-                onChange={(e) =>
-                  setForecastSettings((prev) => ({
-                    ...prev,
-                    autoTrainEnabled: e.target.checked,
-                  }))
-                }
+                checked={lstmAutoTrainEnabled}
+                onChange={(e) => setLstmAutoTrainEnabled(e.target.checked)}
               />
-              Enable automatic FastAPI training
+              Enable automatic weekly training
             </label>
             <div>
-              <label className="block text-xs text-gray-700 mb-1">Auto-train day</label>
+              <label className="block text-xs text-gray-700 mb-1">Run on</label>
               <select
                 className="w-full px-3 py-2 border rounded text-black bg-white"
-                value={forecastSettings.autoTrainDay}
-                disabled={!forecastSettings.autoTrainEnabled}
-                onChange={(e) =>
-                  setForecastSettings((prev) => ({
-                    ...prev,
-                    autoTrainDay: Number(e.target.value || 1),
-                  }))
-                }
+                value={lstmAutoTrainDay}
+                onChange={(e) => setLstmAutoTrainDay(e.target.value as ForecastingDay)}
+                disabled={!lstmAutoTrainEnabled}
               >
                 {FORECASTING_DAY_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -865,43 +719,28 @@ export default function SalesForecastingPage() {
             </div>
             <div className="text-xs text-gray-700 flex flex-col justify-center">
               <div>
-                Last automatic run: {forecastSettings.lastAutoTrainAt ? new Date(forecastSettings.lastAutoTrainAt).toLocaleString() : "Not yet"}
+                Last run: {lstmLastRunAt ? new Date(lstmLastRunAt).toLocaleString() : "Not yet"}
               </div>
               <div>
-                Next scheduled day: {forecastSettings.autoTrainEnabled ? getNextScheduledRunLabel(forecastSettings.autoTrainDay) : "Disabled"}
+                Next scheduled run: {nextScheduledRunAt ? nextScheduledRunAt.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" }) : "Disabled"}
               </div>
             </div>
-            <div className="flex items-end justify-start md:justify-end gap-2">
+            <div className="flex items-end">
               <button
                 type="button"
-                className="px-3 py-2 rounded border border-indigo-300 bg-indigo-600 text-white text-xs hover:bg-indigo-700 disabled:opacity-50"
-                onClick={() => void saveForecastSettings(forecastSettings)}
-                disabled={forecastSettingsSaving || forecastSettingsLoading}
+                className="w-full px-3 py-2 rounded border border-indigo-300 bg-indigo-600 text-white text-xs hover:bg-indigo-700 disabled:opacity-50"
+                onClick={() => void saveSchedule()}
+                disabled={scheduleSaving}
               >
-                {forecastSettingsSaving ? "Saving…" : "Save auto-train day"}
+                {scheduleSaving ? "Saving…" : "Save schedule"}
               </button>
             </div>
           </div>
           <div className="mt-3 text-xs text-gray-600">
-            The scheduled run automatically triggers both FastAPI models on the selected day while this dashboard is active.
-            {lstmLastRunAt ? ` Last LSTM run: ${new Date(lstmLastRunAt).toLocaleString()}.` : ""}
-            {autoTraining ? " Running scheduled training now…" : ""}
+            A daily production cron checks this setting and runs both Random Forest and LSTM training on the selected day.
           </div>
+          {scheduleMessage && <div className="mt-2 text-xs text-gray-700">{scheduleMessage}</div>}
         </div>
-
-        {lstmProgress && (
-          <div className="rounded border bg-gray-50 p-3">
-            <div className="text-sm text-gray-800">
-              {lstmProgress.label} ({lstmProgress.current}/{lstmProgress.total})
-            </div>
-            <div className="mt-2 h-2 w-full rounded bg-gray-200 overflow-hidden">
-              <div
-                className="h-2 bg-indigo-600"
-                style={{ width: `${lstmProgress.total ? (lstmProgress.current / lstmProgress.total) * 100 : 0}%` }}
-              />
-            </div>
-          </div>
-        )}
 
         <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
           <div>

@@ -12,33 +12,6 @@ function getUrlExtension(url: string): string {
   return clean.slice(lastDot + 1).toLowerCase();
 }
 
-export type ThreeDModelSource =
-  | string
-  | {
-      url: string;
-      name?: string | null;
-      extension?: string | null;
-    };
-
-function normalizeModelSource(source: ThreeDModelSource) {
-  if (typeof source === "string") {
-    const url = source.trim();
-    return {
-      url,
-      name: url.split("/").pop()?.split(".")[0] || null,
-      extension: getUrlExtension(url),
-    };
-  }
-
-  const url = String(source?.url || "").trim();
-  const extension = String(source?.extension || source?.name || url || "").trim();
-  return {
-    url,
-    name: source?.name?.trim() || url.split("/").pop()?.split(".")[0] || null,
-    extension: getUrlExtension(extension),
-  };
-}
-
 type WeatherKey = "sunny" | "rainy" | "night" | "foggy";
 type SkyboxKey = WeatherKey | "default";
 
@@ -68,7 +41,8 @@ type WeatherMaterialSnapshot = {
 };
 
 export type ThreeDModelViewerProps = {
-  modelUrls: ThreeDModelSource[];
+  modelUrls: string[];
+  modelFileNames?: Array<string | null | undefined>;
   houseModelUrl?: string | null;
   productCategory?: string | null;
   initialIndex?: number;
@@ -164,6 +138,7 @@ function resolveSkyboxUrl(
 
 export default function ThreeDModelViewer({
   modelUrls,
+  modelFileNames,
   houseModelUrl,
   productCategory,
   initialIndex,
@@ -206,25 +181,20 @@ export default function ThreeDModelViewer({
   const skyboxesRef = useRef<ThreeDModelViewerProps["skyboxes"]>(skyboxes ?? null);
   const applyWeatherRef = useRef<((type: WeatherKey) => void) | null>(null);
 
-  const validModels = useMemo(
-    () =>
-      Array.isArray(modelUrls)
-        ? modelUrls
-            .map(normalizeModelSource)
-            .filter((model) => typeof model.url === "string" && model.url.trim())
-        : [],
+  const validUrls = useMemo(
+    () => (Array.isArray(modelUrls) ? modelUrls.filter((u) => typeof u === "string" && u.trim()) : []),
     [modelUrls]
   );
 
   useEffect(() => {
     if (!Number.isFinite(initialIndex as any)) return;
-    if (!validModels.length) return;
-    const clamped = Math.max(0, Math.min(validModels.length - 1, Number(initialIndex) || 0));
+    if (!validUrls.length) return;
+    const clamped = Math.max(0, Math.min(validUrls.length - 1, Number(initialIndex) || 0));
     setCurrentFbxIndex(clamped);
-  }, [initialIndex, validModels.length]);
+  }, [initialIndex, validUrls.length]);
 
-  const currentModel = validModels[currentFbxIndex] || validModels[0] || null;
-  const currentUrl = currentModel?.url || "";
+  const currentUrl = validUrls[currentFbxIndex] || validUrls[0] || "";
+  const currentFileName = modelFileNames?.[currentFbxIndex] || modelFileNames?.[0] || "";
   const resolvedHouseModelUrl = useMemo(() => {
     if (!houseModelUrl || typeof houseModelUrl !== "string") return null;
     const trimmed = houseModelUrl.trim();
@@ -1514,8 +1484,12 @@ export default function ThreeDModelViewer({
       return null;
     };
 
-    const loadObjectFromUrl = async (url: string, kind: "main" | "house", extensionHint?: string): Promise<THREE.Object3D> => {
-      const ext = getUrlExtension(extensionHint || url);
+    const loadObjectFromUrl = async (
+      url: string,
+      kind: "main" | "house",
+      fallbackFileName?: string | null
+    ): Promise<THREE.Object3D> => {
+      const ext = getUrlExtension(url) || getUrlExtension(fallbackFileName || "");
 
       if (ext === "gltf") {
         return await new Promise<THREE.Object3D>((resolve, reject) => {
@@ -1550,7 +1524,7 @@ export default function ThreeDModelViewer({
       }
 
       let loadUrl = url;
-      if (ext === "fbx" || ext === "glb") {
+      if ((ext === "fbx" || ext === "glb") && !url.startsWith("blob:") && !url.startsWith("data:")) {
         const objUrl = await tryFetchAsObjectUrl(url, kind);
         if (objUrl) loadUrl = objUrl;
       }
@@ -1708,7 +1682,7 @@ export default function ThreeDModelViewer({
 
     const loadModel = async () => {
       try {
-        const object = await loadObjectFromUrl(currentUrl, "main", currentModel?.extension || undefined);
+        const object = await loadObjectFromUrl(currentUrl, "main", currentFileName || undefined);
         handleLoaded(object);
         await addHouseContextModel();
       } catch (err) {
@@ -1965,9 +1939,9 @@ export default function ThreeDModelViewer({
       }
       while (container && container.firstChild) container.removeChild(container.firstChild);
     };
-  }, [currentModel?.extension, currentUrl, productDimsMm, usesProductDimensions, width, height, resolvedHouseModelUrl, showHouseContext, categoryKey, currentFbxIndex]);
+  }, [currentUrl, currentFileName, productDimsMm, usesProductDimensions, width, height, resolvedHouseModelUrl, showHouseContext, categoryKey, currentFbxIndex]);
 
-  if (!validModels.length) {
+  if (!validUrls.length) {
     return (
       <div className="flex items-center justify-center w-full h-full bg-gray-100">
         <div className="text-center">
@@ -1978,15 +1952,15 @@ export default function ThreeDModelViewer({
   }
 
   const goToPrevious = () => {
-    if (validModels.length > 1) setCurrentFbxIndex((i) => (i > 0 ? i - 1 : validModels.length - 1));
+    if (validUrls.length > 1) setCurrentFbxIndex((i) => (i > 0 ? i - 1 : validUrls.length - 1));
   };
 
   const goToNext = () => {
-    if (validModels.length > 1) setCurrentFbxIndex((i) => (i < validModels.length - 1 ? i + 1 : 0));
+    if (validUrls.length > 1) setCurrentFbxIndex((i) => (i < validUrls.length - 1 ? i + 1 : 0));
   };
 
   const goToIndex = (index: number) => {
-    if (index >= 0 && index < validModels.length) setCurrentFbxIndex(index);
+    if (index >= 0 && index < validUrls.length) setCurrentFbxIndex(index);
   };
 
   return (
@@ -2124,14 +2098,14 @@ export default function ThreeDModelViewer({
         }
       `}</style>
 
-      {validModels.length > 1 && (
+      {validUrls.length > 1 && (
         <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-[9999] pointer-events-auto">
           <div className="bg-black bg-opacity-80 backdrop-blur-sm rounded-lg p-4 shadow-lg">
             <div className="text-center mb-3">
               <div className="text-white text-sm font-medium">
-                3D Model {currentFbxIndex + 1} of {validModels.length}
+                3D Model {currentFbxIndex + 1} of {validUrls.length}
               </div>
-              <div className="text-gray-300 text-xs">{validModels[currentFbxIndex]?.name || `Model ${currentFbxIndex + 1}`}</div>
+              <div className="text-gray-300 text-xs">{validUrls[currentFbxIndex]?.split("/").pop()?.split(".")[0] || `Model ${currentFbxIndex + 1}`}</div>
             </div>
 
             <div className="flex items-center justify-center space-x-4">
@@ -2144,7 +2118,7 @@ export default function ThreeDModelViewer({
               </button>
 
               <div className="flex space-x-2">
-                {validModels.map((_, index) => (
+                {validUrls.map((_, index) => (
                   <button
                     key={index}
                     onClick={() => goToIndex(index)}

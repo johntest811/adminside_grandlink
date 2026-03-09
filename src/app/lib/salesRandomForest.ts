@@ -5,10 +5,9 @@ export type SalesSeries = {
 
 export type SalesForecastOutput = {
   labels: string[];
-  actual: Array<number | null>;
-  forecast: Array<number | null>;
+  actual: number[];
+  forecast: number[];
   maeBacktest: number;
-  confidenceScore: number;
   meta: {
     trainSamples: number;
     lookback: number;
@@ -65,21 +64,19 @@ function getDateFeatures(dateISO: string) {
 }
 
 export function summarizeForecastDelta(opts: {
-  actual: Array<number | null>;
-  forecast: Array<number | null>;
+  actual: number[];
+  forecast: number[];
   horizon: number;
 }) {
   const { actual, forecast, horizon } = opts;
-  const actualClean = actual.filter((v): v is number => Number.isFinite(v));
+  const actualClean = actual.filter((v) => Number.isFinite(v));
 
   const n = actualClean.length;
   const recentWindow = Math.min(horizon, n);
   const recentActual = actualClean.slice(Math.max(0, n - recentWindow));
   const recentSum = recentActual.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
 
-  const futureForecast = forecast
-    .slice(Math.max(0, forecast.length - horizon))
-    .filter((v): v is number => Number.isFinite(v));
+  const futureForecast = forecast.slice(Math.max(0, forecast.length - horizon));
   const futureSum = futureForecast.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
 
   const pctChange = recentSum > 0 ? (futureSum - recentSum) / recentSum : 0;
@@ -131,15 +128,6 @@ export async function trainAndForecastDailyRF(params: {
 
   const testPredNorm = XTest.length ? (rf.predict(XTest) as number[]) : [];
   const maeBacktest = mae(yTest.map(zn.denorm), testPredNorm.map(zn.denorm));
-  const backtestActual = yTest.map((value) => Math.max(0, zn.denorm(value)));
-  const backtestPredicted = testPredNorm.map((value) => Math.max(0, zn.denorm(value)));
-  const mapePoints = backtestActual.filter((value) => Math.abs(value) > 1e-6).length;
-  const mapeBacktest = backtestActual.length && mapePoints
-    ? backtestActual.reduce((sum, actualValue, index) => {
-        if (Math.abs(actualValue) <= 1e-6) return sum;
-        return sum + Math.abs(backtestPredicted[index] - actualValue) / Math.abs(actualValue);
-      }, 0) / mapePoints
-    : 0;
 
   let window = norm.slice(norm.length - lookback);
   const lastDate = labels[labels.length - 1];
@@ -157,19 +145,11 @@ export async function trainAndForecastDailyRF(params: {
     window = window.slice(1).concat(nextNorm);
   }
 
-  const baseline = cleanValues.slice(Math.max(0, cleanValues.length - horizon));
-  const baselineMean = baseline.length
-    ? baseline.reduce((sum, value) => sum + value, 0) / baseline.length
-    : 1;
-  const errorRatio = maeBacktest / Math.max(1, baselineMean);
-  const confidenceScore = Math.max(5, Math.min(99, 100 - mapeBacktest * 80 - errorRatio * 60));
-
   return {
     labels: labels.concat(futureLabels),
-    actual: cleanValues.concat(new Array(horizon).fill(null)),
-    forecast: new Array(cleanValues.length).fill(null).concat(futurePred),
+    actual: cleanValues.concat(new Array(horizon).fill(NaN)),
+    forecast: new Array(cleanValues.length).fill(NaN).concat(futurePred),
     maeBacktest,
-    confidenceScore,
     meta: { trainSamples: XTrain.length, lookback, horizon, backtestDays },
   };
 }

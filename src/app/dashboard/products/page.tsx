@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 import { v4 as uuidv4 } from 'uuid';
 import { logActivity } from "@/app/lib/activity";
@@ -8,6 +8,13 @@ import { createNotification } from "@/app/lib/notifications";
 import ThreeDModelViewer from "@/components/ThreeDModelViewer";
 import RichTextEditor from "@/components/RichTextEditor";
 import ToastPopup, { type ToastPopupState } from "@/components/ToastPopup";
+import {
+  createEmptyGlobalSkyboxDefaults,
+  mergeEffectiveSkyboxes,
+  WEATHER_KEYS,
+  type GlobalSkyboxDefaults,
+  type WeatherKey,
+} from "@/app/lib/skyboxDefaults";
 import {
   buildAdditionalFeaturesHtml,
   createFeatureOptionsByCategory,
@@ -18,15 +25,6 @@ import {
   type ProductFormTabKey,
   stripRichText,
 } from "./productFormConfig";
-import {
-  describeSkyboxSource,
-  mergeSkyboxes,
-  normalizeSkyboxes,
-  SKYBOX_KEYS,
-  WEATHER_KEYS,
-  type SkyboxKey,
-  type WeatherKey,
-} from "@/app/lib/productSkyboxes";
 
 const ALLOWED_3D_EXTENSIONS = ["fbx", "glb", "gltf"] as const;
 
@@ -81,13 +79,12 @@ export default function ProductsAdminPage() {
   const [imagePreviewUrls, setImagePreviewUrls] = useState<string[]>([]);
   const [fbxFiles, setFbxFiles] = useState<File[]>([]);
   const [modelPreviewUrls, setModelPreviewUrls] = useState<string[]>([]);
-  const [skyboxFiles, setSkyboxFiles] = useState<Partial<Record<SkyboxKey, File | null>>>({});
-  const [skyboxPreviewUrls, setSkyboxPreviewUrls] = useState<Partial<Record<SkyboxKey, string>>>({});
-  const [sharedSkyboxDefaults, setSharedSkyboxDefaults] = useState<Partial<Record<SkyboxKey, string | null>>>({});
-  const [sharedSkyboxLoading, setSharedSkyboxLoading] = useState(true);
-  const [sharedSkyboxSaving, setSharedSkyboxSaving] = useState(false);
+  const [skyboxFiles, setSkyboxFiles] = useState<Partial<Record<WeatherKey, File | null>>>({});
+  const [skyboxPreviewUrls, setSkyboxPreviewUrls] = useState<Partial<Record<WeatherKey, string>>>({});
+  const [globalSkyboxDefaults, setGlobalSkyboxDefaults] = useState<GlobalSkyboxDefaults>(() => createEmptyGlobalSkyboxDefaults());
+  const [savingGlobalSkybox, setSavingGlobalSkybox] = useState<WeatherKey | null>(null);
   const [previewWeather, setPreviewWeather] = useState<WeatherKey>("sunny");
-  const skyboxPreviewUrlsRef = useRef<Partial<Record<SkyboxKey, string>>>({});
+  const skyboxPreviewUrlsRef = useRef<Partial<Record<WeatherKey, string>>>({});
   const [show3DViewer, setShow3DViewer] = useState(false);
   const [currentFbxIndex, setCurrentFbxIndex] = useState(0);
   const [message, setMessage] = useState("");
@@ -124,26 +121,6 @@ export default function ProductsAdminPage() {
         Object.values(skyboxPreviewUrlsRef.current).forEach((u) => u && URL.revokeObjectURL(u));
       } catch {}
     };
-  }, []);
-
-  useEffect(() => {
-    const loadSharedSkyboxes = async () => {
-      try {
-        setSharedSkyboxLoading(true);
-        const res = await fetch("/api/product-skybox-defaults", { cache: "no-store" });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(json?.error || "Failed to load shared skyboxes");
-        }
-        setSharedSkyboxDefaults(normalizeSkyboxes(json?.skyboxes));
-      } catch (error) {
-        console.error("Failed to load shared skyboxes", error);
-      } finally {
-        setSharedSkyboxLoading(false);
-      }
-    };
-
-    void loadSharedSkyboxes();
   }, []);
 
   useEffect(() => {
@@ -271,6 +248,21 @@ export default function ProductsAdminPage() {
     loadAdmin();
   }, []);
 
+  useEffect(() => {
+    const loadGlobalSkyboxDefaults = async () => {
+      try {
+        const res = await fetch("/api/product-skybox-defaults", { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json?.error || "Failed to load default skyboxes");
+        setGlobalSkyboxDefaults(json?.defaults || createEmptyGlobalSkyboxDefaults());
+      } catch (error) {
+        console.error("Failed to load global skybox defaults", error);
+      }
+    };
+
+    void loadGlobalSkyboxDefaults();
+  }, []);
+
   const handleSingleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
@@ -372,7 +364,7 @@ export default function ProductsAdminPage() {
     }
   };
 
-  const handleSkyboxSelect = async (skyboxKey: SkyboxKey, file: File | null) => {
+  const handleSkyboxSelect = async (skyboxKey: WeatherKey, file: File | null) => {
     setSkyboxFiles((prev) => ({ ...prev, [skyboxKey]: file }));
 
     setSkyboxPreviewUrls((prev) => {
@@ -417,47 +409,34 @@ export default function ProductsAdminPage() {
     }
   };
 
-  const saveSharedSkyboxes = async (nextSkyboxes: Partial<Record<SkyboxKey, string | null>>) => {
+  const persistGlobalSkyboxDefaults = async (nextDefaults: GlobalSkyboxDefaults) => {
     const res = await fetch("/api/product-skybox-defaults", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ skyboxes: nextSkyboxes }),
+      body: JSON.stringify({ defaults: nextDefaults }),
     });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(json?.error || "Failed to save shared skyboxes");
-    }
-    const saved = normalizeSkyboxes(json?.skyboxes);
-    setSharedSkyboxDefaults(saved);
-    return saved;
+    if (!res.ok) throw new Error(json?.error || "Failed to save global skybox defaults");
+    setGlobalSkyboxDefaults(json?.defaults || nextDefaults);
   };
 
-  const handleSharedSkyboxUpload = async (skyboxKey: SkyboxKey, file: File | null) => {
-    if (!file) return;
-
+  const handleGlobalSkyboxUpload = async (weatherKey: WeatherKey, file: File | null) => {
+    setSavingGlobalSkybox(weatherKey);
     try {
-      setSharedSkyboxSaving(true);
-      const url = await uploadFile(file, `skyboxes/shared/${skyboxKey}`);
-      await saveSharedSkyboxes({ ...sharedSkyboxDefaults, [skyboxKey]: url });
-      setMessage(`Shared ${skyboxKey} skybox saved successfully.`);
-    } catch (error: any) {
-      console.error("Failed to upload shared skybox", error);
-      setMessage(`Error: ${error?.message || "Failed to save shared skybox"}`);
-    } finally {
-      setSharedSkyboxSaving(false);
-    }
-  };
+      const nextDefaults = { ...globalSkyboxDefaults };
+      if (file) {
+        nextDefaults[weatherKey] = await uploadFile(file, `skyboxes/defaults/${weatherKey}`);
+      } else {
+        nextDefaults[weatherKey] = null;
+      }
 
-  const handleRemoveSharedSkybox = async (skyboxKey: SkyboxKey) => {
-    try {
-      setSharedSkyboxSaving(true);
-      await saveSharedSkyboxes({ ...sharedSkyboxDefaults, [skyboxKey]: null });
-      setMessage(`Shared ${skyboxKey} skybox removed successfully.`);
-    } catch (error: any) {
-      console.error("Failed to remove shared skybox", error);
-      setMessage(`Error: ${error?.message || "Failed to remove shared skybox"}`);
+      await persistGlobalSkyboxDefaults(nextDefaults);
+      setMessage(file ? `${weatherKey} default skybox saved successfully.` : `${weatherKey} default skybox removed successfully.`);
+    } catch (error) {
+      console.error("Failed to save global skybox default", error);
+      setMessage(error instanceof Error ? `Error: ${error.message}` : "Error saving global skybox default");
     } finally {
-      setSharedSkyboxSaving(false);
+      setSavingGlobalSkybox(null);
     }
   };
 
@@ -650,7 +629,7 @@ export default function ProductsAdminPage() {
             inventory: Number(inventory) || 0,
             hasImages: images.length > 0,
             hasFbx: fbxFiles.length > 0,
-            hasSkyboxes: SKYBOX_KEYS.some((k) => !!skyboxFiles[k]),
+            hasSkyboxes: WEATHER_KEYS.some((k) => !!skyboxFiles[k]),
             fbxCount: fbxFiles.length,
             adminAccount: currentAdmin.username
           }
@@ -672,7 +651,7 @@ export default function ProductsAdminPage() {
       const [imagesUpload, modelsUpload, ...skyboxUploads] = await Promise.all([
         uploadFilesSettled(images, 'images'),
         uploadFilesSettled(fbxFiles, 'models'),
-        ...SKYBOX_KEYS.map((k) => {
+        ...WEATHER_KEYS.map((k) => {
           const f = skyboxFiles[k];
           return f ? uploadFile(f, `skyboxes/${k}`) : Promise.resolve(null);
         }),
@@ -681,8 +660,8 @@ export default function ProductsAdminPage() {
       const imageUrls = imagesUpload.urls;
       const fbxUploadedUrls = modelsUpload.urls;
 
-      const skyboxes: Partial<Record<SkyboxKey, string>> = {};
-      SKYBOX_KEYS.forEach((k, index) => {
+      const skyboxes: Partial<Record<WeatherKey, string>> = {};
+      WEATHER_KEYS.forEach((k, index) => {
         const url = skyboxUploads[index];
         if (url) skyboxes[k] = url;
       });
@@ -810,23 +789,12 @@ export default function ProductsAdminPage() {
       i + 3 >= images.length ? 0 : i + 1
     );
 
-  const previewModelSources = useMemo(
-    () =>
-      modelPreviewUrls
-        .map((url, index) => ({
-          url,
-          name: fbxFiles[index]?.name || `Model ${index + 1}`,
-        }))
-        .filter((model) => model.url),
-    [fbxFiles, modelPreviewUrls]
-  );
-
-  const previewSkyboxes = useMemo(
-    () => mergeSkyboxes(skyboxPreviewUrls, sharedSkyboxDefaults),
-    [sharedSkyboxDefaults, skyboxPreviewUrls]
-  );
-
-  const previewSkyboxSource = describeSkyboxSource(previewWeather, skyboxPreviewUrls, sharedSkyboxDefaults);
+  const effectivePreviewSkyboxes = mergeEffectiveSkyboxes(skyboxPreviewUrls, globalSkyboxDefaults);
+  const previewSkyboxSource = skyboxPreviewUrls[previewWeather]
+    ? `${previewWeather} custom skybox`
+    : globalSkyboxDefaults[previewWeather]
+    ? `${previewWeather} default skybox`
+    : null;
 
   return (
     <div className="min-h-screen bg-[#e7eaef] flex items-center justify-center">
@@ -886,12 +854,13 @@ export default function ProductsAdminPage() {
               </div>
               <div className="flex-1 min-h-0">
                 <ThreeDModelViewer
-                  modelUrls={previewModelSources}
+                  modelUrls={modelPreviewUrls}
+                  modelFileNames={fbxFiles.map((file) => file.name)}
                   initialIndex={currentFbxIndex}
                   weather={previewWeather}
                   frameFinish="matteBlack"
                   productCategory={category || null}
-                  skyboxes={previewSkyboxes}
+                  skyboxes={effectivePreviewSkyboxes}
                   productDimensions={{
                     width: width || null,
                     height: height || null,
@@ -1311,153 +1280,57 @@ export default function ProductsAdminPage() {
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-gray-200 bg-[#f8fafc] p-5 space-y-5">
-                  <div>
-                    <h3 className="text-md font-semibold text-[#233a5e] mb-2">Shared Default Skyboxes</h3>
-                    <div className="mb-3 text-xs text-gray-500">
-                      These default skyboxes apply to every product. Removing one here removes it everywhere unless a product has its own custom override.
-                    </div>
+                <div className="rounded-xl border border-gray-200 bg-[#f8fafc] p-5">
+                  <h3 className="text-md font-semibold text-[#233a5e] mb-2">Default & Custom Skyboxes</h3>
+                  <div className="mb-3 text-xs text-gray-500">
+                    Set shared weather defaults for every product, then optionally add product-specific skyboxes that override those defaults for this item only.
+                  </div>
 
-                    {sharedSkyboxLoading ? (
-                      <div className="rounded-lg border bg-white px-3 py-4 text-sm text-gray-500">Loading shared defaults...</div>
-                    ) : (
-                      <>
-                        <div className="mb-4 rounded-lg border bg-white p-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-3">
-                              <div className="flex h-12 w-16 items-center justify-center overflow-hidden rounded border bg-gray-50">
-                                {sharedSkyboxDefaults.default ? (
-                                  <img src={sharedSkyboxDefaults.default} alt="shared default skybox" className="h-full w-full object-cover" />
-                                ) : (
-                                  <span className="text-[10px] text-gray-400">No file</span>
-                                )}
-                              </div>
-                              <div>
-                                <div className="text-sm font-semibold text-[#233a5e]">Shared Default Skybox</div>
-                                <div className="text-[11px] text-gray-600">{sharedSkyboxDefaults.default ? "Fallback for all products when no custom weather skybox exists." : "Used when no shared weather default or product custom skybox exists."}</div>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <label className="cursor-pointer rounded bg-indigo-600 px-3 py-1 text-xs text-white hover:bg-indigo-700">
-                                {sharedSkyboxDefaults.default ? "Replace" : "Upload"}
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  className="hidden"
-                                  onChange={(e) => {
-                                    const file = e.target.files?.[0] || null;
-                                    void handleSharedSkyboxUpload("default", file);
-                                  }}
-                                />
-                              </label>
-                              <button
-                                type="button"
-                                className="rounded bg-red-600 px-3 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50"
-                                disabled={!sharedSkyboxDefaults.default || sharedSkyboxSaving}
-                                onClick={() => void handleRemoveSharedSkybox("default")}
-                              >
-                                Remove
-                              </button>
-                            </div>
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Global Default Skyboxes</div>
+                  <div className="grid grid-cols-1 gap-3 mb-5">
+                    {WEATHER_KEYS.map((k) => (
+                      <div key={`global-${k}`} className="flex items-center justify-between gap-3 rounded border bg-white p-3">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-12 w-16 items-center justify-center overflow-hidden rounded border bg-gray-50">
+                            {globalSkyboxDefaults[k] ? (
+                              <img src={globalSkyboxDefaults[k] || undefined} alt={`${k} default skybox`} className="h-full w-full object-cover" />
+                            ) : (
+                              <span className="text-[10px] text-gray-400">No file</span>
+                            )}
+                          </div>
+                          <div>
+                            <div className="text-sm font-semibold capitalize text-[#233a5e]">{k} default</div>
+                            <div className="text-[11px] text-gray-600">{globalSkyboxDefaults[k] ? "Used by every product without a custom override." : "Upload a shared default for this weather."}</div>
                           </div>
                         </div>
 
-                        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Shared Weather Defaults</div>
-                        <div className="grid grid-cols-1 gap-3">
-                          {WEATHER_KEYS.map((k) => (
-                            <div key={k} className="flex items-center justify-between gap-3 rounded border bg-white p-3">
-                              <div className="flex items-center gap-3">
-                                <div className="flex h-12 w-16 items-center justify-center overflow-hidden rounded border bg-gray-50">
-                                  {sharedSkyboxDefaults[k] ? (
-                                    <img src={sharedSkyboxDefaults[k] || ""} alt={`${k} shared skybox`} className="h-full w-full object-cover" />
-                                  ) : (
-                                    <span className="text-[10px] text-gray-400">No file</span>
-                                  )}
-                                </div>
-                                <div>
-                                  <div className="text-sm font-semibold capitalize text-[#233a5e]">{k}</div>
-                                  <div className="text-[11px] text-gray-600">{sharedSkyboxDefaults[k] ? "Shared weather default for every product." : "Falls back to the shared default skybox."}</div>
-                                </div>
-                              </div>
-
-                              <div className="flex items-center gap-2">
-                                <label className="cursor-pointer rounded bg-indigo-600 px-3 py-1 text-xs text-white hover:bg-indigo-700">
-                                  {sharedSkyboxDefaults[k] ? "Replace" : "Upload"}
-                                  <input
-                                    type="file"
-                                    accept="image/*"
-                                    className="hidden"
-                                    onChange={(e) => {
-                                      const file = e.target.files?.[0] || null;
-                                      void handleSharedSkyboxUpload(k, file);
-                                    }}
-                                  />
-                                </label>
-                                <button
-                                  type="button"
-                                  className="rounded bg-red-600 px-3 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50"
-                                  disabled={!sharedSkyboxDefaults[k] || sharedSkyboxSaving}
-                                  onClick={() => void handleRemoveSharedSkybox(k)}
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </>
-                    )}
-                  </div>
-
-                  <div>
-                    <h3 className="text-md font-semibold text-[#233a5e] mb-2">Product Custom Skyboxes</h3>
-                    <div className="mb-3 text-xs text-gray-500">
-                      Upload custom skyboxes only for this product. Product custom skyboxes always take priority over the shared defaults.
-                    </div>
-
-                  <div className="mb-4 rounded-lg border bg-white p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-12 w-16 items-center justify-center overflow-hidden rounded border bg-gray-50">
-                          {skyboxPreviewUrls.default ? (
-                            <img src={skyboxPreviewUrls.default} alt="default skybox" className="h-full w-full object-cover" />
-                          ) : (
-                            <span className="text-[10px] text-gray-400">No file</span>
-                          )}
-                        </div>
-                        <div>
-                          <div className="text-sm font-semibold text-[#233a5e]">Default Skybox</div>
-                          <div className="text-[11px] text-gray-600">{skyboxFiles.default?.name || "Used when no custom weather skybox exists."}</div>
+                        <div className="flex items-center gap-2">
+                          <label className="cursor-pointer rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700">
+                            {globalSkyboxDefaults[k] ? "Replace" : "Upload"}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const f = e.target.files?.[0] || null;
+                                void handleGlobalSkyboxUpload(k, f);
+                              }}
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            className="rounded bg-red-600 px-3 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50"
+                            disabled={!globalSkyboxDefaults[k] || savingGlobalSkybox === k}
+                            onClick={() => void handleGlobalSkyboxUpload(k, null)}
+                          >
+                            {savingGlobalSkybox === k ? "Saving…" : "Remove"}
+                          </button>
                         </div>
                       </div>
-
-                      <div className="flex items-center gap-2">
-                        <label className="cursor-pointer rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700">
-                          {skyboxFiles.default ? "Replace" : "Upload"}
-                          <input
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(e) => {
-                              const f = e.target.files?.[0] || null;
-                              handleSkyboxSelect("default", f);
-                            }}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          className="rounded bg-red-600 px-3 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50"
-                          disabled={!skyboxFiles.default}
-                          onClick={() => handleSkyboxSelect("default", null)}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    </div>
+                    ))}
                   </div>
 
-                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Custom Skyboxes by Weather</div>
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Custom Product Skyboxes by Weather</div>
                   <div className="grid grid-cols-1 gap-3">
                     {WEATHER_KEYS.map((k) => (
                       <div key={k} className="flex items-center justify-between gap-3 rounded border bg-white p-3">
@@ -1471,7 +1344,7 @@ export default function ProductsAdminPage() {
                           </div>
                           <div>
                             <div className="text-sm font-semibold capitalize text-[#233a5e]">{k}</div>
-                            <div className="text-[11px] text-gray-600">{skyboxFiles[k]?.name || "Falls back to default skybox"}</div>
+                            <div className="text-[11px] text-gray-600">{skyboxFiles[k]?.name || "Falls back to the shared weather default"}</div>
                           </div>
                         </div>
 
@@ -1499,7 +1372,6 @@ export default function ProductsAdminPage() {
                         </div>
                       </div>
                     ))}
-                  </div>
                   </div>
                 </div>
               </div>

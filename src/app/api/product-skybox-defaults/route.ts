@@ -1,34 +1,46 @@
 import { NextResponse } from "next/server";
-import { readHomeContent, writeHomeContent } from "@/app/lib/homeContentStore";
-import { normalizeSkyboxes } from "@/app/lib/productSkyboxes";
+import { patchSingletonContent, readSingletonContent } from "@/app/lib/adminSingletonContent";
+import { coerceGlobalSkyboxDefaults, type GlobalSkyboxDefaults } from "@/app/lib/skyboxDefaults";
 
-const SETTINGS_KEY = "productSkyboxDefaults";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+function normalizeResponse(content: Record<string, any>, updatedAt: string | null) {
+  return {
+    defaults: coerceGlobalSkyboxDefaults(content?.productSkyboxDefaults || {}),
+    updatedAt,
+  };
+}
 
 export async function GET() {
   try {
-    const content = await readHomeContent();
-    const defaults = normalizeSkyboxes(content?.[SETTINGS_KEY]);
-    return NextResponse.json({ skyboxes: defaults }, { status: 200 });
-  } catch (error: any) {
+    const { content, updatedAt } = await readSingletonContent();
+    return NextResponse.json(normalizeResponse(content, updatedAt));
+  } catch (error) {
     console.error("GET /api/product-skybox-defaults error", error);
-    return NextResponse.json({ error: error?.message || "Failed to load shared skyboxes" }, { status: 500 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Failed to load skybox defaults" },
+      { status: 500 }
+    );
   }
 }
 
 export async function PUT(req: Request) {
   try {
     const body = await req.json();
-    const nextSkyboxes = normalizeSkyboxes(body?.skyboxes);
-    const content = await readHomeContent();
-    const nextContent = {
-      ...content,
-      [SETTINGS_KEY]: nextSkyboxes,
-    };
+    const defaults = coerceGlobalSkyboxDefaults((body?.defaults ?? body) as GlobalSkyboxDefaults);
+    const { content, updatedAt } = await patchSingletonContent((current) => ({
+      ...current,
+      productSkyboxDefaults: defaults,
+    }));
 
-    await writeHomeContent(nextContent);
-    return NextResponse.json({ skyboxes: nextSkyboxes }, { status: 200 });
-  } catch (error: any) {
+    return NextResponse.json(normalizeResponse(content, updatedAt));
+  } catch (error) {
     console.error("PUT /api/product-skybox-defaults error", error);
-    return NextResponse.json({ error: error?.message || "Failed to save shared skyboxes" }, { status: 500 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Failed to save skybox defaults" },
+      { status: 500 }
+    );
   }
 }
