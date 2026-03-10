@@ -156,11 +156,7 @@ export function getProductionRoleKeyFromText(value: string | null | undefined): 
 }
 
 export function getProductionRoleForAdmin(admin: { role?: string | null; position?: string | null }) {
-	return (
-		getProductionRoleKeyFromText(admin.position) ||
-		getProductionRoleKeyFromText(admin.role) ||
-		null
-	);
+	return getProductionRoleKeyFromText(admin.position) || null;
 }
 
 export function getProductionRoleLabelForAdmin(admin: { role?: string | null; position?: string | null }) {
