@@ -27,12 +27,39 @@ let mailTransporter: nodemailer.Transporter | null = null;
 if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
   mailTransporter = nodemailer.createTransport({
     service: "gmail",
-    auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_PASS },
+    auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_PASS.replace(/\s+/g, "") },
   });
 }
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic'; // avoid caching for webhooks/notifications
+
+function normalizeBaseUrl(value: string | null | undefined) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/\/$/, "");
+}
+
+function getWebsiteBaseCandidates() {
+  const candidates = [
+    process.env.NEXT_PUBLIC_USER_WEBSITE_URL,
+    process.env.NEXT_PUBLIC_WEBSITE_URL,
+    process.env.WEBSITE_URL,
+    process.env.WEBSITE_PUBLIC_URL,
+    process.env.NEXT_PUBLIC_BASE_URL,
+    process.env.SITE_URL,
+    process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : null,
+    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null,
+    "http://localhost:3000",
+    "https://grandlink-website.vercel.app",
+    "https://grandlnik-website.vercel.app",
+  ]
+    .map((value) => normalizeBaseUrl(value))
+    .filter((value): value is string => Boolean(value));
+
+  return Array.from(new Set(candidates));
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -46,40 +73,42 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, error: "Missing userItemId or newStatus" }, { status: 400 });
       }
 
-      const websiteBase = (
-        process.env.NEXT_PUBLIC_USER_WEBSITE_URL ||
-        process.env.NEXT_PUBLIC_WEBSITE_URL ||
-        "https://grandlnik-website.vercel.app"
-      ).replace(/\/$/, "");
+      const websiteBases = getWebsiteBaseCandidates();
 
-      try {
-        const websiteResponse = await fetch(`${websiteBase}/api/update-order-status`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userItemId,
-            newStatus,
-            adminName: payload?.adminName || null,
-            adminNotes: payload?.adminNotes || null,
-            estimatedDeliveryDate: payload?.estimatedDeliveryDate || null,
-            skipUpdate: true,
-          }),
-          cache: "no-store",
-        });
-
-        const websiteJson = await websiteResponse.json().catch(() => ({}));
-        if (websiteResponse.ok) {
-          return NextResponse.json({
-            success: true,
-            proxied: true,
-            message: websiteJson?.message || "Notification processed",
-            invoiceEmailSent: websiteJson?.invoiceEmailSent || false,
+      for (const websiteBase of websiteBases) {
+        try {
+          const websiteResponse = await fetch(`${websiteBase}/api/update-order-status`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userItemId,
+              newStatus,
+              adminName: payload?.adminName || null,
+              adminNotes: payload?.adminNotes || null,
+              estimatedDeliveryDate: payload?.estimatedDeliveryDate || null,
+              skipUpdate: true,
+            }),
+            cache: "no-store",
           });
-        }
 
-        console.warn("Website order-status proxy failed, using admin fallback:", websiteJson?.error || websiteResponse.statusText);
-      } catch (proxyError) {
-        console.warn("Website order-status proxy error, using admin fallback:", proxyError);
+          const websiteJson = await websiteResponse.json().catch(() => ({}));
+          if (websiteResponse.ok) {
+            return NextResponse.json({
+              success: true,
+              proxied: true,
+              websiteBase,
+              message: websiteJson?.message || "Notification processed",
+              invoiceEmailSent: websiteJson?.invoiceEmailSent || false,
+            });
+          }
+
+          console.warn(
+            `Website order-status proxy failed for ${websiteBase}, trying next candidate:`,
+            websiteJson?.error || websiteResponse.statusText
+          );
+        } catch (proxyError) {
+          console.warn(`Website order-status proxy error for ${websiteBase}, trying next candidate:`, proxyError);
+        }
       }
 
       const { data: orderData, error: orderErr } = await supabaseAdmin

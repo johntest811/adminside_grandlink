@@ -182,7 +182,8 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
               updatedProduct.name,
               updatedProduct.id,
               newInventory,
-              currentAdmin.username
+              currentAdmin.username,
+              req.url
             );
             console.log("🔔 Stock update notifications sent to users");
           } catch (notificationError) {

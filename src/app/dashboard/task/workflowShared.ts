@@ -4,7 +4,8 @@ export type ProductionStageKey =
 	| "material_preparation"
 	| "frame_fabrication_welding"
 	| "glass_installation"
-	| "sealant_application";
+	| "sealant_application"
+	| "quality_checking";
 
 export type WorkflowMember = {
 	admin_id: string;
@@ -115,7 +116,16 @@ export const PRODUCTION_STAGES: StageConfig[] = [
 		order: 4,
 		roleKeys: ["sealant_applicator"],
 	},
+	{
+		key: "quality_checking",
+		label: "Quality Checking",
+		order: 5,
+		roleKeys: ["repair_staff"],
+	},
 ];
+
+export const FINAL_PRODUCTION_STAGE_KEY = PRODUCTION_STAGES[PRODUCTION_STAGES.length - 1]!
+	.key as ProductionStageKey;
 
 export const PRODUCTION_ROLE_LABELS = Object.fromEntries(
 	PRODUCTION_ROLE_CONFIGS.map((role) => [role.key, role.label])
@@ -162,6 +172,26 @@ export function getProductionRoleForAdmin(admin: { role?: string | null; positio
 export function getProductionRoleLabelForAdmin(admin: { role?: string | null; position?: string | null }) {
 	const key = getProductionRoleForAdmin(admin);
 	return key ? PRODUCTION_ROLE_LABELS[key] : null;
+}
+
+export function canManageProductionWorkflow(admin: { role?: string | null; position?: string | null } | null | undefined) {
+	const role = String(admin?.role || "")
+		.trim()
+		.toLowerCase();
+	const position = String(admin?.position || "")
+		.trim()
+		.toLowerCase()
+		.replace(/[_-]+/g, " ");
+
+	if (["superadmin", "admin", "manager", "supervisor"].includes(role)) {
+		return true;
+	}
+
+	return (
+		position.includes("team leader") ||
+		position.includes("production manager") ||
+		position.includes("production supervisor")
+	);
 }
 
 export function ensureProductionWorkflow(raw: unknown): ProductionWorkflowMeta {

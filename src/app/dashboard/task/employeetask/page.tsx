@@ -7,7 +7,10 @@ import { CalendarClock, CheckCircle2, PackageSearch, UserCheck, Users } from "lu
 import { supabase } from "../../../Clients/Supabase/SupabaseClients";
 import ImageLightbox from "@/components/ui/ImageLightbox";
 import {
+  canManageProductionWorkflow,
+  FINAL_PRODUCTION_STAGE_KEY,
   PRODUCTION_STAGES,
+  getProductionRoleForAdmin,
   clampPercent,
   ensureProductionWorkflow,
   getTaskMetaById,
@@ -126,18 +129,10 @@ export default function EmployeeTasksPage() {
   const [highlightOrderId, setHighlightOrderId] = useState("");
 
   const canReviewProgress = useMemo(() => {
-    const r = String(adminSession?.role || "").toLowerCase();
-    const p = String(adminSession?.position || "").toLowerCase();
-    return (
-      r === "superadmin" ||
-      r === "team_leader" ||
-      r === "team leader" ||
-      p.includes("team leader") ||
-      p.includes("team_leader") ||
-      p.includes("teamlead") ||
-      p.includes("lead")
-    );
-  }, [adminSession?.position, adminSession?.role]);
+    return canManageProductionWorkflow(adminSession);
+  }, [adminSession]);
+
+  const currentProductionRole = useMemo(() => getProductionRoleForAdmin(adminSession || {}), [adminSession]);
 
   useEffect(() => {
     try {
@@ -205,9 +200,14 @@ export default function EmployeeTasksPage() {
         const workflow = ensureProductionWorkflow(order?.meta?.production_workflow);
         return enrichTask(task, workflow);
       });
-      setTasks(sortTasks(enriched));
 
-      const taskIds = rawTasks.map((task) => task.id).filter(Boolean);
+      const visibleTasks = currentProductionRole
+        ? enriched.filter((task) => !task.roleKey || task.roleKey === currentProductionRole)
+        : enriched;
+
+      setTasks(sortTasks(visibleTasks));
+
+      const taskIds = visibleTasks.map((task) => task.id).filter(Boolean);
       if (taskIds.length === 0) {
         setMyRecentUpdates({});
         return;
@@ -646,7 +646,7 @@ export default function EmployeeTasksPage() {
               <p className="text-sm text-slate-500">
                 {canReviewProgress
                   ? "Review stage evidence, approve each production stage, and manage direct progress updates."
-                  : "Submit image or text evidence for every assigned production stage."}
+                  : "Submit image or text evidence only for the production role assigned to your account."}
               </p>
             </div>
           </div>
@@ -775,6 +775,10 @@ export default function EmployeeTasksPage() {
               </div>
             );
           })}
+        </div>
+      ) : !currentProductionRole ? (
+        <div className="rounded-3xl border border-amber-200 bg-amber-50 p-10 text-center text-amber-900 shadow-sm">
+          Your account is not mapped to a production role yet. Please ask an admin to assign a production position before using this page.
         </div>
       ) : groupedMyTasks.length === 0 ? (
         <div className="rounded-3xl border border-slate-200 bg-white p-10 text-center text-slate-500 shadow-sm">
@@ -1013,7 +1017,7 @@ export default function EmployeeTasksPage() {
                                     >
                                       {reviewBusyId === latest.id ? "Approving…" : "Approve"}
                                     </button>
-                                    {task.stageKey === "sealant_application" && Array.isArray(latest.image_urls) && latest.image_urls.length > 0 ? (
+                                    {task.stageKey === FINAL_PRODUCTION_STAGE_KEY && Array.isArray(latest.image_urls) && latest.image_urls.length > 0 ? (
                                       <button
                                         type="button"
                                         onClick={() => approveTaskUpdate(latest, task, selectedGroup, { useAsFinalProduct: true })}

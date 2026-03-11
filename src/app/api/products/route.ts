@@ -125,7 +125,7 @@ export async function POST(req: Request) {
 
     sideEffects.push(
       adminNotificationService
-        .notifyNewProduct(product.name, product.id, currentAdmin?.username || "Admin")
+        .notifyNewProduct(product.name, product.id, currentAdmin?.username || "Admin", req.url)
         .catch((error) => {
           console.error("❌ Failed to send user notifications:", error);
         })

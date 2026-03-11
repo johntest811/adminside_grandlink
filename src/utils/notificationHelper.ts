@@ -1,10 +1,46 @@
 // Admin-side notification helper to communicate with user-side API
 
+function normalizeBaseUrl(value: string | null | undefined) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/\/$/, "");
+}
+
+function buildNotifyUrl(requestUrl?: string) {
+  if (requestUrl) {
+    return new URL("/api/notify", requestUrl).toString();
+  }
+
+  if (typeof window !== "undefined") {
+    return "/api/notify";
+  }
+
+  const base =
+    normalizeBaseUrl(process.env.NEXT_PUBLIC_BASE_URL) ||
+    normalizeBaseUrl(process.env.BASE_URL) ||
+    normalizeBaseUrl(process.env.SITE_URL) ||
+    (process.env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+      : null) ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ||
+    normalizeBaseUrl(process.env.NEXT_PUBLIC_SITE_URL) ||
+    (process.env.NODE_ENV === "development" ? "http://localhost:3000" : null);
+
+  if (!base) {
+    throw new Error(
+      "Cannot call /api/notify from server without a base URL. Set NEXT_PUBLIC_BASE_URL (or pass requestUrl)."
+    );
+  }
+
+  return `${base}/api/notify`;
+}
+
 export const adminNotificationService = {
   // Notify users about new products
-  async notifyNewProduct(productName: string, productId: string, adminName: string) {
+  async notifyNewProduct(productName: string, productId: string, adminName: string, requestUrl?: string) {
     try {
-      const response = await fetch(`/api/notify`, {
+      const response = await fetch(buildNotifyUrl(requestUrl), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: 'new_product', productName, productId, adminName }),
@@ -20,9 +56,9 @@ export const adminNotificationService = {
   },
 
   // Notify users about stock updates
-  async notifyStockUpdate(productName: string, productId: string, newStock: number, adminName: string) {
+  async notifyStockUpdate(productName: string, productId: string, newStock: number, adminName: string, requestUrl?: string) {
     try {
-      const response = await fetch(`/api/notify`, {
+      const response = await fetch(buildNotifyUrl(requestUrl), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: 'stock_update', productName, productId, newStock, adminName }),
@@ -38,10 +74,10 @@ export const adminNotificationService = {
   },
 
   // Notify user about order status update (called from admin side)
-  async notifyOrderStatusUpdate(orderId: string, userId: string, newStatus: string, adminName: string, productName: string) {
+  async notifyOrderStatusUpdate(orderId: string, userId: string, newStatus: string, adminName: string, productName: string, requestUrl?: string) {
     try {
       // FIX: call local admin API (server → server) to avoid browser CORS/network issues
-      const response = await fetch(`/api/notify`, {
+      const response = await fetch(buildNotifyUrl(requestUrl), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

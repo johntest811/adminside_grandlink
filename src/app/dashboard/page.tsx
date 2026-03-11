@@ -428,6 +428,11 @@ export default function DashboardPage() {
     fetchDashboard();
   }, [currentAdmin, refreshNonce]);
 
+  const fullCalendarEvents = useMemo(
+    () => calendarEvents.map((event) => ({ ...event, end: event.end ?? undefined })),
+    [calendarEvents]
+  );
+
   const activeRange = useMemo(
     () => normalizeDateRange(activeStartDate, activeEndDate, 30),
     [activeStartDate, activeEndDate]
@@ -867,7 +872,7 @@ export default function DashboardPage() {
                 initialView="dayGridMonth"
                 headerToolbar={{ left: "prev,next", center: "title", right: "" }}
                 height={420}
-                events={calendarEvents}
+                events={fullCalendarEvents}
                 dayMaxEventRows={2}
               />
             </div>

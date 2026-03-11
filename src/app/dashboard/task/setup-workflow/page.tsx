@@ -22,7 +22,6 @@ import {
   buildRoleAssignmentsFromWorkflow,
   buildStagePlansFromAssignments,
   buildWorkflowMembers,
-  clampPercent,
   createEmptyRoleAssignments,
   ensureProductionWorkflow,
   getProductionRoleForAdmin,
@@ -111,7 +110,6 @@ function addYears(date: Date, years: number) {
 function normalizeDateInput(value: string) {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  // Accept ISO timestamps and keep the YYYY-MM-DD portion.
   if (raw.length >= 10 && raw.includes("-")) return raw.slice(0, 10);
   return raw;
 }
@@ -148,6 +146,21 @@ function normalizeName(value: string | null | undefined) {
     .replace(/[\s_-]+/g, " ");
 }
 
+function getCustomerNameFromEnrichedItem(item: any): string | null {
+  const addr = item?.address_details || null;
+  const addressName =
+    (addr?.full_name as string | undefined) ||
+    (addr?.first_name && addr?.last_name ? `${addr.first_name} ${addr.last_name}` : null);
+
+  return (
+    (addressName || null) ||
+    (item?.customer?.name as string | undefined) ||
+    (item?.customer_name as string | undefined) ||
+    (item?.meta?.customer_name as string | undefined) ||
+    null
+  );
+}
+
 export default function AssignTaskPage() {
   const searchParams = useSearchParams();
   const [adminSession, setAdminSession] = useState<AdminSession | null>(null);
@@ -160,7 +173,6 @@ export default function AssignTaskPage() {
   const [roleAssignments, setRoleAssignments] = useState<Record<ProductionRoleKey, string[]>>(createEmptyRoleAssignments());
   const [estimatedCompletionDate, setEstimatedCompletionDate] = useState("");
   const [savingWorkflow, setSavingWorkflow] = useState(false);
-  const [startingProduction, setStartingProduction] = useState(false);
   const [loadingOrderContext, setLoadingOrderContext] = useState(false);
 
   const isLeader = useMemo(() => {
@@ -197,57 +209,46 @@ export default function AssignTaskPage() {
 
   useEffect(() => {
     (async () => {
-      const [{ data: empData, error: empErr }, { data: orderData, error: orderErr }] = await Promise.all([
+      const [{ data: empData, error: empErr }, ordersRes] = await Promise.all([
         supabase
           .from("admins")
           .select("id, username, full_name, employee_number, role, position, is_active")
           .eq("is_active", true)
           .order("full_name", { ascending: true }),
-        supabase
-          .from("user_items")
-          .select("id, product_id, customer_name, status, order_status, created_at, meta, products(name)")
-          .in("item_type", ["order", "reservation"])
-          .order("created_at", { ascending: false })
-          .limit(400),
+        fetch("/api/order-management/list-items", { cache: "no-store" }),
       ]);
 
       if (!empErr) {
         setEmployees((empData || []) as AdminUser[]);
       }
 
-      if (orderErr) {
-        console.error("Failed to load orders", orderErr);
-        return;
+      try {
+        const json = (await ordersRes.json().catch(() => ({}))) as { items?: any[] };
+        const allowed = new Set(["accepted", "approved", "in_production", "quality_check", "packaging"]);
+
+        const mapped: OrderOption[] = (json.items || [])
+          .map((row: any) => {
+            const stage = String(row?.order_status || row?.status || "");
+            if (!allowed.has(stage)) return null;
+
+            return {
+              user_item_id: String(row.id),
+              product_id: String(row.product_id || ""),
+              product_name:
+                String(row?.meta?.product_name || row?.product_details?.name || row?.product_id || "") ||
+                "(Unknown Product)",
+              customer_name: getCustomerNameFromEnrichedItem(row),
+              order_status: (row.order_status || row.status || null) as string | null,
+              created_at: String(row.created_at || new Date().toISOString()),
+              meta: (row.meta || null) as Record<string, unknown> | null,
+            };
+          })
+          .filter(Boolean) as OrderOption[];
+
+        setOrders(mapped);
+      } catch (error) {
+        console.error("Failed to load orders", error);
       }
-
-      const allowed = new Set(["accepted", "approved", "in_production", "quality_check", "packaging"]);
-      const mapped: OrderOption[] = (orderData || [])
-        .map((row: unknown) => {
-          const current = row as {
-            id: string;
-            product_id: string;
-            customer_name?: string | null;
-            status?: string | null;
-            order_status?: string | null;
-            created_at: string;
-            meta?: Record<string, unknown> | null;
-            products?: { name?: string | null } | null;
-          };
-          const stage = String(current.order_status || current.status || "");
-          if (!allowed.has(stage)) return null;
-          return {
-            user_item_id: current.id,
-            product_id: current.product_id,
-            product_name: current.products?.name || "(Unknown Product)",
-            customer_name: current.customer_name || null,
-            order_status: (current.order_status || current.status || null) as string | null,
-            created_at: current.created_at,
-            meta: current.meta || {},
-          };
-        })
-        .filter(Boolean) as OrderOption[];
-
-      setOrders(mapped);
     })();
   }, []);
 
@@ -548,79 +549,6 @@ export default function AssignTaskPage() {
     }
   };
 
-  const startProduction = async () => {
-    if (!selectedOrderRecord || !selectedOrder) {
-      alert("Please select an order first.");
-      return;
-    }
-    if (!isLeader) {
-      alert("Only leaders can start production.");
-      return;
-    }
-    if (existingTasks.length === 0) {
-      alert("Please save the production workflow first.");
-      return;
-    }
-
-    const scheduleValidation = validateScheduleTarget(estimatedCompletionDate, scheduleTargetMinDate, scheduleTargetMaxDate);
-    if (!scheduleValidation.ok) {
-      alert(scheduleValidation.message);
-      return;
-    }
-
-    setStartingProduction(true);
-    try {
-      const nowIso = new Date().toISOString();
-      const meta = { ...(selectedOrderRecord.meta || {}) } as Record<string, unknown>;
-      const workflow = ensureProductionWorkflow(meta.production_workflow);
-      const history = Array.isArray(selectedOrderRecord.progress_history) ? selectedOrderRecord.progress_history : [];
-      const nextWorkflow = ensureProductionWorkflow({
-        ...workflow,
-        estimated_completion_date: scheduleValidation.value,
-        started_at: workflow.started_at || nowIso,
-        last_updated_at: nowIso,
-      });
-
-      const { error } = await supabase
-        .from("user_items")
-        .update({
-          status: "in_production",
-          order_status: "in_production",
-          meta: {
-            ...meta,
-            production_percent: clampPercent(Number(meta.production_percent || 0)),
-            production_estimated_completion_date: scheduleValidation.value,
-            production_workflow: nextWorkflow,
-          },
-          progress_history: [{ status: "in_production", updated_at: nowIso }, ...history],
-          updated_at: nowIso,
-        })
-        .eq("id", selectedOrder.user_item_id);
-      if (error) throw error;
-
-      setSelectedOrderRecord((prev) =>
-        prev
-          ? {
-              ...prev,
-              status: "in_production",
-              order_status: "in_production",
-              meta: {
-                ...(prev.meta || {}),
-                production_workflow: nextWorkflow,
-                production_estimated_completion_date: scheduleValidation.value,
-              },
-            }
-          : prev
-      );
-      alert("✅ Production started. The order is now visible in Employee Task for stage review.");
-    } catch (error: any) {
-      console.error("startProduction error", error);
-      alert(`❌ Failed to start production: ${error?.message || "Unknown error"}`);
-    } finally {
-      setStartingProduction(false);
-    }
-  };
-
   const currentWorkflow = useMemo(
     () => ensureProductionWorkflow(selectedOrderRecord?.meta?.production_workflow),
     [selectedOrderRecord?.meta]
@@ -693,7 +621,7 @@ export default function AssignTaskPage() {
               <option value="">Select an order…</option>
               {orders.map((order) => (
                 <option key={order.user_item_id} value={order.user_item_id}>
-                  {order.product_name} • {order.customer_name || "No customer"} • {order.order_status || "—"}
+                  {order.product_name} • {order.customer_name || "—"} • {order.order_status || "—"}
                 </option>
               ))}
             </select>
@@ -925,15 +853,15 @@ export default function AssignTaskPage() {
                 <Save size={16} />
                 {savingWorkflow ? "Saving workflow…" : "Save workflow"}
               </button>
-              <button
-                type="button"
-                onClick={startProduction}
-                disabled={!isLeader || startingProduction || !selectedOrderId || existingTasks.length === 0}
-                className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Factory size={16} />
-                {startingProduction ? "Starting production…" : "Start production"}
-              </button>
+              {selectedOrderId ? (
+                <Link
+                  href={`/dashboard/task/assigntask?orderId=${encodeURIComponent(selectedOrderId)}`}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+                >
+                  <Factory size={16} />
+                  Start production
+                </Link>
+              ) : null}
               {selectedOrderId ? (
                 <Link
                   href={`/dashboard/task/employeetask?orderId=${encodeURIComponent(selectedOrderId)}`}
