@@ -19,6 +19,9 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-card: var(--admin-surface);
+  --color-card-foreground: var(--admin-text);
+  --color-muted-foreground: var(--admin-muted);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }

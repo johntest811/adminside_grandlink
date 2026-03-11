@@ -8,6 +8,21 @@ const supabaseAdmin = createClient(
   { auth: { autoRefreshToken: false, persistSession: false } }
 );
 
+async function listAllAuthUsers(perPage = 200) {
+  const users: Array<{ id: string; email?: string | null }> = [];
+  let page = 1;
+
+  while (true) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+    if (error) throw error;
+    users.push(...(data.users as Array<{ id: string; email?: string | null }>));
+    if (!data.users || data.users.length < perPage) break;
+    page += 1;
+  }
+
+  return users;
+}
+
 let mailTransporter: nodemailer.Transporter | null = null;
 if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
   mailTransporter = nodemailer.createTransport({
@@ -183,18 +198,18 @@ export async function POST(request: NextRequest) {
     console.log("Notification API called:", { type, productName, productId, adminName });
 
     if (type === "new_product") {
-      // Gets all of the users
-      const { data: allUsers, error: usersError } = await supabaseAdmin.auth.admin.listUsers();
-      
-      if (usersError) {
+      let allUsers: Array<{ id: string; email?: string | null }> = [];
+      try {
+        allUsers = await listAllAuthUsers(200);
+      } catch (usersError: any) {
         console.error("Error fetching users:", usersError);
-        return NextResponse.json({ success: false, error: usersError.message }, { status: 500 });
+        return NextResponse.json({ success: false, error: usersError?.message || "Failed to fetch users" }, { status: 500 });
       }
 
       let notificationsSent = 0;
       let emailsSent = 0;
 
-      for (const user of allUsers.users) {
+      for (const user of allUsers) {
         // Check user preferences
         const { data: prefs } = await supabaseAdmin
           .from('user_notification_preferences')
@@ -257,17 +272,18 @@ export async function POST(request: NextRequest) {
       });
 
     } else if (type === "stock_update") {
-      const { data: allUsers, error: usersError } = await supabaseAdmin.auth.admin.listUsers();
-      
-      if (usersError) {
+      let allUsers: Array<{ id: string; email?: string | null }> = [];
+      try {
+        allUsers = await listAllAuthUsers(200);
+      } catch (usersError: any) {
         console.error("Error fetching users:", usersError);
-        return NextResponse.json({ success: false, error: usersError.message }, { status: 500 });
+        return NextResponse.json({ success: false, error: usersError?.message || "Failed to fetch users" }, { status: 500 });
       }
 
       let notificationsSent = 0;
       let emailsSent = 0;
 
-      for (const user of allUsers.users) {
+      for (const user of allUsers) {
         const { data: prefs } = await supabaseAdmin
           .from('user_notification_preferences')
           .select('*')

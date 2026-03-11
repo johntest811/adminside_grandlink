@@ -87,10 +87,18 @@ const ACTIVE_PRODUCTION_STAGES = new Set([
   "completed",
 ]);
 
+function normalizeName(value: string | null | undefined) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, " ");
+}
+
 export default function AssignTaskPage() {
   const searchParams = useSearchParams();
   const [adminSession, setAdminSession] = useState<AdminSession | null>(null);
   const [employees, setEmployees] = useState<AdminUser[]>([]);
+  const [rbacPositionNames, setRbacPositionNames] = useState<Set<string> | null>(null);
   const [orders, setOrders] = useState<OrderOption[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState("");
   const [selectedOrderRecord, setSelectedOrderRecord] = useState<UserItemRecord | null>(null);
@@ -123,6 +131,22 @@ export default function AssignTaskPage() {
     } catch {
       // ignore
     }
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/rbac/positions", { cache: "no-store" });
+        if (!res.ok) return;
+        const json = (await res.json()) as { positions?: Array<{ name?: string | null }> };
+        const names = (json.positions || [])
+          .map((pos) => normalizeName(pos?.name || ""))
+          .filter(Boolean);
+        setRbacPositionNames(new Set(names));
+      } catch {
+        // ignore
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -258,13 +282,19 @@ export default function AssignTaskPage() {
 
     for (const employee of employees) {
       if (employee.is_active === false) continue;
+
+      if (rbacPositionNames) {
+        const normalizedPosition = normalizeName(employee.position);
+        if (!normalizedPosition || !rbacPositionNames.has(normalizedPosition)) continue;
+      }
+
       const roleKey = getProductionRoleForAdmin(employee);
       if (!roleKey) continue;
       grouped[roleKey].push(employee);
     }
 
     return grouped;
-  }, [employees]);
+  }, [employees, rbacPositionNames]);
 
   const workflowPreview = useMemo(() => {
     const stagePlans = buildStagePlansFromAssignments(roleAssignments);

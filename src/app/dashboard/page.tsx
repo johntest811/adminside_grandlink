@@ -13,6 +13,8 @@ import {
   Legend,
 } from "chart.js";
 import { Bar } from "react-chartjs-2";
+import FullCalendar from "@fullcalendar/react";
+import dayGridPlugin from "@fullcalendar/daygrid";
 import {
   Activity,
   BarChart3,
@@ -73,6 +75,15 @@ type Announcement = {
   priority?: "low" | "medium" | "high" | string | null;
   created_at: string;
   expires_at?: string | null;
+};
+
+type CalendarEvent = {
+  id: string;
+  title: string;
+  start: string;
+  end?: string | null;
+  description?: string | null;
+  location?: string | null;
 };
 
 type MetricCard = {
@@ -271,6 +282,7 @@ export default function DashboardPage() {
   const [lowStockProducts, setLowStockProducts] = useState<LowStockProduct[]>([]);
   const [activeUserEvents, setActiveUserEvents] = useState<ActiveUserEvent[]>([]);
   const [orderEvents, setOrderEvents] = useState<OrderEvent[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [metrics, setMetrics] = useState({
     totalProducts: 0,
     totalUsers: 0,
@@ -323,6 +335,7 @@ export default function DashboardPage() {
           announcementsResult,
           tasksResult,
           adminUsersResult,
+          calendarEventsResult,
         ] = await Promise.all([
           supabase.from("products").select("id", { count: "exact", head: true }),
           supabase
@@ -371,6 +384,7 @@ export default function DashboardPage() {
             if (!res.ok) return { users: [] as unknown[] };
             return await res.json();
           }),
+          supabase.from("calendar_events").select("id,title,start,end,description,location").order("start", { ascending: true }).limit(500),
         ]);
 
         const monthlySales = ((monthlyOrdersResult.data || []) as OrderEvent[]).filter((row) =>
@@ -401,6 +415,7 @@ export default function DashboardPage() {
           ((announcementsResult.data || []) as Announcement[]).filter((item) => !item.expires_at || item.expires_at > nowIso)
         );
         setMyTasks((tasksResult.data || []) as TaskItem[]);
+        setCalendarEvents((calendarEventsResult.data || []) as CalendarEvent[]);
       } catch (error) {
         console.error("Failed to load dashboard", error);
       } finally {
@@ -832,6 +847,32 @@ export default function DashboardPage() {
         </article>
 
         <div className="grid grid-cols-1 gap-6">
+          <article className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="rounded-2xl bg-sky-50 p-3 text-sky-700">
+                  <Activity className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900">Calendar</h2>
+                  <p className="mt-1 text-sm text-slate-500">Upcoming events and schedule overview.</p>
+                </div>
+              </div>
+              <a href="/dashboard/calendar" className="text-sm font-semibold text-slate-700 underline">Open</a>
+            </div>
+
+            <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3">
+              <FullCalendar
+                plugins={[dayGridPlugin]}
+                initialView="dayGridMonth"
+                headerToolbar={{ left: "prev,next", center: "title", right: "" }}
+                height={420}
+                events={calendarEvents}
+                dayMaxEventRows={2}
+              />
+            </div>
+          </article>
+
           <article className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">

@@ -9,21 +9,6 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(null), ms);
-    promise
-      .then((value) => {
-        clearTimeout(timer);
-        resolve(value);
-      })
-      .catch(() => {
-        clearTimeout(timer);
-        resolve(null);
-      });
-  });
-}
-
 // GET all products
 export async function GET() {
   try {
@@ -139,14 +124,11 @@ export async function POST(req: Request) {
     }
 
     sideEffects.push(
-      withTimeout(
-        adminNotificationService.notifyNewProduct(
-          product.name,
-          product.id,
-          currentAdmin?.username || "Admin"
-        ),
-        1500
-      )
+      adminNotificationService
+        .notifyNewProduct(product.name, product.id, currentAdmin?.username || "Admin")
+        .catch((error) => {
+          console.error("❌ Failed to send user notifications:", error);
+        })
     );
 
     await Promise.allSettled(sideEffects);
