@@ -517,200 +517,220 @@ export default function BlogsEditorPage() {
   };
 
   return (
-    <div className="p-6">
-      <div className="flex items-start justify-between gap-4">
+    <div className="p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen">
+      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-black">Blogs Editor</h1>
-          <p className="text-gray-600 text-sm mt-1">Create, edit, publish blogs for the website.</p>
+          <h1 className="text-3xl font-bold text-gray-900">Blogs Editor</h1>
+          <p className="text-sm text-gray-600 mt-1">Create, edit, publish blogs for the website.</p>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex items-center gap-3">
+          <div className="text-sm text-gray-600 bg-white px-4 py-2 rounded-lg border border-gray-200 shadow-sm">
+            Editing as: {currentAdmin?.username || 'Unknown Admin'}
+          </div>
           <button
             type="button"
             onClick={startNew}
-            className="px-4 py-2 rounded bg-white hover:bg-gray-50 text-black border border-gray-200"
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
           >
-            New blog
+            ➕ New Blog
           </button>
           <button
             type="button"
             onClick={() => setIsPreviewOpen(true)}
-            className="px-4 py-2 rounded bg-white hover:bg-gray-50 text-black border border-gray-200"
+            className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors shadow-sm"
           >
-            Preview
+            👁 Preview
           </button>
           <button
             type="button"
             onClick={save}
             disabled={saving}
-            className="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-60"
+            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors shadow-sm disabled:bg-gray-400 disabled:cursor-not-allowed"
           >
-            {saving ? "Saving…" : "Save"}
+            {saving ? "Saving…" : "💾 Save"}
           </button>
           {form.id ? (
             <button
               type="button"
               onClick={del}
               disabled={saving}
-              className="px-4 py-2 rounded bg-red-600 hover:bg-red-700 text-white disabled:opacity-60"
+              className="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition-colors shadow-sm disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
-              Delete
+              🗑 Delete
             </button>
           ) : null}
         </div>
       </div>
 
       {error ? (
-        <div className="mt-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded">{error}</div>
+        <div className="mb-6 bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl">{error}</div>
       ) : null}
 
-      <div className="mt-6 grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6">
         {/* List */}
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <div className="flex items-center justify-between">
-            <div className="text-black font-semibold">All blogs</div>
+        <section className="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
+              <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
+                {blogs.length} blogs
+              </span>
+              All Blogs
+            </h2>
             <button
               type="button"
               onClick={loadBlogs}
-              className="text-sm text-gray-600 hover:text-black"
+              className="text-sm text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-3 py-1 rounded-lg transition-colors"
               disabled={loading}
             >
-              Refresh
+              🔄 Refresh
             </button>
           </div>
 
           {loading ? (
-            <div className="mt-4 text-gray-600">Loading…</div>
+            <div className="p-8 text-center text-gray-500">Loading…</div>
           ) : blogs.length === 0 ? (
-            <div className="mt-4 text-gray-600">No blogs yet.</div>
+            <div className="p-12 text-center text-gray-500">
+              <div className="text-6xl mb-4">📝</div>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">No blogs yet</h3>
+              <p className="text-gray-500">Create your first blog to get started!</p>
+            </div>
           ) : (
-            <div className="mt-4 space-y-2 max-h-[70vh] overflow-auto pr-1">
+            <div className="space-y-3 max-h-[70vh] overflow-auto pr-1">
               {blogs.map((b) => (
                 <button
                   key={b.id}
                   type="button"
                   onClick={() => loadBlogById(b.id)}
-                  className={`w-full text-left rounded-lg p-3 border transition-colors ${
+                  className={`w-full text-left rounded-lg p-4 border transition-all hover:shadow-md ${
                     b.id === selectedId
-                      ? "bg-gray-100 border-gray-200"
-                      : "bg-white hover:bg-gray-50 border-gray-200"
+                      ? "bg-blue-50 border-blue-300 shadow-sm"
+                      : "bg-gray-50 hover:bg-white border-gray-200"
                   }`}
                 >
-                  <div className="text-black font-semibold line-clamp-2">{b.title}</div>
-                  <div className="text-xs text-gray-600 mt-1">/{b.slug}</div>
+                  <div className="text-gray-900 font-semibold line-clamp-2">{b.title}</div>
+                  <div className="text-xs text-gray-500 mt-1">/{b.slug}</div>
                   <div className="mt-2 inline-flex items-center gap-2">
                     <span
                       className={`text-xs px-2 py-0.5 rounded-full border ${
                         b.is_published
-                          ? "bg-emerald-500/20 border-emerald-500/30 text-black"
-                          : "bg-yellow-500/20 border-yellow-500/30 text-black"
+                          ? "bg-green-100 border-green-300 text-green-800"
+                          : "bg-yellow-100 border-yellow-300 text-yellow-800"
                       }`}
                     >
-                      {b.is_published ? "Published" : "Draft"}
+                      {b.is_published ? "✅ Published" : "📋 Draft"}
                     </span>
                   </div>
                 </button>
               ))}
             </div>
           )}
-        </div>
+        </section>
 
         {/* Editor */}
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm text-gray-700 mb-1">Title</label>
-              <input
-                value={String(form.title || "")}
-                onChange={(e) => {
-                  const nextTitle = e.target.value;
-                  setForm((p) => ({ ...p, title: nextTitle, slug: p.slug ? p.slug : slugify(nextTitle) }));
-                }}
-                className="w-full px-3 py-2 rounded bg-white text-black"
-                placeholder="Blog title"
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-gray-700 mb-1">Slug</label>
-              <input
-                value={String(form.slug || "")}
-                onChange={(e) => setForm((p) => ({ ...p, slug: slugify(e.target.value) }))}
-                className="w-full px-3 py-2 rounded bg-white text-black"
-                placeholder="my-blog-post"
-              />
-              <div className="text-xs text-gray-600 mt-1">Used in URL: /blogs/{String(form.slug || "")}</div>
-            </div>
-
-            <div>
-              <label className="block text-sm text-gray-700 mb-1">Author name</label>
-              <input
-                value={String(form.author_name || "")}
-                onChange={(e) => setForm((p) => ({ ...p, author_name: e.target.value }))}
-                className="w-full px-3 py-2 rounded bg-white text-black"
-                placeholder="Grand Link"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm text-gray-700 mb-1">Cover image</label>
-              <div className="flex gap-2">
+        <section className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+          <h2 className="text-xl font-semibold text-gray-800 mb-4">
+            {form.id ? '✏️ Edit Blog' : '➕ New Blog'}
+          </h2>
+          <div className="bg-gray-50 rounded-lg p-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Title *</label>
                 <input
-                  value={String(form.cover_image_url || "")}
-                  onChange={(e) => setForm((p) => ({ ...p, cover_image_url: e.target.value }))}
-                  className="w-full px-3 py-2 rounded bg-white text-black"
-                  placeholder="https://..."
-                />
-                <input
-                  ref={coverFileInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={async (e) => {
-                    const f = e.target.files?.[0];
-                    e.target.value = "";
-                    if (f) await uploadCoverImage(f);
+                  value={String(form.title || "")}
+                  onChange={(e) => {
+                    const nextTitle = e.target.value;
+                    setForm((p) => ({ ...p, title: nextTitle, slug: p.slug ? p.slug : slugify(nextTitle) }));
                   }}
+                  className="w-full p-3 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Blog title"
                 />
-                <button
-                  type="button"
-                  disabled={uploadingCover}
-                  onClick={() => coverFileInputRef.current?.click()}
-                  className="px-3 py-2 rounded bg-white hover:bg-gray-50 text-black border border-gray-200 disabled:opacity-60 shrink-0"
-                  title={`Uploads to Storage bucket: ${BLOG_COVER_BUCKET}`}
-                >
-                  {uploadingCover ? "Uploading…" : "Upload"}
-                </button>
               </div>
-              <div className="text-xs text-gray-600 mt-1">Uploads to Supabase Storage bucket: {BLOG_COVER_BUCKET}</div>
-            </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Slug *</label>
+                <input
+                  value={String(form.slug || "")}
+                  onChange={(e) => setForm((p) => ({ ...p, slug: slugify(e.target.value) }))}
+                  className="w-full p-3 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="my-blog-post"
+                />
+                <div className="text-xs text-gray-500 mt-1">URL: /blogs/{String(form.slug || "...")}</div>
+              </div>
 
-            <div className="md:col-span-2">
-              <label className="block text-sm text-gray-700 mb-1">Excerpt</label>
-              <textarea
-                value={String(form.excerpt || "")}
-                onChange={(e) => setForm((p) => ({ ...p, excerpt: e.target.value }))}
-                className="w-full px-3 py-2 rounded bg-white text-black min-h-[90px]"
-                placeholder="Short summary shown on the blogs list…"
-              />
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Author Name</label>
+                <input
+                  value={String(form.author_name || "")}
+                  onChange={(e) => setForm((p) => ({ ...p, author_name: e.target.value }))}
+                  className="w-full p-3 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Grand Link"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Cover Image</label>
+                <div className="flex gap-2">
+                  <input
+                    value={String(form.cover_image_url || "")}
+                    onChange={(e) => setForm((p) => ({ ...p, cover_image_url: e.target.value }))}
+                    className="w-full p-3 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="https://..."
+                  />
+                  <input
+                    ref={coverFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = "";
+                      if (f) await uploadCoverImage(f);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={uploadingCover}
+                    onClick={() => coverFileInputRef.current?.click()}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:bg-gray-400 shrink-0"
+                    title={`Uploads to Storage bucket: ${BLOG_COVER_BUCKET}`}
+                  >
+                    {uploadingCover ? "📤..." : "📤 Upload"}
+                  </button>
+                </div>
+                <div className="text-xs text-gray-500 mt-1">Bucket: {BLOG_COVER_BUCKET}</div>
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Excerpt</label>
+                <textarea
+                  value={String(form.excerpt || "")}
+                  onChange={(e) => setForm((p) => ({ ...p, excerpt: e.target.value }))}
+                  className="w-full p-3 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-h-[90px]"
+                  placeholder="Short summary shown on the blogs list…"
+                />
+              </div>
             </div>
           </div>
 
-          <div className="mt-4">
-            <label className="block text-sm text-gray-700 mb-2">Content</label>
+          <div className="mt-6">
+            <h3 className="text-lg font-semibold text-gray-800 mb-3">📄 Content Blocks</h3>
 
             <div className="space-y-4">
               {blocks.map((block, idx) => (
-                <div key={block.id} className="border border-gray-200 rounded-lg p-3">
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <div className="text-sm font-semibold text-black">
-                      {block.type === "text" ? `Text section ${idx + 1}` : `Image section ${idx + 1}`}
+                <div key={block.id} className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
+                        {block.type === "text" ? "📝 Text" : "🖼 Images"}
+                      </span>
+                      <span className="text-sm font-medium text-gray-700">Section {idx + 1}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={() => moveBlock(block.id, -1)}
                         disabled={idx === 0}
-                        className="px-2 py-1 rounded border border-gray-200 bg-white hover:bg-gray-50 text-black disabled:opacity-50"
+                        className="px-3 py-1 rounded-lg border border-gray-300 bg-white hover:bg-gray-100 text-gray-700 disabled:opacity-50 transition-colors"
                       >
                         ↑
                       </button>
@@ -718,16 +738,16 @@ export default function BlogsEditorPage() {
                         type="button"
                         onClick={() => moveBlock(block.id, 1)}
                         disabled={idx === blocks.length - 1}
-                        className="px-2 py-1 rounded border border-gray-200 bg-white hover:bg-gray-50 text-black disabled:opacity-50"
+                        className="px-3 py-1 rounded-lg border border-gray-300 bg-white hover:bg-gray-100 text-gray-700 disabled:opacity-50 transition-colors"
                       >
                         ↓
                       </button>
                       <button
                         type="button"
                         onClick={() => removeBlock(block.id)}
-                        className="px-2 py-1 rounded border border-red-200 bg-red-50 hover:bg-red-100 text-red-700"
+                        className="px-3 py-1 rounded-lg bg-red-500 hover:bg-red-600 text-white transition-colors"
                       >
-                        Remove
+                        🗑 Remove
                       </button>
                     </div>
                   </div>
@@ -743,10 +763,10 @@ export default function BlogsEditorPage() {
                     />
                   ) : (
                     <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="text-sm text-gray-700">New images size:</div>
+                      <div className="flex flex-wrap items-center gap-3 bg-white p-3 rounded-lg border border-gray-200">
+                        <div className="text-sm font-medium text-gray-700">New images size:</div>
                         <select
-                          className="px-2 py-1 border rounded text-sm bg-white"
+                          className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900 focus:ring-2 focus:ring-blue-500"
                           value={block.newImageSize}
                           onChange={(e) => {
                             const next = e.target.value as ImageSize;
@@ -803,9 +823,9 @@ export default function BlogsEditorPage() {
                             const el = document.getElementById(`img_input_${block.id}`) as HTMLInputElement | null;
                             el?.click();
                           }}
-                          className="px-3 py-2 rounded bg-white hover:bg-gray-50 text-black border border-gray-200"
+                          className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white transition-colors"
                         >
-                          Add images
+                          ➕ Add Images
                         </button>
                       </div>
 
@@ -874,29 +894,29 @@ export default function BlogsEditorPage() {
               ))}
             </div>
 
-            <div className="flex flex-wrap gap-2 mt-4">
+            <div className="flex flex-wrap gap-3 mt-4 bg-gray-100 p-4 rounded-lg border border-gray-200">
               <button
                 type="button"
                 onClick={addTextBlock}
-                className="px-3 py-2 rounded bg-white hover:bg-gray-50 text-black border border-gray-200"
+                className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors shadow-sm"
               >
-                Text Content
+                📝 Add Text Block
               </button>
               <button
                 type="button"
                 onClick={addImageBlock}
-                className="px-3 py-2 rounded bg-white hover:bg-gray-50 text-black border border-gray-200"
+                className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white transition-colors shadow-sm"
               >
-                Image Content
+                🖼 Add Image Block
               </button>
-              <div className="text-xs text-gray-600 self-center">
+              <div className="text-sm text-gray-600 self-center ml-2">
                 Add as many sections as you want.
               </div>
             </div>
           </div>
 
-          <div className="mt-4 flex items-center justify-between gap-3">
-            <label className="inline-flex items-center gap-2 text-gray-700">
+          <div className="mt-6 bg-gray-50 rounded-lg p-4 flex items-center justify-between gap-3">
+            <label className="inline-flex items-center gap-3 text-gray-700 cursor-pointer">
               <input
                 type="checkbox"
                 checked={!!form.is_published}
@@ -907,63 +927,68 @@ export default function BlogsEditorPage() {
                     published_at: e.target.checked ? p.published_at || new Date().toISOString() : null,
                   }))
                 }
+                className="w-5 h-5 text-green-600 rounded focus:ring-green-500"
               />
-              Published
+              <span className="font-medium">Published</span>
             </label>
 
-            <div className="text-xs text-gray-600">
-              {form.is_published ? `Published at: ${form.published_at || "(auto)"}` : "Draft (not visible on website)"}
+            <div className={`text-sm px-3 py-1 rounded-full ${
+              form.is_published 
+                ? 'bg-green-100 text-green-800 border border-green-300' 
+                : 'bg-yellow-100 text-yellow-800 border border-yellow-300'
+            }`}>
+              {form.is_published ? `✅ Published: ${form.published_at || "(auto)"}` : "📋 Draft (not visible on website)"}
             </div>
           </div>
 
           {form.cover_image_url ? (
-            <div className="mt-4">
-              <div className="text-sm text-gray-700 mb-2">Cover preview</div>
+            <div className="mt-6">
+              <div className="text-sm font-medium text-gray-700 mb-2">🖼 Cover Preview</div>
               <img
                 src={String(form.cover_image_url)}
                 alt="Cover"
-                className="w-full max-h-[260px] object-cover rounded-lg border border-gray-200"
+                className="w-full max-h-[300px] object-cover rounded-xl border border-gray-200 shadow-sm"
               />
             </div>
           ) : null}
-        </div>
+        </section>
       </div>
 
       {isPreviewOpen ? (
-        <div className="fixed inset-0 z-50 bg-black/60 p-4 md:p-8" onClick={() => setIsPreviewOpen(false)}>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center" onClick={() => setIsPreviewOpen(false)}>
           <div
-            className="mx-auto max-w-3xl w-full h-[80vh] bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden flex flex-col"
+            className="mx-auto max-w-3xl w-full max-h-[90vh] bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50">
-              <div className="font-semibold text-black">Preview</div>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
+              <div className="font-semibold text-gray-900 text-lg">👁 Preview</div>
               <button
                 type="button"
-                className="px-3 py-1.5 rounded bg-white border border-gray-200 hover:bg-gray-50 text-black"
+                className="px-4 py-2 rounded-lg bg-gray-400 hover:bg-gray-500 text-white transition-colors"
                 onClick={() => setIsPreviewOpen(false)}
               >
                 Close
               </button>
             </div>
 
-            <div className="p-4 md:p-6 overflow-y-auto">
-              <h2 className="text-2xl font-bold text-black">{String(form.title || "(Untitled)")}</h2>
-              <div className="text-sm text-gray-600 mt-1">/blogs/{String(form.slug || "")}</div>
+            <div className="p-6 overflow-y-auto">
+              <h2 className="text-2xl font-bold text-gray-900">{String(form.title || "(Untitled)")}</h2>
+              <div className="text-sm text-gray-500 mt-1">/blogs/{String(form.slug || "")}</div>
 
               {form.cover_image_url ? (
                 <img
                   src={String(form.cover_image_url)}
                   alt="Cover"
-                  className="w-full mt-4 max-h-[320px] object-cover rounded-lg border border-gray-200"
+                  className="w-full mt-4 max-h-[320px] object-cover rounded-xl border border-gray-200 shadow-sm"
                 />
               ) : null}
 
               {form.excerpt ? (
-                <p className="mt-4 text-gray-700">{String(form.excerpt)}</p>
+                <p className="mt-4 text-gray-700 italic">{String(form.excerpt)}</p>
               ) : null}
 
               <div
-                className="admin-blog-preview mt-6"
+                className="admin-blog-preview mt-6 prose prose-gray max-w-none"
                 dangerouslySetInnerHTML={{ __html: contentHtml }}
               />
             </div>
@@ -972,8 +997,8 @@ export default function BlogsEditorPage() {
       ) : null}
 
       {toast ? (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-black text-white px-4 py-2 rounded-full text-sm shadow">
-          {toast}
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-green-600 text-white px-6 py-3 rounded-xl text-sm shadow-lg border border-green-500">
+          ✅ {toast}
         </div>
       ) : null}
     </div>

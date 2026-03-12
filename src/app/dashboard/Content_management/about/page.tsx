@@ -1,13 +1,13 @@
+
 "use client";
 import { useEffect, useState } from "react";
 import { supabase } from "../../../Clients/Supabase/SupabaseClients";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Loader2, Edit3 } from "lucide-react";
 import { logActivity } from "@/app/lib/activity";
-
-import RichTextEditor from "@/components/RichTextEditor";
 
 interface About {
   id: number;
@@ -65,7 +65,6 @@ export default function AdminAboutPage() {
     if (currentAdmin) {
       fetchAbout();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAdmin]);
 
   const fetchAbout = async () => {
@@ -355,110 +354,133 @@ export default function AdminAboutPage() {
   };
 
   if (!about) {
-    return <p className="text-center mt-10 text-black">Loading...</p>;
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <p className="text-center text-gray-700">Loading About content...</p>
+      </div>
+    );
   }
 
   return (
     <div className="p-8 min-h-screen bg-gray-50">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold text-black">Admin – About Page</h1>
-        <div className="text-sm text-gray-600">
-          Editing as: {currentAdmin?.username || 'Unknown Admin'}
-        </div>
-      </div>
-
-      <Card className="shadow-lg rounded-2xl border border-gray-900 bg-white">
-        <CardContent className="p-6 space-y-6">
-          {!editing ? (
-            <>
-              <div>
-                <h2 className="text-xl font-semibold text-black mb-2">Grand</h2>
-                <p className="text-black">{about.grand}</p>
-              </div>
-
-              <div>
-                <h2 className="text-xl font-semibold text-black mb-2">Description</h2>
-                <div className="blog-content text-black" dangerouslySetInnerHTML={{ __html: about.description || "" }} />
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <h2 className="text-xl font-semibold text-black mb-2">Mission</h2>
-                  <div className="blog-content text-black" dangerouslySetInnerHTML={{ __html: about.mission || "" }} />
-                </div>
-                <div>
-                  <h2 className="text-xl font-semibold text-black mb-2">Vision</h2>
-                  <div className="blog-content text-black" dangerouslySetInnerHTML={{ __html: about.vision || "" }} />
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-black mb-1">Grand Title</label>
-                <Input
-                  placeholder="Grand Title"
-                  value={form.grand || ""}
-                  onChange={(e) => handleFormChange('grand', e.target.value)}
-                  className="text-black placeholder:text-gray-500"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-black mb-1">Description</label>
-                <RichTextEditor
-                  value={String(form.description || "")}
-                  onChange={(next) => handleFormChange('description', next)}
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-black mb-1">Mission</label>
-                <RichTextEditor
-                  value={String(form.mission || "")}
-                  onChange={(next) => handleFormChange('mission', next)}
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-black mb-1">Vision</label>
-                <RichTextEditor
-                  value={String(form.vision || "")}
-                  onChange={(next) => handleFormChange('vision', next)}
-                />
-              </div>
-            </div>
-          )}
-
-          <div className="flex gap-3">
-            {!editing && (
-              <Button
-                onClick={handleEdit}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                <Edit3 size={18} /> Edit
-              </Button>
-            )}
-            {editing && (
-              <>
-                <Button
-                  onClick={handleSave}
-                  disabled={loading}
-                  className="bg-green-600 hover:bg-green-700 text-white"
-                >
-                  {loading ? <Loader2 className="animate-spin h-5 w-5" /> : "Save Changes"}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={handleCancel}
-                >
-                  Cancel
-                </Button>
-              </>
-            )}
+      <div className="max-w-5xl mx-auto">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">About Page Management</h1>
+            <p className="text-sm text-gray-600 mt-1">
+              Manage the About content shown on your website.
+            </p>
           </div>
-        </CardContent>
-      </Card>
+          <div className="text-sm text-gray-600 bg-white px-4 py-2 rounded-lg border border-gray-200 shadow-sm">
+            Editing as: {currentAdmin?.username || 'Unknown Admin'}
+          </div>
+        </div>
+
+        <Card className="shadow-sm rounded-xl border border-gray-200 bg-white">
+          <CardContent className="p-6 space-y-6">
+            {!editing ? (
+              <>
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="rounded-lg border border-gray-200 p-4 bg-gray-50">
+                    <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2">Grand Title</h2>
+                    <p className="text-gray-900 text-lg font-medium">{about.grand || "—"}</p>
+                  </div>
+
+                  <div className="rounded-lg border border-gray-200 p-4 bg-white">
+                    <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2">Description</h2>
+                    <p className="text-gray-800 leading-relaxed whitespace-pre-line">{about.description || "—"}</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="rounded-lg border border-gray-200 p-4 bg-white">
+                      <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2">Mission</h2>
+                      <p className="text-gray-800 leading-relaxed whitespace-pre-line">{about.mission || "—"}</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 p-4 bg-white">
+                      <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2">Vision</h2>
+                      <p className="text-gray-800 leading-relaxed whitespace-pre-line">{about.vision || "—"}</p>
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Grand Title</label>
+                  <Input
+                    placeholder="Grand Title"
+                    value={form.grand || ""}
+                    onChange={(e) => handleFormChange('grand', e.target.value)}
+                    className="text-gray-900 placeholder:text-gray-400"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                  <Textarea
+                    placeholder="Description"
+                    rows={4}
+                    value={form.description || ""}
+                    onChange={(e) => handleFormChange('description', e.target.value)}
+                    className="text-gray-900 placeholder:text-gray-400"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Mission</label>
+                  <Textarea
+                    placeholder="Mission"
+                    rows={4}
+                    value={form.mission || ""}
+                    onChange={(e) => handleFormChange('mission', e.target.value)}
+                    className="text-gray-900 placeholder:text-gray-400"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Vision</label>
+                  <Textarea
+                    placeholder="Vision"
+                    rows={4}
+                    value={form.vision || ""}
+                    onChange={(e) => handleFormChange('vision', e.target.value)}
+                    className="text-gray-900 placeholder:text-gray-400"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-2">
+              {!editing && (
+                <Button
+                  onClick={handleEdit}
+                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  <Edit3 size={18} /> Edit Content
+                </Button>
+              )}
+              {editing && (
+                <>
+                  <Button
+                    onClick={handleSave}
+                    disabled={loading}
+                    className="bg-green-600 hover:bg-green-700 text-white"
+                  >
+                    {loading ? <Loader2 className="animate-spin h-5 w-5" /> : "Save Changes"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={handleCancel}
+                    className="border-gray-300"
+                  >
+                    Cancel
+                  </Button>
+                </>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

@@ -90,9 +90,13 @@ const ACTIVE_PRODUCTION_STAGES = new Set([
 const SCHEDULE_TARGET_MIN_OFFSET_DAYS = 1;
 const SCHEDULE_TARGET_MAX_YEARS_AHEAD = 5;
 
-function toDateInputValue(date: Date) {
+function pad2(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function toDateTimeLocalInputValue(date: Date) {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
-  return date.toISOString().slice(0, 10);
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 }
 
 function addDays(date: Date, days: number) {
@@ -107,36 +111,57 @@ function addYears(date: Date, years: number) {
   return next;
 }
 
-function normalizeDateInput(value: string) {
+function toDateTimeLocalValueFromAny(value: string) {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  if (raw.length >= 10 && raw.includes("-")) return raw.slice(0, 10);
-  return raw;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return `${raw}T00:00`;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return toDateTimeLocalInputValue(parsed);
 }
 
-function isValidDateInput(value: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const parsed = new Date(`${value}T00:00:00Z`).getTime();
-  return Number.isFinite(parsed);
+function parseEstimatedCompletionInput(value: string): Date | null {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const parsed = new Date(`${raw}T00:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function validateScheduleTarget(value: string, minDate: string, maxDate: string) {
-  const normalized = normalizeDateInput(value);
-  if (!normalized) return { ok: false as const, message: "Please set an estimated completion date." };
-  if (!isValidDateInput(normalized)) return { ok: false as const, message: "Estimated completion date is invalid." };
-  if (minDate && normalized < minDate) {
+function startOfDay(date: Date) {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function endOfDay(date: Date) {
+  const next = new Date(date);
+  next.setHours(23, 59, 0, 0);
+  return next;
+}
+
+function validateScheduleTarget(value: string, minDate: Date, maxDate: Date) {
+  const parsed = parseEstimatedCompletionInput(value);
+  if (!parsed) return { ok: false as const, message: "Please set an estimated completion date/time." };
+  if (!(parsed instanceof Date) || Number.isNaN(parsed.getTime())) {
+    return { ok: false as const, message: "Estimated completion date/time is invalid." };
+  }
+  if (minDate && parsed.getTime() < minDate.getTime()) {
     return {
       ok: false as const,
-      message: `Estimated completion date must be on/after ${new Date(minDate).toLocaleDateString()}.`,
+      message: `Estimated completion must be on/after ${minDate.toLocaleString()}.`,
     };
   }
-  if (maxDate && normalized > maxDate) {
+  if (maxDate && parsed.getTime() > maxDate.getTime()) {
     return {
       ok: false as const,
-      message: `Estimated completion date must be on/before ${new Date(maxDate).toLocaleDateString()}.`,
+      message: `Estimated completion must be on/before ${maxDate.toLocaleString()}.`,
     };
   }
-  return { ok: true as const, value: normalized };
+  return { ok: true as const, value: parsed.toISOString() };
 }
 
 function normalizeName(value: string | null | undefined) {
@@ -179,8 +204,16 @@ export default function AssignTaskPage() {
     return canManageProductionWorkflow(adminSession);
   }, [adminSession]);
 
-  const scheduleTargetMinDate = useMemo(() => toDateInputValue(addDays(new Date(), SCHEDULE_TARGET_MIN_OFFSET_DAYS)), []);
-  const scheduleTargetMaxDate = useMemo(() => toDateInputValue(addYears(new Date(), SCHEDULE_TARGET_MAX_YEARS_AHEAD)), []);
+  const scheduleTargetMin = useMemo(
+    () => startOfDay(addDays(new Date(), SCHEDULE_TARGET_MIN_OFFSET_DAYS)),
+    []
+  );
+  const scheduleTargetMax = useMemo(
+    () => endOfDay(addYears(new Date(), SCHEDULE_TARGET_MAX_YEARS_AHEAD)),
+    []
+  );
+  const scheduleTargetMinValue = useMemo(() => toDateTimeLocalInputValue(scheduleTargetMin), [scheduleTargetMin]);
+  const scheduleTargetMaxValue = useMemo(() => toDateTimeLocalInputValue(scheduleTargetMax), [scheduleTargetMax]);
 
   useEffect(() => {
     try {
@@ -302,7 +335,7 @@ export default function AssignTaskPage() {
 
         setRoleAssignments(nextAssignments);
         setEstimatedCompletionDate(
-          normalizeDateInput(String(workflow.estimated_completion_date || record?.meta?.production_estimated_completion_date || ""))
+          toDateTimeLocalValueFromAny(String(workflow.estimated_completion_date || record?.meta?.production_estimated_completion_date || ""))
         );
       } catch (error) {
         console.error("Failed to load order context", error);
@@ -403,7 +436,7 @@ export default function AssignTaskPage() {
       alert("Only leaders can configure the production workflow.");
       return;
     }
-    const scheduleValidation = validateScheduleTarget(estimatedCompletionDate, scheduleTargetMinDate, scheduleTargetMaxDate);
+    const scheduleValidation = validateScheduleTarget(estimatedCompletionDate, scheduleTargetMin, scheduleTargetMax);
     if (!scheduleValidation.ok) {
       alert(scheduleValidation.message);
       return;
@@ -438,7 +471,8 @@ export default function AssignTaskPage() {
         return;
       }
 
-      const normalizedDueDate = scheduleValidation.value;
+      const estimatedCompletionIso = scheduleValidation.value;
+      const normalizedDueDate = estimatedCompletionIso.slice(0, 10);
       const blueprints = buildTaskBlueprints();
       const short = selectedOrder.user_item_id.slice(0, 6).toUpperCase();
 
@@ -499,7 +533,7 @@ export default function AssignTaskPage() {
 
       const teamMembers = buildWorkflowMembers(employees, roleAssignments);
       const workflow = ensureProductionWorkflow({
-        estimated_completion_date: normalizedDueDate,
+        estimated_completion_date: estimatedCompletionIso,
         final_product_images: selectedOrderRecord.meta?.production_final_images as string[] | undefined,
         final_product_note: (selectedOrderRecord.meta?.production_final_note as string | undefined) || null,
         started_at: (selectedOrderRecord.meta?.production_workflow as { started_at?: string | null } | undefined)?.started_at || null,
@@ -526,7 +560,7 @@ export default function AssignTaskPage() {
 
       const nextMeta = {
         ...(selectedOrderRecord.meta || {}),
-        production_estimated_completion_date: normalizedDueDate,
+        production_estimated_completion_date: estimatedCompletionIso,
         production_final_images: workflow.final_product_images,
         production_final_note: workflow.final_product_note,
         production_workflow: workflow,
@@ -653,22 +687,22 @@ export default function AssignTaskPage() {
             </div>
 
             <input
-              type="date"
+              type="datetime-local"
               value={estimatedCompletionDate}
-              min={scheduleTargetMinDate}
-              max={scheduleTargetMaxDate}
-              onChange={(event) => setEstimatedCompletionDate(normalizeDateInput(event.target.value))}
+              min={scheduleTargetMinValue}
+              max={scheduleTargetMaxValue}
+              onChange={(event) => setEstimatedCompletionDate(event.target.value)}
               className="mt-4 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-blue-500"
             />
 
             <div className="mt-2 text-xs text-slate-500">
-              Allowed range: {new Date(scheduleTargetMinDate).toLocaleDateString()} to {new Date(scheduleTargetMaxDate).toLocaleDateString()}.
+              Allowed range: {scheduleTargetMin.toLocaleString()} to {scheduleTargetMax.toLocaleString()}.
             </div>
 
             <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
               {estimatedCompletionDate
-                ? `Estimated completion: ${new Date(estimatedCompletionDate).toLocaleDateString()}`
-                : "No estimated completion date set yet."}
+                ? `Estimated completion: ${new Date(parseEstimatedCompletionInput(estimatedCompletionDate) || new Date()).toLocaleString()}`
+                : "No estimated completion date/time set yet."}
             </div>
           </div>
 
@@ -816,7 +850,7 @@ export default function AssignTaskPage() {
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Estimated completion</div>
                     <div className="mt-2 text-sm font-semibold text-slate-900">
                       {currentWorkflow.estimated_completion_date
-                        ? new Date(currentWorkflow.estimated_completion_date).toLocaleDateString()
+                        ? new Date(currentWorkflow.estimated_completion_date).toLocaleString()
                         : "Not set"}
                     </div>
                   </div>

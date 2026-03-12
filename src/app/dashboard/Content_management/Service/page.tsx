@@ -1,3 +1,4 @@
+
 "use client";
 import { useEffect, useState } from "react";
 import { supabase } from "../../../Clients/Supabase/SupabaseClients";
@@ -9,27 +10,8 @@ interface Service {
   name: string;
   short_description: string;
   long_description: string;
-  icon?: string | null; // react-icons name
-  icon_url?: string | null; // custom uploaded icon/logo
+  icon?: string; // new field
 }
-
-type ServicesPageContent = {
-  heroImageUrl?: string;
-  heroTitle?: string;
-  introText?: string;
-  sectionText?: string;
-};
-
-const DEFAULT_PAGE_CONTENT: ServicesPageContent = {
-  heroImageUrl: "/sevices.avif",
-  heroTitle: "Our Services",
-  introText:
-    "Explore our full range of services, expertly designed to meet both residential and commercial needs. From precision-crafted aluminum windows and doors to custom glass installations, our expertise spans design, fabrication, and installation. Discover how we can transform your space with top-tier craftsmanship and innovative solutions built for style, durability, and performance.",
-  sectionText:
-    "Explore our full range of services, expertly designed to meet both residential and commercial needs.",
-};
-
-const BUCKET_NAME = "uploads";
 
 const ICON_OPTIONS = [
   { value: "FaHammer", label: "Heavy Duty 🛠️" },
@@ -54,19 +36,11 @@ export default function AdminServicesPage() {
     short_description: "",
     long_description: "",
     icon: "FaHammer", // default to Heavy Duty
-    icon_url: null,
   });
   const [editingService, setEditingService] = useState<Service | null>(null);
   const [originalEditingService, setOriginalEditingService] = useState<Service | null>(null);
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
   const [loading, setLoading] = useState(false);
-  const [addOpen, setAddOpen] = useState(false);
-  const [uploadingIcon, setUploadingIcon] = useState(false);
-  const [uploadingEditIcon, setUploadingEditIcon] = useState(false);
-  const [uploadingHeroImage, setUploadingHeroImage] = useState(false);
-
-  const [pageContent, setPageContent] = useState<ServicesPageContent>(DEFAULT_PAGE_CONTENT);
-  const [savingPageContent, setSavingPageContent] = useState(false);
 
   useEffect(() => {
     // Load current admin and log page access
@@ -105,9 +79,7 @@ export default function AdminServicesPage() {
   useEffect(() => {
     if (currentAdmin) {
       fetchServices();
-      fetchPageContent();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAdmin]);
 
   // ADD: page view activity
@@ -169,110 +141,6 @@ export default function AdminServicesPage() {
     }
   };
 
-  const getServicesPageApiUrl = () => {
-    const siteBase = (process.env.NEXT_PUBLIC_WEBSITE_URL || "").replace(/\/$/, "");
-    return siteBase ? `${siteBase}/api/services-page` : "/api/services-page";
-  };
-
-  const fetchPageContent = async () => {
-    try {
-      const apiUrl = getServicesPageApiUrl();
-      const res = await fetch(apiUrl, { credentials: "include" });
-      const ct = (res.headers.get("content-type") || "").toLowerCase();
-      if (!res.ok) return;
-      if (ct.includes("application/json")) {
-        const d = await res.json();
-        const loaded = (d?.content ?? d) as ServicesPageContent;
-        const merged = { ...DEFAULT_PAGE_CONTENT, ...(loaded || {}) };
-        setPageContent(merged);
-      }
-    } catch (e) {
-      console.error("Failed to load services page content", e);
-    }
-  };
-
-  const savePageContent = async () => {
-    if (!currentAdmin) return;
-    setSavingPageContent(true);
-    try {
-      const apiUrl = getServicesPageApiUrl();
-      const res = await fetch(apiUrl, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(pageContent),
-        credentials: "include",
-      });
-
-      if (!res.ok) {
-        const t = await res.text();
-        console.error("Failed to save services page content:", res.status, t);
-        return;
-      }
-
-      await logActivity({
-        admin_id: currentAdmin.id,
-        admin_name: currentAdmin.username,
-        action: "update",
-        entity_type: "services_page_content",
-        details: `Admin ${currentAdmin.username} updated Services page content`,
-        page: "Services",
-        metadata: {
-          heroTitle: pageContent.heroTitle,
-          heroImageUrl: pageContent.heroImageUrl,
-          timestamp: new Date().toISOString(),
-        },
-      });
-    } catch (e) {
-      console.error("Failed to save services page content", e);
-    } finally {
-      setSavingPageContent(false);
-    }
-  };
-
-  const uploadToBucket = async (file: File) => {
-    if (!currentAdmin) return null;
-    const safeName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
-    const filePath = `${Date.now()}_${safeName}`;
-
-    const { error: uploadError } = await supabase.storage
-      .from(BUCKET_NAME)
-      .upload(filePath, file, { upsert: true, contentType: file.type });
-
-    if (uploadError) {
-      console.error("upload error:", uploadError);
-      return null;
-    }
-
-    const base = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
-    return `${base}/storage/v1/object/public/${BUCKET_NAME}/${encodeURIComponent(filePath)}`;
-  };
-
-  const handleNewIconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !currentAdmin) return;
-    setUploadingIcon(true);
-    try {
-      const url = await uploadToBucket(file);
-      if (url) setNewService((prev) => ({ ...prev, icon_url: url }));
-    } finally {
-      setUploadingIcon(false);
-      if (e.target) e.target.value = "";
-    }
-  };
-
-  const handleEditIconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !currentAdmin || !editingService) return;
-    setUploadingEditIcon(true);
-    try {
-      const url = await uploadToBucket(file);
-      if (url) setEditingService((prev) => (prev ? { ...prev, icon_url: url } : prev));
-    } finally {
-      setUploadingEditIcon(false);
-      if (e.target) e.target.value = "";
-    }
-  };
-
   const addService = async () => {
     if (!newService.name || !currentAdmin) {
       alert("Service name is required");
@@ -311,9 +179,7 @@ export default function AdminServicesPage() {
           short_description: "",
           long_description: "",
           icon: "FaHammer",
-          icon_url: null,
         });
-        setAddOpen(false);
         fetchServices();
       } else {
         console.error(error);
@@ -437,7 +303,7 @@ export default function AdminServicesPage() {
     try {
       // Calculate changes for detailed logging
       const changes: Array<{field: string, oldValue: any, newValue: any}> = [];
-      (['name', 'short_description', 'long_description', 'icon', 'icon_url'] as (keyof Service)[]).forEach((field) => {
+      (['name', 'short_description', 'long_description', 'icon'] as (keyof Service)[]).forEach((field) => {
         const oldVal = originalEditingService[field];
         const newVal = editingService[field];
         
@@ -482,7 +348,6 @@ export default function AdminServicesPage() {
                 shortDescriptionChanged: changes.some(c => c.field === 'short_description'),
                 longDescriptionChanged: changes.some(c => c.field === 'long_description'),
                 iconChanged: changes.some(c => c.field === 'icon')
-                || changes.some(c => c.field === 'icon_url')
               },
               timestamp: new Date().toISOString()
             }
@@ -548,171 +413,132 @@ export default function AdminServicesPage() {
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-extrabold text-black tracking-tight">
-          ⚙️ Admin Services Manager
-        </h1>
-        <div className="text-sm text-gray-600">
+    <div className="p-8 max-w-6xl mx-auto bg-gray-50 min-h-screen">
+      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-6">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Services Management</h1>
+          <p className="text-sm text-gray-600 mt-1">Create, edit, and organize your service offerings.</p>
+        </div>
+        <div className="text-sm text-gray-600 bg-white px-4 py-2 rounded-lg border border-gray-200 shadow-sm">
           Editing as: {currentAdmin?.username || 'Unknown Admin'}
         </div>
       </div>
 
-      {/* Services Page Content (Website) */}
-      <div className="mb-10 bg-white border rounded-lg shadow-md p-6">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <h2 className="text-xl font-semibold text-black">🧩 Services Page Content (Website)</h2>
-          <button
-            onClick={savePageContent}
-            disabled={savingPageContent || !currentAdmin}
-            className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-md shadow transition-colors disabled:cursor-not-allowed"
-          >
-            {savingPageContent ? "Saving..." : "💾 Save Page Content"}
-          </button>
-        </div>
-
-        <div className="grid gap-4 mt-4 md:grid-cols-2">
+      {/* Add New Service Form */}
+      <div className="mb-8 bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+        <h2 className="text-xl font-semibold mb-4 text-gray-900">
+          ➕ Add New Service
+        </h2>
+        <div className="grid gap-4 md:grid-cols-2">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Hero Title</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Service Name</label>
             <input
               type="text"
-              value={pageContent.heroTitle || ""}
-              onChange={(e) => setPageContent({ ...pageContent, heroTitle: e.target.value })}
-              className="border p-2 rounded text-black w-full focus:ring-2 focus:ring-blue-500"
+              placeholder="Service Name"
+              value={newService.name}
+              onChange={(e) => setNewService({ ...newService, name: e.target.value })}
+              className="border border-gray-300 p-2.5 rounded-lg text-gray-900 w-full focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Hero Image URL</label>
-            <input
-              type="text"
-              value={pageContent.heroImageUrl || ""}
-              readOnly
-              className="border p-2 rounded text-black w-full focus:ring-2 focus:ring-blue-500"
-            />
-            <div className="mt-2 flex items-center gap-3">
-              <input
-                type="file"
-                accept="image/*"
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file || !currentAdmin) return;
-                  setUploadingHeroImage(true);
-                  const url = await uploadToBucket(file);
-                  if (url) setPageContent((prev) => ({ ...prev, heroImageUrl: url }));
-                  setUploadingHeroImage(false);
-                  if (e.target) e.target.value = "";
-                }}
-                className="text-sm"
-              />
-              <button
-                type="button"
-                onClick={() => setPageContent((prev) => ({ ...prev, heroImageUrl: "" }))}
-                className="px-3 py-1 rounded border text-sm text-gray-700 hover:bg-gray-50"
-              >
-                Clear
-              </button>
-              {uploadingHeroImage ? <span className="text-xs text-blue-600">Uploading...</span> : null}
-              {pageContent.heroImageUrl ? (
-                <img
-                  src={pageContent.heroImageUrl}
-                  alt="Hero preview"
-                  className="w-16 h-10 object-cover rounded border"
-                />
-              ) : null}
-            </div>
-            <p className="text-xs text-gray-500 mt-1">Uploads go to Supabase Storage bucket "{BUCKET_NAME}".</p>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Icon</label>
+            <select
+              value={newService.icon || ""}
+              onChange={(e) => setNewService({ ...newService, icon: e.target.value })}
+              className="border border-gray-300 p-2.5 rounded-lg text-gray-900 w-full focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              {ICON_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
-
         <div className="mt-4">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Intro Text</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Short Description</label>
           <textarea
-            value={pageContent.introText || ""}
-            onChange={(e) => setPageContent({ ...pageContent, introText: e.target.value })}
-            className="border p-2 rounded text-black w-full focus:ring-2 focus:ring-blue-500"
-            rows={4}
-          />
-        </div>
-
-        <div className="mt-4">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Section Text (above cards)</label>
-          <textarea
-            value={pageContent.sectionText || ""}
-            onChange={(e) => setPageContent({ ...pageContent, sectionText: e.target.value })}
-            className="border p-2 rounded text-black w-full focus:ring-2 focus:ring-blue-500"
+            placeholder="Short Description"
+            value={newService.short_description}
+            onChange={(e) =>
+              setNewService({ ...newService, short_description: e.target.value })
+            }
+            className="border border-gray-300 p-2.5 rounded-lg text-gray-900 w-full focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             rows={2}
           />
         </div>
-      </div>
-
-      {/* Add New Service Button */}
-      <div className="mb-6 flex justify-end">
+        <div className="mt-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Long Description</label>
+          <textarea
+            placeholder="Long Description"
+            value={newService.long_description}
+            onChange={(e) =>
+              setNewService({ ...newService, long_description: e.target.value })
+            }
+            className="border border-gray-300 p-2.5 rounded-lg text-gray-900 w-full focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            rows={4}
+          />
+        </div>
         <button
-          onClick={() => setAddOpen(true)}
-          className="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-md shadow transition-colors"
+          onClick={addService}
+          disabled={loading || !newService.name}
+          className="mt-5 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-5 py-2.5 rounded-lg shadow transition-colors disabled:cursor-not-allowed"
         >
-          ➕ Add New Service
+          {loading ? "Adding..." : "➕ Add Service"}
         </button>
       </div>
 
-      {/* Services Table */}
-      <div className="overflow-x-auto bg-white rounded-lg shadow-md">
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr className="bg-gray-100 text-black">
-              <th className="p-3">ID</th>
-              <th className="p-3">Icon</th>
-              <th className="p-3">Name</th>
-              <th className="p-3">Short Description</th>
-              <th className="p-3">Long Description</th>
-              <th className="p-3">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {services.map((s) => {
-              const IconComponent =
-                s.icon && (FaIcons as any)[s.icon]
-                  ? (FaIcons as any)[s.icon]
-                  : FaIcons.FaCog;
-              return (
-                <tr key={s.id} className="border-t hover:bg-gray-50 transition-colors">
-                  <td className="p-3 text-black font-medium">{s.id}</td>
-                  <td className="p-3 text-center">
-                    {s.icon_url ? (
-                      <img
-                        src={s.icon_url}
-                        alt={s.name}
-                        className="w-10 h-10 object-contain mx-auto"
-                      />
-                    ) : (
-                      <IconComponent size={32} className="text-blue-600 mx-auto" />
-                    )}
-                  </td>
-                  <td className="p-3 font-semibold text-black">{s.name}</td>
-                  <td className="p-3 text-black max-w-xs truncate">{s.short_description}</td>
-                  <td className="p-3 truncate max-w-sm text-black">{s.long_description}</td>
-                  <td className="p-3 space-x-2 text-black">
-                    <button
-                      onClick={() => startEdit(s)}
-                      className="bg-blue-600 text-white px-3 py-1 rounded text-xs hover:bg-blue-700 transition-colors"
-                    >
-                      ✏️ Edit
-                    </button>
-                    <button
-                      onClick={() => deleteService(s.id)}
-                      className="bg-red-600 text-white px-3 py-1 rounded text-xs hover:bg-red-700 transition-colors"
-                    >
-                      🗑️ Delete
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      {/* Services List */}
+      <div className="space-y-4">
+        {services.map((s) => {
+          const IconComponent =
+            s.icon && (FaIcons as any)[s.icon]
+              ? (FaIcons as any)[s.icon]
+              : FaIcons.FaCog;
+
+          return (
+            <div
+              key={s.id}
+              className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 hover:shadow-md transition-shadow"
+            >
+              <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                <div className="flex items-start gap-4 flex-1 min-w-0">
+                  <div className="h-14 w-14 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 border border-blue-100">
+                    <IconComponent size={28} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <h3 className="text-lg font-semibold text-gray-900">{s.name}</h3>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200">
+                        ID: {s.id}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-700 mb-2">{s.short_description || "No short description"}</p>
+                    <p className="text-sm text-gray-600 leading-relaxed">{s.long_description || "No long description"}</p>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 md:ml-4">
+                  <button
+                    onClick={() => startEdit(s)}
+                    className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-blue-700 transition-colors"
+                  >
+                    ✏️ Edit
+                  </button>
+                  <button
+                    onClick={() => deleteService(s.id)}
+                    className="bg-red-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-red-700 transition-colors"
+                  >
+                    🗑️ Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
 
         {services.length === 0 && (
-          <div className="text-center py-12">
+          <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
             <div className="text-6xl mb-4">⚙️</div>
             <h3 className="text-lg font-medium text-gray-900 mb-2">No services yet</h3>
             <p className="text-gray-500">Create your first service to get started!</p>
@@ -720,115 +546,11 @@ export default function AdminServicesPage() {
         )}
       </div>
 
-      {/* Add Modal */}
-      {addOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
-            <h2 className="text-lg font-bold mb-4 text-black">➕ Add New Service</h2>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Service Name</label>
-                <input
-                  type="text"
-                  value={newService.name}
-                  onChange={(e) => setNewService({ ...newService, name: e.target.value })}
-                  className="border p-2 w-full rounded text-black focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Built-in Icon (optional)</label>
-                  <select
-                    value={newService.icon || ""}
-                    onChange={(e) => setNewService({ ...newService, icon: e.target.value })}
-                    className="border p-2 w-full rounded text-black focus:ring-2 focus:ring-blue-500"
-                  >
-                    {ICON_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-gray-500 mt-1">If a custom icon/logo is set, it will be used instead.</p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Custom Icon/Logo URL (optional)</label>
-                  <input
-                    type="text"
-                    value={newService.icon_url || ""}
-                    onChange={(e) => setNewService({ ...newService, icon_url: e.target.value })}
-                    className="border p-2 w-full rounded text-black focus:ring-2 focus:ring-blue-500"
-                  />
-                  <div className="mt-2 flex items-center gap-3">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleNewIconUpload}
-                      className="text-sm"
-                    />
-                    {uploadingIcon ? (
-                      <span className="text-xs text-gray-600">Uploading...</span>
-                    ) : null}
-                    {newService.icon_url ? (
-                      <img
-                        src={newService.icon_url}
-                        alt="Icon preview"
-                        className="w-10 h-10 object-contain rounded border"
-                      />
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Short Description</label>
-                <textarea
-                  value={newService.short_description}
-                  onChange={(e) => setNewService({ ...newService, short_description: e.target.value })}
-                  className="border p-2 w-full rounded text-black focus:ring-2 focus:ring-blue-500"
-                  rows={2}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Long Description (details page)</label>
-                <textarea
-                  value={newService.long_description}
-                  onChange={(e) => setNewService({ ...newService, long_description: e.target.value })}
-                  className="border p-2 w-full rounded text-black focus:ring-2 focus:ring-blue-500"
-                  rows={6}
-                />
-                <p className="text-xs text-gray-500 mt-1">The website “Learn More” page renders this content (new lines become paragraphs).</p>
-              </div>
-            </div>
-
-            <div className="flex justify-end space-x-3 mt-6">
-              <button
-                onClick={() => setAddOpen(false)}
-                className="bg-gray-400 text-white px-4 py-2 rounded hover:bg-gray-500 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={addService}
-                disabled={loading || !newService.name}
-                className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-4 py-2 rounded transition-colors disabled:cursor-not-allowed"
-              >
-                {loading ? "Adding..." : "Add Service"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Edit Modal */}
       {editingService && (
         <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
-            <h2 className="text-lg font-bold mb-4 text-black">✏️ Edit Service</h2>
+          <div className="bg-white p-6 rounded-xl w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto border border-gray-200">
+            <h2 className="text-xl font-bold mb-5 text-gray-900">✏️ Edit Service</h2>
 
             <div className="space-y-4">
               <div>
@@ -839,7 +561,7 @@ export default function AdminServicesPage() {
                   onChange={(e) =>
                     setEditingService({ ...editingService, name: e.target.value })
                   }
-                  className="border p-2 w-full rounded text-black focus:ring-2 focus:ring-blue-500"
+                  className="border border-gray-300 p-2.5 w-full rounded-lg text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
 
@@ -850,7 +572,7 @@ export default function AdminServicesPage() {
                   onChange={(e) =>
                     setEditingService({ ...editingService, icon: e.target.value })
                   }
-                  className="border p-2 w-full rounded text-black focus:ring-2 focus:ring-blue-500"
+                  className="border border-gray-300 p-2.5 w-full rounded-lg text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
                   {ICON_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>
@@ -858,35 +580,6 @@ export default function AdminServicesPage() {
                     </option>
                   ))}
                 </select>
-                <p className="text-xs text-gray-500 mt-1">If a custom icon/logo is set below, it will be used on the website instead.</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Custom Icon/Logo URL (optional)</label>
-                <input
-                  type="text"
-                  value={editingService.icon_url || ""}
-                  onChange={(e) => setEditingService({ ...editingService, icon_url: e.target.value })}
-                  className="border p-2 w-full rounded text-black focus:ring-2 focus:ring-blue-500"
-                />
-                <div className="mt-2 flex items-center gap-3">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleEditIconUpload}
-                    className="text-sm"
-                  />
-                  {uploadingEditIcon ? (
-                    <span className="text-xs text-gray-600">Uploading...</span>
-                  ) : null}
-                  {editingService.icon_url ? (
-                    <img
-                      src={editingService.icon_url}
-                      alt="Icon preview"
-                      className="w-10 h-10 object-contain rounded border"
-                    />
-                  ) : null}
-                </div>
               </div>
 
               <div>
@@ -899,7 +592,7 @@ export default function AdminServicesPage() {
                       short_description: e.target.value,
                     })
                   }
-                  className="border p-2 w-full rounded text-black focus:ring-2 focus:ring-blue-500"
+                  className="border border-gray-300 p-2.5 w-full rounded-lg text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   rows={2}
                 />
               </div>
@@ -914,7 +607,7 @@ export default function AdminServicesPage() {
                       long_description: e.target.value,
                     })
                   }
-                  className="border p-2 w-full rounded text-black focus:ring-2 focus:ring-blue-500"
+                  className="border border-gray-300 p-2.5 w-full rounded-lg text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   rows={4}
                 />
               </div>
@@ -923,13 +616,13 @@ export default function AdminServicesPage() {
             <div className="flex justify-end space-x-3 mt-6">
               <button
                 onClick={cancelEdit}
-                className="bg-gray-400 text-white px-4 py-2 rounded hover:bg-gray-500 transition-colors"
+                className="bg-gray-400 text-white px-4 py-2 rounded-lg hover:bg-gray-500 transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={saveEdit}
-                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors"
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
               >
                 Save Changes
               </button>
@@ -940,3 +633,4 @@ export default function AdminServicesPage() {
     </div>
   );
 }
+

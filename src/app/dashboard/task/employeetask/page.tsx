@@ -106,6 +106,18 @@ function sortTasks(tasks: EnrichedTask[]) {
   });
 }
 
+function getStageStatusLabel(status: string) {
+  if (status === "approved") return "Completed";
+  if (status === "in_progress") return "In Progress";
+  return "Pending";
+}
+
+function getStageStatusBadgeClass(status: string) {
+  if (status === "approved") return "bg-emerald-100 text-emerald-700";
+  if (status === "in_progress") return "bg-amber-100 text-amber-700";
+  return "bg-slate-200 text-slate-600";
+}
+
 export default function EmployeeTasksPage() {
   const searchParams = useSearchParams();
   const [adminSession, setAdminSession] = useState<AdminSession | null>(null);
@@ -116,6 +128,7 @@ export default function EmployeeTasksPage() {
   const [myRecentUpdates, setMyRecentUpdates] = useState<Record<number, TaskUpdate[]>>({});
   const [groupProgressDraft, setGroupProgressDraft] = useState<Record<string, number>>({});
   const [savingGroupProgressId, setSavingGroupProgressId] = useState<string | null>(null);
+  const [savingStageStatusId, setSavingStageStatusId] = useState<string | null>(null);
   const [progressModal, setProgressModal] = useState<{ task: EnrichedTask } | null>(null);
   const [progressText, setProgressText] = useState("");
   const [progressFiles, setProgressFiles] = useState<File[]>([]);
@@ -344,6 +357,56 @@ export default function EmployeeTasksPage() {
       return;
     }
     await fetchMyTasks();
+  };
+
+  const setWorkflowStageStatus = async (group: OrderGroup, stageKey: ProductionStageKey, nextStatus: "pending" | "in_progress" | "approved") => {
+    if (!canReviewProgress) {
+      alert("Only leaders can change stage status.");
+      return;
+    }
+
+    const busyKey = `${group.user_item_id}:${stageKey}`;
+    setSavingStageStatusId(busyKey);
+    try {
+      const nowIso = new Date().toISOString();
+      const { data: uiData, error: uiErr } = await supabase
+        .from("user_items")
+        .select("id, meta")
+        .eq("id", group.user_item_id)
+        .single();
+      if (uiErr || !uiData) throw uiErr;
+
+      const meta = (uiData as any).meta || {};
+      const workflow = ensureProductionWorkflow(meta.production_workflow);
+      const nextWorkflow = ensureProductionWorkflow({
+        ...workflow,
+        last_updated_at: nowIso,
+        stage_plans: workflow.stage_plans.map((stage) => {
+          if (stage.key !== stageKey) return stage;
+          const approvedAt = nextStatus === "approved" ? stage.approved_at || nowIso : null;
+          return { ...stage, status: nextStatus, approved_at: approvedAt };
+        }),
+      });
+
+      const { error } = await supabase
+        .from("user_items")
+        .update({
+          meta: {
+            ...meta,
+            production_workflow: nextWorkflow,
+          },
+          updated_at: nowIso,
+        })
+        .eq("id", group.user_item_id);
+      if (error) throw error;
+
+      await refreshAfterChange(group);
+    } catch (error: any) {
+      console.error("setWorkflowStageStatus error", error);
+      alert(`❌ Failed to update stage status: ${error?.message || "Unknown error"}`);
+    } finally {
+      setSavingStageStatusId(null);
+    }
   };
 
   const uploadProgressImages = async (task: EnrichedTask, files: File[]) => {
@@ -690,10 +753,10 @@ export default function EmployeeTasksPage() {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Link
-                      href={`/dashboard/task/assigntask?orderId=${encodeURIComponent(group.user_item_id)}`}
+                      href={`/dashboard/task/setup-workflow?orderId=${encodeURIComponent(group.user_item_id)}`}
                       className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                     >
-                      Open Setup
+                      Edit Workflow
                     </Link>
                     <button
                       type="button"
@@ -746,7 +809,7 @@ export default function EmployeeTasksPage() {
 
                 <div className="mt-4 flex items-center gap-2 text-sm text-slate-500">
                   <CalendarClock size={16} />
-                  Estimated completion: {group.estimatedCompletionDate ? new Date(group.estimatedCompletionDate).toLocaleDateString() : "Not set"}
+                  Estimated completion: {group.estimatedCompletionDate ? new Date(group.estimatedCompletionDate).toLocaleString() : "Not set"}
                 </div>
 
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -758,15 +821,9 @@ export default function EmployeeTasksPage() {
                           <div className="text-xs text-slate-500">{stage.task_ids.length} task(s)</div>
                         </div>
                         <span
-                          className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${
-                            stage.status === "approved"
-                              ? "bg-emerald-100 text-emerald-700"
-                              : stage.status === "in_progress"
-                                ? "bg-amber-100 text-amber-700"
-                                : "bg-slate-200 text-slate-600"
-                          }`}
+                          className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${getStageStatusBadgeClass(stage.status)}`}
                         >
-                          {stage.status.replace(/_/g, " ")}
+                          {getStageStatusLabel(stage.status)}
                         </span>
                       </div>
                     </div>
@@ -880,7 +937,7 @@ export default function EmployeeTasksPage() {
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Estimated completion</div>
                 <div className="mt-2 text-sm font-semibold text-slate-900">
-                  {selectedGroup.estimatedCompletionDate ? new Date(selectedGroup.estimatedCompletionDate).toLocaleDateString() : "Not set"}
+                    {selectedGroup.estimatedCompletionDate ? new Date(selectedGroup.estimatedCompletionDate).toLocaleString() : "Not set"}
                 </div>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -912,13 +969,13 @@ export default function EmployeeTasksPage() {
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Quick links</div>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Link
-                    href={`/dashboard/task/assigntask?orderId=${encodeURIComponent(selectedGroup.user_item_id)}`}
+                    href={`/dashboard/task/setup-workflow?orderId=${encodeURIComponent(selectedGroup.user_item_id)}`}
                     className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-white"
                   >
-                    Edit setup
+                    Edit Workflow
                   </Link>
                   <Link
-                    href={`/dashboard/order_management`}
+                    href="/dashboard/order_management"
                     className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-white"
                   >
                     Order management
@@ -956,17 +1013,29 @@ export default function EmployeeTasksPage() {
                         <div className="text-lg font-semibold text-slate-900">{stage.label}</div>
                         <div className="text-sm text-slate-500">{stageTasks.length} assigned task(s) • {stage.approved_task_ids.length}/{stage.task_ids.length} approved</div>
                       </div>
-                      <span
-                        className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
-                          stage.status === "approved"
-                            ? "bg-emerald-100 text-emerald-700"
-                            : stage.status === "in_progress"
-                              ? "bg-amber-100 text-amber-700"
-                              : "bg-slate-200 text-slate-600"
-                        }`}
-                      >
-                        {stage.status.replace(/_/g, " ")}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${getStageStatusBadgeClass(stage.status)}`}
+                        >
+                          {getStageStatusLabel(stage.status)}
+                        </span>
+                        <select
+                          value={stage.status}
+                          onChange={(event) =>
+                            setWorkflowStageStatus(
+                              selectedGroup,
+                              stage.key,
+                              event.target.value as "pending" | "in_progress" | "approved"
+                            )
+                          }
+                          disabled={savingStageStatusId === `${selectedGroup.user_item_id}:${stage.key}`}
+                          className="rounded-2xl border border-slate-300 px-3 py-2 text-xs text-slate-700"
+                        >
+                          <option value="pending">Pending</option>
+                          <option value="in_progress">In Progress</option>
+                          <option value="approved">Completed</option>
+                        </select>
+                      </div>
                     </div>
 
                     <div className="mt-4 grid gap-4 xl:grid-cols-2">

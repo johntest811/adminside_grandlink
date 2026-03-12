@@ -1,9 +1,12 @@
+
 "use client";
 import { useEffect, useState } from "react";
 import { supabase } from "../../../Clients/Supabase/SupabaseClients";
 import { logActivity, autoLogActivity } from "@/app/lib/activity";
+import dynamic from "next/dynamic";
 import React from "react";
-import RichTextEditor from "@/components/RichTextEditor";
+
+const RichTextEditor = dynamic(() => import("@/components/RichTextEditor"), { ssr: false });
 
 type Showroom = {
   id: number;
@@ -19,33 +22,33 @@ export default function AdminShowroomsPage() {
   const [editingShowroom, setEditingShowroom] = useState<Showroom | null>(null);
   const [originalEditingShowroom, setOriginalEditingShowroom] = useState<Showroom | null>(null);
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
-  const [adding, setAdding] = useState(false); 
+  const [adding, setAdding] = useState(false);
   const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     // Load current admin and log page access
     const loadAdmin = async () => {
       try {
-        const sessionData = localStorage.getItem('adminSession');
+        const sessionData = localStorage.getItem("adminSession");
         if (sessionData) {
           const admin = JSON.parse(sessionData);
           setCurrentAdmin(admin);
-          
+
           // Log page access
           await logActivity({
             admin_id: admin.id,
             admin_name: admin.username,
-            action: 'view',
-            entity_type: 'page',
+            action: "view",
+            entity_type: "page",
             details: `Admin ${admin.username} accessed Showrooms management page`,
-            page: 'Showrooms',
+            page: "Showrooms",
             metadata: {
               pageAccess: true,
               adminAccount: admin.username,
               adminId: admin.id,
               timestamp: new Date().toISOString(),
-              userAgent: navigator.userAgent
-            }
+              userAgent: navigator.userAgent,
+            },
           });
         }
       } catch (error) {
@@ -60,15 +63,14 @@ export default function AdminShowroomsPage() {
     if (currentAdmin) {
       fetchShowrooms();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAdmin]);
 
   // ADD: page view activity
   useEffect(() => {
     if (currentAdmin) {
-      autoLogActivity('view', 'page', `Accessed Showrooms page`, {
-        page: 'Showrooms',
-        metadata: { section: 'Showrooms', timestamp: new Date().toISOString() }
+      autoLogActivity("view", "page", `Accessed Showrooms page`, {
+        page: "Showrooms",
+        metadata: { section: "Showrooms", timestamp: new Date().toISOString() },
       });
     }
   }, [currentAdmin]);
@@ -79,44 +81,44 @@ export default function AdminShowroomsPage() {
         .from("showrooms")
         .select("*")
         .order("id", { ascending: true });
-      
+
       if (!error) {
         setShowrooms(data || []);
-        
+
         // Log successful data load
         if (currentAdmin) {
           await logActivity({
             admin_id: currentAdmin.id,
             admin_name: currentAdmin.username,
-            action: 'view',
-            entity_type: 'showrooms',
+            action: "view",
+            entity_type: "showrooms",
             details: `Admin ${currentAdmin.username} loaded ${data?.length || 0} showrooms`,
-            page: 'Showrooms',
+            page: "Showrooms",
             metadata: {
               showroomsCount: data?.length || 0,
               adminAccount: currentAdmin.username,
               adminId: currentAdmin.id,
-              timestamp: new Date().toISOString()
-            }
+              timestamp: new Date().toISOString(),
+            },
           });
         }
       } else {
         console.error("Error fetching showrooms:", error.message);
-        
+
         // Log error
         if (currentAdmin) {
           await logActivity({
             admin_id: currentAdmin.id,
             admin_name: currentAdmin.username,
-            action: 'view',
-            entity_type: 'showrooms_error',
+            action: "view",
+            entity_type: "showrooms_error",
             details: `Admin ${currentAdmin.username} failed to load showrooms: ${error.message}`,
-            page: 'Showrooms',
+            page: "Showrooms",
             metadata: {
               error: error.message,
               adminAccount: currentAdmin.username,
-              timestamp: new Date().toISOString()
-            }
+              timestamp: new Date().toISOString(),
+            },
           });
         }
       }
@@ -127,22 +129,22 @@ export default function AdminShowroomsPage() {
 
   const handleAddModalOpen = async () => {
     setAdding(true);
-    
+
     // Log add modal opening
     if (currentAdmin) {
       await logActivity({
         admin_id: currentAdmin.id,
         admin_name: currentAdmin.username,
-        action: 'view',
-        entity_type: 'showroom_add_modal',
+        action: "view",
+        entity_type: "showroom_add_modal",
         details: `Admin ${currentAdmin.username} opened add new showroom modal`,
-        page: 'Showrooms',
+        page: "Showrooms",
         metadata: {
-          action: 'add_modal_opened',
+          action: "add_modal_opened",
           adminAccount: currentAdmin.username,
           adminId: currentAdmin.id,
-          timestamp: new Date().toISOString()
-        }
+          timestamp: new Date().toISOString(),
+        },
       });
     }
   };
@@ -150,22 +152,22 @@ export default function AdminShowroomsPage() {
   const handleAddModalClose = async () => {
     setAdding(false);
     setForm({});
-    
+
     // Log add modal closing
     if (currentAdmin) {
       await logActivity({
         admin_id: currentAdmin.id,
         admin_name: currentAdmin.username,
-        action: 'view',
-        entity_type: 'showroom_add_cancelled',
+        action: "view",
+        entity_type: "showroom_add_cancelled",
         details: `Admin ${currentAdmin.username} cancelled adding new showroom`,
-        page: 'Showrooms',
+        page: "Showrooms",
         metadata: {
-          action: 'add_cancelled',
+          action: "add_cancelled",
           adminAccount: currentAdmin.username,
           adminId: currentAdmin.id,
-          timestamp: new Date().toISOString()
-        }
+          timestamp: new Date().toISOString(),
+        },
       });
     }
   };
@@ -173,22 +175,18 @@ export default function AdminShowroomsPage() {
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !currentAdmin) return;
-    
+
     setUploading(true);
-    
+
     try {
       const fileExt = file.name.split(".").pop();
-      const fileName = `${Date.now()}-${Math.random()
-        .toString(36)
-        .substring(2)}.${fileExt}`;
-      
-      const { error } = await supabase.storage
-        .from("showroom-images")
-        .upload(fileName, file);
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+
+      const { error } = await supabase.storage.from("showroom-images").upload(fileName, file);
 
       if (error) {
         alert("Image upload failed.");
-        
+
         // Log upload error
         await logActivity({
           admin_id: currentAdmin.id,
@@ -202,20 +200,18 @@ export default function AdminShowroomsPage() {
             fileSize: file.size,
             error: error.message,
             adminAccount: currentAdmin.username,
-            timestamp: new Date().toISOString()
-          }
+            timestamp: new Date().toISOString(),
+          },
         });
-        
+
         setUploading(false);
         return;
       }
 
-      const { data: urlData } = supabase.storage
-        .from("showroom-images")
-        .getPublicUrl(fileName);
+      const { data: urlData } = supabase.storage.from("showroom-images").getPublicUrl(fileName);
 
       const imageUrl = urlData?.publicUrl || "";
-      
+
       if (editingShowroom) {
         setEditingShowroom({ ...editingShowroom, image: imageUrl });
       } else {
@@ -228,7 +224,11 @@ export default function AdminShowroomsPage() {
         admin_name: currentAdmin.username,
         action: "upload",
         entity_type: "showroom_image",
-        details: `Admin ${currentAdmin.username} uploaded image for showroom: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB)`,
+        details: `Admin ${currentAdmin.username} uploaded image for showroom: ${file.name} (${(
+          file.size /
+          1024 /
+          1024
+        ).toFixed(2)}MB)`,
         page: "Showrooms",
         metadata: {
           fileName: file.name,
@@ -241,10 +241,10 @@ export default function AdminShowroomsPage() {
           isEditMode: !!editingShowroom,
           adminAccount: currentAdmin.username,
           adminId: currentAdmin.id,
-          timestamp: new Date().toISOString()
-        }
+          timestamp: new Date().toISOString(),
+        },
       });
-      
+
       setUploading(false);
     } catch (err: any) {
       console.error("upload threw", err);
@@ -259,10 +259,10 @@ export default function AdminShowroomsPage() {
       alert("Showroom title is required");
       return;
     }
-    
+
     try {
       const { data, error } = await supabase.from("showrooms").insert([form]).select();
-      
+
       if (!error && data) {
         // Enhanced activity logging for showroom creation
         await logActivity({
@@ -281,8 +281,8 @@ export default function AdminShowroomsPage() {
             hasImage: !!form.image,
             adminAccount: currentAdmin.username,
             adminId: currentAdmin.id,
-            timestamp: new Date().toISOString()
-          }
+            timestamp: new Date().toISOString(),
+          },
         });
 
         fetchShowrooms();
@@ -290,7 +290,7 @@ export default function AdminShowroomsPage() {
         setAdding(false); // close popup
       } else {
         console.error("Error adding showroom:", error);
-        
+
         // Log add error
         await logActivity({
           admin_id: currentAdmin.id,
@@ -304,8 +304,8 @@ export default function AdminShowroomsPage() {
             error: error?.message,
             adminAccount: currentAdmin.username,
             adminId: currentAdmin.id,
-            timestamp: new Date().toISOString()
-          }
+            timestamp: new Date().toISOString(),
+          },
         });
       }
     } catch (error) {
@@ -316,25 +316,25 @@ export default function AdminShowroomsPage() {
   const startEdit = async (showroom: Showroom) => {
     setEditingShowroom(showroom);
     setOriginalEditingShowroom(JSON.parse(JSON.stringify(showroom))); // Deep copy
-    
+
     // Log edit initiation
     if (currentAdmin) {
       await logActivity({
         admin_id: currentAdmin.id,
         admin_name: currentAdmin.username,
-        action: 'view',
-        entity_type: 'showroom_edit_start',
+        action: "view",
+        entity_type: "showroom_edit_start",
         entity_id: showroom.id.toString(),
         details: `Admin ${currentAdmin.username} started editing showroom "${showroom.title}"`,
-        page: 'Showrooms',
+        page: "Showrooms",
         metadata: {
           showroomId: showroom.id,
           showroomTitle: showroom.title,
-          action: 'edit_started',
+          action: "edit_started",
           adminAccount: currentAdmin.username,
           adminId: currentAdmin.id,
-          timestamp: new Date().toISOString()
-        }
+          timestamp: new Date().toISOString(),
+        },
       });
     }
   };
@@ -345,16 +345,16 @@ export default function AdminShowroomsPage() {
 
     try {
       // Calculate changes for detailed logging
-      const changes: Array<{field: string, oldValue: any, newValue: any}> = [];
-      (['title', 'address', 'description', 'image'] as (keyof Showroom)[]).forEach((field) => {
+      const changes: Array<{ field: string; oldValue: any; newValue: any }> = [];
+      (["title", "address", "description", "image"] as (keyof Showroom)[]).forEach((field) => {
         const oldVal = originalEditingShowroom[field];
         const newVal = editingShowroom[field];
-        
+
         if (oldVal !== newVal) {
           changes.push({
             field: field,
             oldValue: oldVal,
-            newValue: newVal
+            newValue: newVal,
           });
         }
       });
@@ -372,15 +372,17 @@ export default function AdminShowroomsPage() {
       if (!error) {
         // Enhanced activity logging for showroom update
         if (changes.length > 0) {
-          const changesSummary = changes.map(c => `${c.field}: "${c.oldValue || ''}" → "${c.newValue || ''}"`);
-          
+          const changesSummary = changes.map((c) => `${c.field}: "${c.oldValue || ""}" → "${c.newValue || ""}"`);
+
           await logActivity({
             admin_id: currentAdmin.id,
             admin_name: currentAdmin.username,
             action: "update",
             entity_type: "showroom",
             entity_id: editingShowroom.id.toString(),
-            details: `Admin ${currentAdmin.username} updated showroom "${originalEditingShowroom.title}" with ${changes.length} changes: ${changesSummary.slice(0, 2).join("; ")}${changesSummary.length > 2 ? "..." : ""}`,
+            details: `Admin ${currentAdmin.username} updated showroom "${originalEditingShowroom.title}" with ${changes.length} changes: ${changesSummary
+              .slice(0, 2)
+              .join("; ")}${changesSummary.length > 2 ? "..." : ""}`,
             page: "Showrooms",
             metadata: {
               showroomId: editingShowroom.id,
@@ -392,13 +394,13 @@ export default function AdminShowroomsPage() {
               changes: changesSummary,
               detailedChanges: changes,
               updateSummary: {
-                titleChanged: changes.some(c => c.field === 'title'),
-                addressChanged: changes.some(c => c.field === 'address'),
-                descriptionChanged: changes.some(c => c.field === 'description'),
-                imageChanged: changes.some(c => c.field === 'image')
+                titleChanged: changes.some((c) => c.field === "title"),
+                addressChanged: changes.some((c) => c.field === "address"),
+                descriptionChanged: changes.some((c) => c.field === "description"),
+                imageChanged: changes.some((c) => c.field === "image"),
               },
-              timestamp: new Date().toISOString()
-            }
+              timestamp: new Date().toISOString(),
+            },
           });
 
           // Log specific field changes
@@ -409,7 +411,7 @@ export default function AdminShowroomsPage() {
               action: "update",
               entity_type: `showroom_${change.field}`,
               entity_id: editingShowroom.id.toString(),
-              details: `Admin ${currentAdmin.username} updated showroom ${change.field}: "${change.oldValue || ''}" → "${change.newValue || ''}"`,
+              details: `Admin ${currentAdmin.username} updated showroom ${change.field}: "${change.oldValue || ""}" → "${change.newValue || ""}"`,
               page: "Showrooms",
               metadata: {
                 showroomId: editingShowroom.id,
@@ -419,8 +421,8 @@ export default function AdminShowroomsPage() {
                 newValue: change.newValue,
                 adminAccount: currentAdmin.username,
                 adminId: currentAdmin.id,
-                timestamp: new Date().toISOString()
-              }
+                timestamp: new Date().toISOString(),
+              },
             });
           }
         }
@@ -441,21 +443,21 @@ export default function AdminShowroomsPage() {
       await logActivity({
         admin_id: currentAdmin.id,
         admin_name: currentAdmin.username,
-        action: 'view',
-        entity_type: 'showroom_edit_cancelled',
+        action: "view",
+        entity_type: "showroom_edit_cancelled",
         entity_id: editingShowroom.id.toString(),
         details: `Admin ${currentAdmin.username} cancelled editing showroom "${editingShowroom.title}"`,
-        page: 'Showrooms',
+        page: "Showrooms",
         metadata: {
           showroomId: editingShowroom.id,
           showroomTitle: editingShowroom.title,
-          action: 'edit_cancelled',
+          action: "edit_cancelled",
           adminAccount: currentAdmin.username,
-          timestamp: new Date().toISOString()
-        }
+          timestamp: new Date().toISOString(),
+        },
       });
     }
-    
+
     setEditingShowroom(null);
     setOriginalEditingShowroom(null);
   };
@@ -463,32 +465,32 @@ export default function AdminShowroomsPage() {
   const handleDelete = async (id: number) => {
     if (!currentAdmin) return;
 
-    const showroomToDelete = showrooms.find(s => s.id === id);
-    
+    const showroomToDelete = showrooms.find((s) => s.id === id);
+
     if (!confirm(`Are you sure you want to delete the showroom "${showroomToDelete?.title}"?`)) {
       // Log deletion cancelled
       await logActivity({
         admin_id: currentAdmin.id,
         admin_name: currentAdmin.username,
-        action: 'view',
-        entity_type: 'showroom_delete_cancelled',
+        action: "view",
+        entity_type: "showroom_delete_cancelled",
         entity_id: id.toString(),
         details: `Admin ${currentAdmin.username} cancelled deletion of showroom "${showroomToDelete?.title}"`,
-        page: 'Showrooms',
+        page: "Showrooms",
         metadata: {
           showroomId: id,
           showroomTitle: showroomToDelete?.title,
-          action: 'delete_cancelled',
+          action: "delete_cancelled",
           adminAccount: currentAdmin.username,
-          timestamp: new Date().toISOString()
-        }
+          timestamp: new Date().toISOString(),
+        },
       });
       return;
     }
 
     try {
       const { error } = await supabase.from("showrooms").delete().eq("id", id);
-      
+
       if (!error) {
         // Enhanced activity logging for showroom deletion
         await logActivity({
@@ -505,13 +507,13 @@ export default function AdminShowroomsPage() {
               title: showroomToDelete?.title,
               address: showroomToDelete?.address,
               description: showroomToDelete?.description,
-              image: showroomToDelete?.image
+              image: showroomToDelete?.image,
             },
             adminAccount: currentAdmin.username,
             adminId: currentAdmin.id,
             remainingShowroomsCount: showrooms.length - 1,
-            timestamp: new Date().toISOString()
-          }
+            timestamp: new Date().toISOString(),
+          },
         });
 
         fetchShowrooms();
@@ -524,151 +526,139 @@ export default function AdminShowroomsPage() {
   };
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold text-blue-700">🏢 Admin Showrooms</h1>
-        <div className="flex items-center gap-4">
-          <div className="text-sm text-black">
-            Editing as: {currentAdmin?.username || 'Unknown Admin'}
+    <div className="p-8 max-w-6xl mx-auto bg-gray-50 min-h-screen">
+      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-6">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Showrooms Management</h1>
+          <p className="text-sm text-gray-600 mt-1">Manage showroom locations, descriptions, and images.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="text-sm text-gray-600 bg-white px-4 py-2 rounded-lg border border-gray-200 shadow-sm">
+            Editing as: {currentAdmin?.username || "Unknown Admin"}
           </div>
           <button
             onClick={handleAddModalOpen}
-            className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 transition-colors"
+            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors shadow-sm"
           >
             ➕ Add Showroom
           </button>
         </div>
       </div>
 
-      {/* Showrooms Table */}
-      <div className="bg-white rounded-xl shadow p-6 border border-gray-200">
-        <h2 className="text-lg font-semibold mb-4 text-black">📋 Showrooms List</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm border-collapse">
-            <thead>
-              <tr className="bg-blue-600 text-white text-left">
-                <th className="p-3">ID</th>
-                <th className="p-3">Title</th>
-                <th className="p-3">Address</th>
-                <th className="p-3">Description</th>
-                <th className="p-3">Image</th>
-                <th className="p-3 text-center">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {showrooms.map((s, idx) => (
-                <tr
-                  key={s.id}
-                  className={`${
-                    idx % 2 === 0 ? "bg-white" : "bg-gray-50"
-                  } hover:bg-gray-100 transition-colors text-black`}
+      {/* Showrooms List */}
+      <div className="space-y-4">
+        {showrooms.map((s) => (
+          <div
+            key={s.id}
+            className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 hover:shadow-md transition-shadow"
+          >
+            <div className="flex flex-col lg:flex-row gap-5">
+              <div className="w-full lg:w-52 shrink-0">
+                {s.image ? (
+                  <img
+                    src={s.image}
+                    alt={s.title}
+                    className="h-36 w-full object-cover rounded-lg border border-gray-200"
+                  />
+                ) : (
+                  <div className="h-36 w-full rounded-lg border border-dashed border-gray-300 bg-gray-50 flex items-center justify-center text-gray-400">
+                    No Image
+                  </div>
+                )}
+              </div>
+
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap mb-2">
+                  <h3 className="text-lg font-semibold text-gray-900">{s.title}</h3>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200">
+                    ID: {s.id}
+                  </span>
+                </div>
+
+                <p className="text-sm text-gray-700 mb-3">
+                  <span className="font-medium">Address:</span> {s.address || "No address provided"}
+                </p>
+
+                <div className="text-sm text-gray-600 leading-relaxed prose prose-sm max-w-none">
+                  <div dangerouslySetInnerHTML={{ __html: s.description || "No description provided" }} />
+                </div>
+              </div>
+
+              <div className="flex lg:flex-col gap-2 lg:justify-start">
+                <button
+                  onClick={() => startEdit(s)}
+                  className="px-3 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-colors text-sm"
                 >
-                  <td className="p-3 font-medium">{s.id}</td>
-                  <td className="p-3 font-medium">{s.title}</td>
-                  <td className="p-3">{s.address}</td>
-                  <td className="p-3 line-clamp-2 max-w-[250px]">
-                    <div dangerouslySetInnerHTML={{ __html: s.description }} className="text-sm" />
-                  </td>
-                  <td className="p-3">
-                    {s.image ? (
-                      <img
-                        src={s.image}
-                        alt={s.title}
-                        className="h-12 w-20 object-cover rounded-md border"
-                      />
-                    ) : (
-                      <span className="text-black">—</span>
-                    )}
-                  </td>
-                  <td className="p-3 flex gap-2 justify-center">
-                    <button
-                      onClick={() => startEdit(s)}
-                      className="px-3 py-1 bg-yellow-500 text-white rounded-md hover:bg-yellow-600 transition-colors"
-                    >
-                      ✏️ Edit
-                    </button>
-                    <button
-                      onClick={() => handleDelete(s.id)}
-                      className="px-3 py-1 bg-red-500 text-white rounded-md hover:bg-red-600 transition-colors"
-                    >
-                      🗑 Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {showrooms.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={6}
-                    className="p-8 text-center text-gray-500"
-                  >
-                    <div className="text-6xl mb-4">🏢</div>
-                    <h3 className="text-lg font-medium text-black mb-2">No showrooms yet</h3>
-                    <p className="text-black">Create your first showroom to get started!</p>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                  ✏️ Edit
+                </button>
+                <button
+                  onClick={() => handleDelete(s.id)}
+                  className="px-3 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors text-sm"
+                >
+                  🗑 Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {showrooms.length === 0 && (
+          <div className="p-12 text-center text-gray-500 bg-white rounded-xl border border-gray-200">
+            <div className="text-6xl mb-4">🏢</div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">No showrooms yet</h3>
+            <p className="text-gray-500">Create your first showroom to get started!</p>
+          </div>
+        )}
       </div>
 
       {/* Add Showroom Modal */}
       {adding && (
         <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl p-8 overflow-y-auto max-h-[90vh]">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl p-8 overflow-y-auto max-h-[90vh] border border-gray-200">
             <h2 className="text-xl font-bold mb-6 text-gray-900">➕ Add Showroom</h2>
             <form onSubmit={handleAdd} className="grid gap-4">
               <div>
-                <label className="block text-sm font-medium text-black mb-1">Showroom Title *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Showroom Title *</label>
                 <input
                   type="text"
                   placeholder="Showroom Title"
                   value={form.title || ""}
                   onChange={(e) => setForm({ ...form, title: e.target.value })}
-                  className="w-full p-3 border rounded-md text-black focus:ring-2 focus:ring-blue-500"
+                  className="w-full p-3 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   required
                 />
               </div>
-              
+
               <div>
-                <label className="block text-sm font-medium text-black mb-1">Address</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
                 <input
                   type="text"
                   placeholder="Address"
                   value={form.address || ""}
                   onChange={(e) => setForm({ ...form, address: e.target.value })}
-                  className="w-full p-3 border rounded-md text-black focus:ring-2 focus:ring-blue-500"
+                  className="w-full p-3 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-black mb-1">Showroom Image</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Showroom Image</label>
                 <input
                   type="file"
                   accept="image/*"
                   onChange={handleImageUpload}
                   disabled={uploading}
-                  className="w-full p-3 border rounded-md text-black"
+                  className="w-full p-3 border border-gray-300 rounded-lg text-gray-900"
                 />
-                {uploading && (
-                  <div className="mt-2 text-blue-600 text-sm">
-                    📤 Uploading image...
-                  </div>
-                )}
+                {uploading && <div className="mt-2 text-blue-600 text-sm">📤 Uploading image...</div>}
                 {form.image && (
                   <div className="mt-4">
-                    <img
-                      src={form.image}
-                      alt="Preview"
-                      className="h-32 w-48 object-cover rounded-md border"
-                    />
+                    <img src={form.image} alt="Preview" className="h-32 w-48 object-cover rounded-md border" />
                   </div>
                 )}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-black mb-1">Description</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
                 <RichTextEditor
                   value={form.description || ""}
                   onChange={(desc) => setForm({ ...form, description: desc })}
@@ -679,13 +669,13 @@ export default function AdminShowroomsPage() {
                 <button
                   type="button"
                   onClick={handleAddModalClose}
-                  className="bg-gray-400 text-white px-5 py-2 rounded-md hover:bg-gray-500 transition-colors"
+                  className="bg-gray-400 text-white px-5 py-2 rounded-lg hover:bg-gray-500 transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="bg-green-600 text-white px-5 py-2 rounded-md hover:bg-green-700 transition-colors"
+                  className="bg-green-600 text-white px-5 py-2 rounded-lg hover:bg-green-700 transition-colors"
                   disabled={uploading || !form.title}
                 >
                   {uploading ? "Uploading..." : "Add Showroom"}
@@ -699,38 +689,34 @@ export default function AdminShowroomsPage() {
       {/* Edit Modal */}
       {editingShowroom && (
         <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl p-8 overflow-y-auto max-h-[90vh]">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl p-8 overflow-y-auto max-h-[90vh] border border-gray-200">
             <h2 className="text-xl font-bold mb-6 text-gray-900">✏️ Edit Showroom</h2>
             <form onSubmit={saveEdit} className="grid gap-4">
               <div>
-                <label className="block text-sm font-medium text-black mb-1">Showroom Title *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Showroom Title *</label>
                 <input
                   type="text"
                   placeholder="Showroom Title"
                   value={editingShowroom.title}
-                  onChange={(e) =>
-                    setEditingShowroom({ ...editingShowroom, title: e.target.value })
-                  }
-                  className="w-full p-3 border rounded-md text-black focus:ring-2 focus:ring-blue-500"
+                  onChange={(e) => setEditingShowroom({ ...editingShowroom, title: e.target.value })}
+                  className="w-full p-3 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-black mb-1">Address</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
                 <input
                   type="text"
                   placeholder="Address"
                   value={editingShowroom.address}
-                  onChange={(e) =>
-                    setEditingShowroom({ ...editingShowroom, address: e.target.value })
-                  }
-                  className="w-full p-3 border rounded-md text-black focus:ring-2 focus:ring-blue-500"
+                  onChange={(e) => setEditingShowroom({ ...editingShowroom, address: e.target.value })}
+                  className="w-full p-3 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-black mb-1">Showroom Image</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Showroom Image</label>
                 {editingShowroom.image && (
                   <div className="mb-4">
                     <img
@@ -745,22 +731,16 @@ export default function AdminShowroomsPage() {
                   accept="image/*"
                   onChange={handleImageUpload}
                   disabled={uploading}
-                  className="w-full p-3 border rounded-md text-black"
+                  className="w-full p-3 border border-gray-300 rounded-lg text-gray-900"
                 />
-                {uploading && (
-                  <div className="mt-2 text-blue-600 text-sm">
-                    📤 Uploading image...
-                  </div>
-                )}
+                {uploading && <div className="mt-2 text-blue-600 text-sm">📤 Uploading image...</div>}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-black mb-1">Description</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
                 <RichTextEditor
                   value={editingShowroom.description || ""}
-                  onChange={(desc) =>
-                    setEditingShowroom({ ...editingShowroom, description: desc })
-                  }
+                  onChange={(desc) => setEditingShowroom({ ...editingShowroom, description: desc })}
                 />
               </div>
 
@@ -768,13 +748,13 @@ export default function AdminShowroomsPage() {
                 <button
                   type="button"
                   onClick={cancelEdit}
-                  className="bg-gray-400 text-white px-5 py-2 rounded-md hover:bg-gray-500 transition-colors"
+                  className="bg-gray-400 text-white px-5 py-2 rounded-lg hover:bg-gray-500 transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="bg-blue-600 text-white px-5 py-2 rounded-md hover:bg-blue-700 transition-colors"
+                  className="bg-blue-600 text-white px-5 py-2 rounded-lg hover:bg-blue-700 transition-colors"
                   disabled={uploading}
                 >
                   {uploading ? "Uploading..." : "Save Changes"}
@@ -787,3 +767,4 @@ export default function AdminShowroomsPage() {
     </div>
   );
 }
+

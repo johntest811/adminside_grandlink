@@ -113,7 +113,7 @@ export default function DashboardLayout({
       name: 'Task',
       icon: <ListChecks className="h-4 w-4" />,
       dropdown: [
-        { name: 'Assigned Task', path: '/dashboard/task/assigntask' },
+        { name: 'Start Production', path: '/dashboard/task/assigntask' },
         { name: 'Employee Task', path: '/dashboard/task/employeetask' },
       ],
     },
