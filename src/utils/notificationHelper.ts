@@ -46,7 +46,7 @@ export const adminNotificationService = {
         body: JSON.stringify({ type: 'new_product', productName, productId, adminName }),
       });
       const result = await response.json();
-      if (response.ok && result.success) return { success: true, message: result.message };
+      if (response.ok && result.success) return result;
       console.error("❌ Failed to send new product notification:", result.error);
       return { success: false, error: result.error };
     } catch (error) {
@@ -64,7 +64,7 @@ export const adminNotificationService = {
         body: JSON.stringify({ type: 'stock_update', productName, productId, newStock, adminName }),
       });
       const result = await response.json();
-      if (response.ok && result.success) return { success: true, message: result.message };
+      if (response.ok && result.success) return result;
       console.error("❌ Failed to send stock update notification:", result.error);
       return { success: false, error: result.error };
     } catch (error) {
@@ -96,7 +96,7 @@ export const adminNotificationService = {
         console.error("❌ Failed to forward order status notification:", result?.error || response.statusText);
         return { success: false, error: result?.error || response.statusText };
       }
-      return { success: true, message: result?.message || 'Notification processed' };
+      return result?.success ? result : { success: true, message: result?.message || 'Notification processed' };
     } catch (error: any) {
       console.error("💥 Error sending order status notification:", error);
       return { success: false, error: error.message || String(error) };

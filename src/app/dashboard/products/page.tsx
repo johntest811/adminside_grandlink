@@ -736,7 +736,18 @@ export default function ProductsAdminPage() {
         console.error("⚠️ Failed to create admin notification:", notifError);
       }
 
-      setMessage(`Product "${insertedProduct.name}" added successfully!`);
+      const notify = json?.userNotifyResult;
+      if (notify?.success) {
+        setMessage(
+          `Product "${insertedProduct.name}" added successfully!${notify?.message ? ` ${notify.message}` : ''}`
+        );
+      } else if (notify) {
+        setMessage(
+          `Product "${insertedProduct.name}" added successfully! (Note: user email notifications may have failed)`
+        );
+      } else {
+        setMessage(`Product "${insertedProduct.name}" added successfully!`);
+      }
       
       // Reset form
       setName("");

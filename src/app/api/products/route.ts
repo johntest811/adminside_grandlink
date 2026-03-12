@@ -4,6 +4,9 @@ import { logActivity } from "@/app/lib/activity";
 import { notifyProductCreated } from "@/app/lib/notifications";
 import { adminNotificationService } from "@/utils/notificationHelper";
 
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
 const supabaseAdmin = createClient(
   process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -96,6 +99,7 @@ export async function POST(req: Request) {
     console.log("✅ Product created successfully:", product.id);
 
     const sideEffects: Promise<unknown>[] = [];
+    let userNotifyResult: any = null;
 
     if (currentAdmin) {
       sideEffects.push(
@@ -126,14 +130,18 @@ export async function POST(req: Request) {
     sideEffects.push(
       adminNotificationService
         .notifyNewProduct(product.name, product.id, currentAdmin?.username || "Admin", req.url)
+        .then((result) => {
+          userNotifyResult = result;
+        })
         .catch((error) => {
           console.error("❌ Failed to send user notifications:", error);
+          userNotifyResult = { success: false, error: error?.message || String(error) };
         })
     );
 
     await Promise.allSettled(sideEffects);
 
-    return NextResponse.json({ product }, { status: 201 });
+    return NextResponse.json({ product, userNotifyResult }, { status: 201 });
   } catch (err: any) {
     console.error("POST /api/products error", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

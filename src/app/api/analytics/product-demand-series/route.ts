@@ -20,6 +20,35 @@ function dateKey(iso: string) {
   return `${y}-${m}-${day}`;
 }
 
+function addDaysISO(dateISO: string, days: number) {
+  const d = new Date(`${dateISO}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function excelSerialToIso(serial: number) {
+  const base = new Date(Date.UTC(1899, 11, 30));
+  base.setUTCDate(base.getUTCDate() + Math.floor(serial));
+  return base.toISOString().slice(0, 10);
+}
+
+function parseSalesForecastDate(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return excelSerialToIso(value);
+  }
+
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+
+  if (/^\d+(\.\d+)?$/.test(text)) {
+    return excelSerialToIso(Number(text));
+  }
+
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().slice(0, 10);
+}
+
 function enumerateDates(startISO: string, endISO: string) {
   const out: string[] = [];
   const start = new Date(`${startISO}T00:00:00.000Z`);
@@ -30,88 +59,89 @@ function enumerateDates(startISO: string, endISO: string) {
   return out;
 }
 
-function monthStartISO(iso: string) {
-  const d = new Date(`${iso}T00:00:00.000Z`);
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-  return `${y}-${m}-01`;
-}
-
-function daysInMonthFromMonthStart(monthStart: string) {
-  const d = new Date(`${monthStart}T00:00:00.000Z`);
-  const y = d.getUTCFullYear();
-  const m = d.getUTCMonth();
-  return new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
-}
-
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
-    const days = 1095;
+    const days = Math.max(90, Math.min(3650, Number(url.searchParams.get("days") || 1095)));
     const limit = Math.max(3, Math.min(50, Number(url.searchParams.get("limit") || 12)));
-    const branch = (url.searchParams.get("branch") || "").trim();
+    const category = (url.searchParams.get("category") || "").trim().toLowerCase();
 
-    const end = new Date();
-    const start = new Date(end);
-    start.setUTCDate(end.getUTCDate() - days);
-
-    const startDate = dateKey(start.toISOString());
-    const endDate = dateKey(end.toISOString());
-    const startMonth = monthStartISO(startDate);
-    const endMonth = monthStartISO(endDate);
-
-    const labels = enumerateDates(startDate, endDate);
-
-    let query = supabase
-      .from("sales_inventory_data")
-      .select("product_id,month_start,branch,units_sold")
-      .gte("month_start", startMonth)
-      .lte("month_start", endMonth)
+    const { data: rawRows, error } = await supabase
+      .from("SalesForecast")
+      .select("Date,Product_ID,Product_Name,Category,Selling_Price,Units_Sold,Revenue,Ending_Stock")
       .limit(100000);
-
-    if (branch) query = query.eq("branch", branch);
-
-    const { data: monthlyRows, error } = await query;
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    // daily qty per product
+    const rows = (rawRows || [])
+      .map((row: any) => {
+        const date = parseSalesForecastDate(row.Date);
+        if (!date) return null;
+        return {
+          date,
+          productId: String(row.Product_ID || ""),
+          productName: String(row.Product_Name || row.Product_ID || "Unknown Product"),
+          category: String(row.Category || "Uncategorized"),
+          sellingPrice: Math.max(0, Number(row.Selling_Price || 0)),
+          unitsSold: Math.max(0, Number(row.Units_Sold || 0)),
+          revenue: Math.max(0, Number(row.Revenue || 0)),
+          endingStock: Math.max(0, Number(row.Ending_Stock || 0)),
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => Boolean(row))
+      .filter((row) => !category || row.category.toLowerCase() === category)
+      .sort((left, right) => left.date.localeCompare(right.date));
+
+    if (!rows.length) {
+      return NextResponse.json({
+        startDate: "",
+        endDate: "",
+        labels: [],
+        products: [],
+        source: "SalesForecast",
+        inventorySnapshot: [],
+      });
+    }
+
+    const latestAvailableDate = rows[rows.length - 1].date;
+    const earliestAvailableDate = rows[0].date;
+    const defaultStart = addDaysISO(latestAvailableDate, -(days - 1));
+    const startDate = defaultStart < earliestAvailableDate ? earliestAvailableDate : defaultStart;
+    const endDate = latestAvailableDate;
+    const labels = enumerateDates(startDate, endDate);
+
     const qtyByProductDay: Record<string, Record<string, number>> = {};
     const totalByProduct: Record<string, number> = {};
+    const nameByProduct: Record<string, string> = {};
+    const inventoryByProduct: Record<string, { date: string; currentStock: number; unitsSold: number; revenue: number; sellingPrice: number; category: string; productName: string }> = {};
 
-    for (const row of monthlyRows as any[] || []) {
-      const pid = row.product_id;
+    for (const row of rows) {
+      const pid = row.productId;
       if (!pid) continue;
-      const month = String(row.month_start || "").slice(0, 10);
-      if (!month) continue;
-      const monthlyQty = Math.max(0, Number(row.units_sold || 0));
-      const dim = daysInMonthFromMonthStart(month);
-      const dailyQty = monthlyQty / Math.max(1, dim);
+      if (row.date < startDate || row.date > endDate) continue;
 
       if (!qtyByProductDay[pid]) qtyByProductDay[pid] = {};
+      qtyByProductDay[pid][row.date] = (qtyByProductDay[pid][row.date] || 0) + row.unitsSold;
+      totalByProduct[pid] = (totalByProduct[pid] || 0) + row.unitsSold;
+      nameByProduct[pid] = row.productName;
+    }
 
-      const startMonthDate = new Date(`${month}T00:00:00.000Z`);
-      for (let day = 1; day <= dim; day += 1) {
-        const d = new Date(Date.UTC(startMonthDate.getUTCFullYear(), startMonthDate.getUTCMonth(), day));
-        const dayIso = dateKey(d.toISOString());
-        if (dayIso < startDate || dayIso > endDate) continue;
-        qtyByProductDay[pid][dayIso] = (qtyByProductDay[pid][dayIso] || 0) + dailyQty;
-        totalByProduct[pid] = (totalByProduct[pid] || 0) + dailyQty;
-      }
+    for (const row of rows) {
+      if (row.date !== latestAvailableDate) continue;
+      inventoryByProduct[row.productId] = {
+        date: row.date,
+        currentStock: row.endingStock,
+        unitsSold: row.unitsSold,
+        revenue: row.revenue,
+        sellingPrice: row.sellingPrice,
+        category: row.category,
+        productName: row.productName,
+      };
     }
 
     const topProductIds = Object.entries(totalByProduct)
       .sort((a, b) => (b[1] || 0) - (a[1] || 0))
       .slice(0, limit)
       .map(([pid]) => pid);
-
-    const nameByProduct: Record<string, string> = {};
-    if (topProductIds.length) {
-      const { data: products } = await supabase
-        .from("products")
-        .select("id,name")
-        .in("id", topProductIds);
-      (products || []).forEach((p: any) => (nameByProduct[p.id] = p.name || p.id));
-    }
 
     const products = topProductIds.map((pid) => {
       const byDay = qtyByProductDay[pid] || {};
@@ -124,7 +154,28 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    return NextResponse.json({ startDate, endDate, labels, products, source: "sales_inventory_data" });
+    const inventorySnapshot = Object.entries(inventoryByProduct)
+      .map(([productId, value]) => ({
+        date: value.date,
+        productId,
+        productName: value.productName,
+        category: value.category,
+        currentStock: value.currentStock,
+        unitsSold: value.unitsSold,
+        revenue: value.revenue,
+        sellingPrice: value.sellingPrice,
+      }))
+      .sort((left, right) => right.currentStock - left.currentStock);
+
+    return NextResponse.json({
+      startDate,
+      endDate,
+      labels,
+      products,
+      source: "SalesForecast",
+      latestAvailableDate,
+      inventorySnapshot,
+    });
   } catch (e: any) {
     console.error("GET /api/analytics/product-demand-series error", e);
     return NextResponse.json({ error: e?.message || "Internal error" }, { status: 500 });

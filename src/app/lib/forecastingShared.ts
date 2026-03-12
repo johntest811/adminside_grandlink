@@ -27,12 +27,42 @@ export type SalesSeriesResponse = {
   labels: string[];
   revenue: number[];
   quantities: number[];
+  source?: string;
+  latestAvailableDate?: string;
+  historyRows?: SalesHistoryRow[];
+  inventorySnapshot?: InventorySnapshotRow[];
+};
+
+export type SalesHistoryRow = {
+  date: string;
+  productId: string;
+  productName: string;
+  category: string;
+  sellingPrice: number;
+  beginningStock: number;
+  unitsSold: number;
+  revenue: number;
+  endingStock: number;
+};
+
+export type InventorySnapshotRow = {
+  date: string;
+  productId: string;
+  productName: string;
+  category: string;
+  currentStock: number;
+  unitsSold: number;
+  revenue: number;
+  sellingPrice: number;
 };
 
 export type ProductDemandSeriesResponse = {
   startDate: string;
   endDate: string;
   labels: string[];
+  source?: string;
+  latestAvailableDate?: string;
+  inventorySnapshot?: InventorySnapshotRow[];
   products: Array<{
     product_id: string;
     product_name: string;

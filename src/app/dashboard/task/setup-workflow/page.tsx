@@ -164,6 +164,29 @@ function validateScheduleTarget(value: string, minDate: Date, maxDate: Date) {
   return { ok: true as const, value: parsed.toISOString() };
 }
 
+function validateStartOfProduction(value: string, minDate: Date, maxDate: Date) {
+  const raw = String(value || "").trim();
+  if (!raw) return { ok: true as const, value: null as string | null };
+  const parsed = parseEstimatedCompletionInput(raw);
+  if (!parsed) return { ok: false as const, message: "Start of production date/time is invalid." };
+  if (!(parsed instanceof Date) || Number.isNaN(parsed.getTime())) {
+    return { ok: false as const, message: "Start of production date/time is invalid." };
+  }
+  if (minDate && parsed.getTime() < minDate.getTime()) {
+    return {
+      ok: false as const,
+      message: `Start of production must be on/after ${minDate.toLocaleString()}.`,
+    };
+  }
+  if (maxDate && parsed.getTime() > maxDate.getTime()) {
+    return {
+      ok: false as const,
+      message: `Start of production must be on/before ${maxDate.toLocaleString()}.`,
+    };
+  }
+  return { ok: true as const, value: parsed.toISOString() };
+}
+
 function normalizeName(value: string | null | undefined) {
   return String(value || "")
     .trim()
@@ -188,6 +211,9 @@ function getCustomerNameFromEnrichedItem(item: any): string | null {
 
 export default function AssignTaskPage() {
   const searchParams = useSearchParams();
+  const [activeTab, setActiveTab] = useState<
+    "select" | "schedule" | "requiredRoles" | "blueprint" | "savedStatus"
+  >("select");
   const [adminSession, setAdminSession] = useState<AdminSession | null>(null);
   const [employees, setEmployees] = useState<AdminUser[]>([]);
   const [rbacPositionNames, setRbacPositionNames] = useState<Set<string> | null>(null);
@@ -196,6 +222,7 @@ export default function AssignTaskPage() {
   const [selectedOrderRecord, setSelectedOrderRecord] = useState<UserItemRecord | null>(null);
   const [existingTasks, setExistingTasks] = useState<TaskRow[]>([]);
   const [roleAssignments, setRoleAssignments] = useState<Record<ProductionRoleKey, string[]>>(createEmptyRoleAssignments());
+  const [startOfProductionDate, setStartOfProductionDate] = useState("");
   const [estimatedCompletionDate, setEstimatedCompletionDate] = useState("");
   const [savingWorkflow, setSavingWorkflow] = useState(false);
   const [loadingOrderContext, setLoadingOrderContext] = useState(false);
@@ -214,6 +241,14 @@ export default function AssignTaskPage() {
   );
   const scheduleTargetMinValue = useMemo(() => toDateTimeLocalInputValue(scheduleTargetMin), [scheduleTargetMin]);
   const scheduleTargetMaxValue = useMemo(() => toDateTimeLocalInputValue(scheduleTargetMax), [scheduleTargetMax]);
+
+  const startOfProductionMin = useMemo(() => startOfDay(new Date()), []);
+  const startOfProductionMax = scheduleTargetMax;
+  const startOfProductionMinValue = useMemo(
+    () => toDateTimeLocalInputValue(startOfProductionMin),
+    [startOfProductionMin]
+  );
+  const startOfProductionMaxValue = scheduleTargetMaxValue;
 
   useEffect(() => {
     try {
@@ -296,6 +331,7 @@ export default function AssignTaskPage() {
       if (!selectedOrderId) {
         setSelectedOrderRecord(null);
         setExistingTasks([]);
+        setStartOfProductionDate("");
         setEstimatedCompletionDate("");
         setRoleAssignments(createEmptyRoleAssignments());
         return;
@@ -334,6 +370,16 @@ export default function AssignTaskPage() {
         }
 
         setRoleAssignments(nextAssignments);
+        setStartOfProductionDate(
+          toDateTimeLocalValueFromAny(
+            String(
+              workflow.started_at ||
+                (record?.meta as any)?.production_started_at ||
+                (record?.meta as any)?.production_start_of_production ||
+                ""
+            )
+          )
+        );
         setEstimatedCompletionDate(
           toDateTimeLocalValueFromAny(String(workflow.estimated_completion_date || record?.meta?.production_estimated_completion_date || ""))
         );
@@ -341,6 +387,7 @@ export default function AssignTaskPage() {
         console.error("Failed to load order context", error);
         setSelectedOrderRecord(null);
         setExistingTasks([]);
+        setStartOfProductionDate("");
         setEstimatedCompletionDate("");
         setRoleAssignments(createEmptyRoleAssignments());
       } finally {
@@ -441,6 +488,13 @@ export default function AssignTaskPage() {
       alert(scheduleValidation.message);
       return;
     }
+
+    const startValidation = validateStartOfProduction(startOfProductionDate, startOfProductionMin, startOfProductionMax);
+    if (!startValidation.ok) {
+      alert(startValidation.message);
+      return;
+    }
+
     if (selectedTeamCount === 0) {
       alert("Please assign at least one production employee.");
       return;
@@ -472,6 +526,16 @@ export default function AssignTaskPage() {
       }
 
       const estimatedCompletionIso = scheduleValidation.value;
+      const startedAtIso =
+        startValidation.value ||
+        (selectedOrderRecord.meta?.production_workflow as { started_at?: string | null } | undefined)?.started_at ||
+        null;
+
+      if (startedAtIso && estimatedCompletionIso && startedAtIso > estimatedCompletionIso) {
+        alert("Start of production must be before the estimated completion date.");
+        return;
+      }
+
       const normalizedDueDate = estimatedCompletionIso.slice(0, 10);
       const blueprints = buildTaskBlueprints();
       const short = selectedOrder.user_item_id.slice(0, 6).toUpperCase();
@@ -536,7 +600,7 @@ export default function AssignTaskPage() {
         estimated_completion_date: estimatedCompletionIso,
         final_product_images: selectedOrderRecord.meta?.production_final_images as string[] | undefined,
         final_product_note: (selectedOrderRecord.meta?.production_final_note as string | undefined) || null,
-        started_at: (selectedOrderRecord.meta?.production_workflow as { started_at?: string | null } | undefined)?.started_at || null,
+        started_at: startedAtIso,
         last_updated_at: new Date().toISOString(),
         team_members: teamMembers,
         task_registry: taskRegistry,
@@ -636,7 +700,57 @@ export default function AssignTaskPage() {
         </div>
       ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-[1.05fr_1.2fr]">
+      <div className="rounded-3xl border border-slate-200 bg-white p-2 shadow-sm">
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <button
+            type="button"
+            onClick={() => setActiveTab("select")}
+            className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold transition ${
+              activeTab === "select" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:bg-white/60"
+            }`}
+          >
+            Select order
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("schedule")}
+            className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold transition ${
+              activeTab === "schedule" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:bg-white/60"
+            }`}
+          >
+            Schedule target
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("requiredRoles")}
+            className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold transition ${
+              activeTab === "requiredRoles" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:bg-white/60"
+            }`}
+          >
+            Required construction roles
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("blueprint")}
+            className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold transition ${
+              activeTab === "blueprint" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:bg-white/60"
+            }`}
+          >
+            Stage blueprint
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("savedStatus")}
+            className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold transition ${
+              activeTab === "savedStatus" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:bg-white/60"
+            }`}
+          >
+            Saved workflow status
+          </button>
+        </div>
+      </div>
+
+      {activeTab === "select" ? (
         <div className="space-y-6">
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-center gap-3">
@@ -676,245 +790,279 @@ export default function AssignTaskPage() {
               </div>
             ) : null}
           </div>
+        </div>
+      ) : null}
 
+      {activeTab === "schedule" ? (
+        <div className="space-y-6">
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-center gap-3">
               <CalendarClock className="text-blue-700" size={20} />
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Schedule target</h2>
-                <p className="text-sm text-slate-500">This estimated completion date is shown in the website Order Progress popup.</p>
+                <p className="text-sm text-slate-500">Set the start of production and the estimated completion date for the website progress popup.</p>
               </div>
             </div>
 
-            <input
-              type="datetime-local"
-              value={estimatedCompletionDate}
-              min={scheduleTargetMinValue}
-              max={scheduleTargetMaxValue}
-              onChange={(event) => setEstimatedCompletionDate(event.target.value)}
-              className="mt-4 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-blue-500"
-            />
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">Start of production</div>
+                <input
+                  type="datetime-local"
+                  value={startOfProductionDate}
+                  min={startOfProductionMinValue}
+                  max={startOfProductionMaxValue}
+                  onChange={(event) => setStartOfProductionDate(event.target.value)}
+                  className="mt-2 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <div className="text-sm font-semibold text-slate-900">Estimated completion</div>
+                <input
+                  type="datetime-local"
+                  value={estimatedCompletionDate}
+                  min={scheduleTargetMinValue}
+                  max={scheduleTargetMaxValue}
+                  onChange={(event) => setEstimatedCompletionDate(event.target.value)}
+                  className="mt-2 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-blue-500"
+                />
+              </div>
+            </div>
 
             <div className="mt-2 text-xs text-slate-500">
-              Allowed range: {scheduleTargetMin.toLocaleString()} to {scheduleTargetMax.toLocaleString()}.
+              Start range: {startOfProductionMin.toLocaleString()} to {startOfProductionMax.toLocaleString()}.
+              <br />
+              Estimated completion range: {scheduleTargetMin.toLocaleString()} to {scheduleTargetMax.toLocaleString()}.
             </div>
 
             <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
-              {estimatedCompletionDate
-                ? `Estimated completion: ${new Date(parseEstimatedCompletionInput(estimatedCompletionDate) || new Date()).toLocaleString()}`
-                : "No estimated completion date/time set yet."}
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center gap-3">
-              <Users className="text-blue-700" size={20} />
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">Required construction roles</h2>
-                <p className="text-sm text-slate-500">
-                  Only employees tagged as Lead Welder, Helper Welder, Sealant Applicator, or Repair Staff can be selected.
-                </p>
+              {startOfProductionDate
+                ? `Start of production: ${new Date(parseEstimatedCompletionInput(startOfProductionDate) || new Date()).toLocaleString()}`
+                : "No start of production date/time set yet."}
+              <div className="mt-2">
+                {estimatedCompletionDate
+                  ? `Estimated completion: ${new Date(parseEstimatedCompletionInput(estimatedCompletionDate) || new Date()).toLocaleString()}`
+                  : "No estimated completion date/time set yet."}
               </div>
-            </div>
-
-            <div className="mt-5 space-y-4">
-              {PRODUCTION_ROLE_CONFIGS.map((role) => {
-                const candidates = productionEmployeesByRole[role.key] || [];
-                return (
-                  <div key={role.key} className="rounded-2xl border border-slate-200 p-4">
-                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <div className="text-sm font-semibold text-slate-900">{role.label}</div>
-                        <div className="text-xs text-slate-500">Selected: {(roleAssignments[role.key] || []).length}</div>
-                      </div>
-                      <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-                        {candidates.length} eligible account{candidates.length === 1 ? "" : "s"}
-                      </span>
-                    </div>
-
-                    {candidates.length === 0 ? (
-                      <div className="mt-3 rounded-2xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                        No active employee currently matches the {role.label} role.
-                      </div>
-                    ) : (
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                        {candidates.map((employee) => {
-                          const checked = (roleAssignments[role.key] || []).includes(employee.id);
-                          return (
-                            <label
-                              key={employee.id}
-                              className={`flex cursor-pointer items-center gap-3 rounded-2xl border px-3 py-3 text-sm transition ${
-                                checked
-                                  ? "border-blue-500 bg-blue-50 text-blue-900"
-                                  : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                              }`}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={(event) => setRoleMember(role.key, employee.id, event.target.checked)}
-                              />
-                              <span>
-                                <span className="block font-medium">{employee.full_name || employee.username}</span>
-                                <span className="block text-xs text-slate-500">
-                                  {employee.position || role.label}
-                                  {employee.employee_number ? ` • ${employee.employee_number}` : ""}
-                                </span>
-                              </span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
             </div>
           </div>
         </div>
+      ) : null}
 
-        <div className="space-y-6">
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center gap-3">
-              <Wrench className="text-blue-700" size={20} />
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">Stage blueprint</h2>
-                <p className="text-sm text-slate-500">
-                  These are the five production stages that employees will submit evidence for in Employee Task.
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-5 space-y-4">
-              {workflowPreview.stagePlans.map((stage) => {
-                const members = workflowPreview.teamMembers.filter((member) =>
-                  member.role_keys.some((roleKey) => stage.required_role_keys.includes(roleKey))
-                );
-                return (
-                  <div key={stage.key} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold text-slate-900">{stage.label}</div>
-                        <div className="mt-1 text-xs text-slate-500">
-                          Required roles: {stage.required_role_keys.map((roleKey) => PRODUCTION_ROLE_LABELS[roleKey]).join(", ")}
-                        </div>
-                      </div>
-                      <span
-                        className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${
-                          members.length > 0 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
-                        }`}
-                      >
-                        {members.length > 0 ? `${members.length} assigned` : "Needs assignee"}
-                      </span>
-                    </div>
-
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {members.length > 0 ? (
-                        members.map((member) => (
-                          <span
-                            key={`${stage.key}-${member.admin_id}`}
-                            className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-sm"
-                          >
-                            {member.admin_name} • {member.role_labels.filter((label) =>
-                              stage.required_role_keys.some((roleKey) => PRODUCTION_ROLE_LABELS[roleKey] === label)
-                            ).join(", ")}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="text-xs text-slate-500">No employee is assigned to this stage yet.</span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+      {activeTab === "requiredRoles" ? (
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center gap-3">
+            <Users className="text-blue-700" size={20} />
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Required construction roles</h2>
+              <p className="text-sm text-slate-500">
+                Only employees tagged as Lead Welder, Helper Welder, Sealant Applicator, or Repair Staff can be selected.
+              </p>
             </div>
           </div>
 
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center gap-3">
-              <CheckCircle2 className="text-blue-700" size={20} />
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">Saved workflow status</h2>
-                <p className="text-sm text-slate-500">Preview what is already attached to this order before you start production.</p>
-              </div>
-            </div>
-
-            {loadingOrderContext ? (
-              <div className="mt-4 text-sm text-slate-500">Loading order workflow…</div>
-            ) : !selectedOrderId ? (
-              <div className="mt-4 text-sm text-slate-500">Select an order to inspect its workflow plan.</div>
-            ) : (
-              <div className="mt-5 space-y-4">
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Estimated completion</div>
-                    <div className="mt-2 text-sm font-semibold text-slate-900">
-                      {currentWorkflow.estimated_completion_date
-                        ? new Date(currentWorkflow.estimated_completion_date).toLocaleString()
-                        : "Not set"}
+          <div className="mt-5 space-y-4">
+            {PRODUCTION_ROLE_CONFIGS.map((role) => {
+              const candidates = productionEmployeesByRole[role.key] || [];
+              return (
+                <div key={role.key} className="rounded-2xl border border-slate-200 p-4">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">{role.label}</div>
+                      <div className="text-xs text-slate-500">Selected: {(roleAssignments[role.key] || []).length}</div>
                     </div>
+                    <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                      {candidates.length} eligible account{candidates.length === 1 ? "" : "s"}
+                    </span>
                   </div>
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Workflow tasks</div>
-                    <div className="mt-2 text-sm font-semibold text-slate-900">{existingTasks.length}</div>
-                  </div>
-                </div>
 
-                <div className="rounded-2xl border border-slate-200 p-4">
-                  <div className="text-sm font-semibold text-slate-900">Current team</div>
+                  {candidates.length === 0 ? (
+                    <div className="mt-3 rounded-2xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      No active employee currently matches the {role.label} role.
+                    </div>
+                  ) : (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {candidates.map((employee) => {
+                        const checked = (roleAssignments[role.key] || []).includes(employee.id);
+                        return (
+                          <label
+                            key={employee.id}
+                            className={`flex cursor-pointer items-center gap-3 rounded-2xl border px-3 py-3 text-sm transition ${
+                              checked
+                                ? "border-blue-500 bg-blue-50 text-blue-900"
+                                : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) => setRoleMember(role.key, employee.id, event.target.checked)}
+                            />
+                            <span>
+                              <span className="block font-medium">{employee.full_name || employee.username}</span>
+                              <span className="block text-xs text-slate-500">
+                                {employee.position || role.label}
+                                {employee.employee_number ? ` • ${employee.employee_number}` : ""}
+                              </span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {activeTab === "blueprint" ? (
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center gap-3">
+            <Wrench className="text-blue-700" size={20} />
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Stage blueprint</h2>
+              <p className="text-sm text-slate-500">
+                These are the five production stages that employees will submit evidence for in Employee Task.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5 space-y-4">
+            {workflowPreview.stagePlans.map((stage) => {
+              const members = workflowPreview.teamMembers.filter((member) =>
+                member.role_keys.some((roleKey) => stage.required_role_keys.includes(roleKey))
+              );
+              return (
+                <div key={stage.key} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">{stage.label}</div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        Required roles: {stage.required_role_keys.map((roleKey) => PRODUCTION_ROLE_LABELS[roleKey]).join(", ")}
+                      </div>
+                    </div>
+                    <span
+                      className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${
+                        members.length > 0 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                      }`}
+                    >
+                      {members.length > 0 ? `${members.length} assigned` : "Needs assignee"}
+                    </span>
+                  </div>
+
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {currentWorkflow.team_members.length > 0 ? (
-                      currentWorkflow.team_members.map((member) => (
-                        <span key={member.admin_id} className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
-                          {member.admin_name} • {member.role_labels.join(", ")}
+                    {members.length > 0 ? (
+                      members.map((member) => (
+                        <span
+                          key={`${stage.key}-${member.admin_id}`}
+                          className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-sm"
+                        >
+                          {member.admin_name} • {member.role_labels
+                            .filter((label) =>
+                              stage.required_role_keys.some((roleKey) => PRODUCTION_ROLE_LABELS[roleKey] === label)
+                            )
+                            .join(", ")}
                         </span>
                       ))
                     ) : (
-                      <span className="text-xs text-slate-500">No workflow saved yet.</span>
+                      <span className="text-xs text-slate-500">No employee is assigned to this stage yet.</span>
                     )}
                   </div>
                 </div>
-              </div>
-            )}
-
-            <div className="mt-6 flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={syncWorkflow}
-                disabled={!isLeader || savingWorkflow || !selectedOrderId}
-                className="inline-flex items-center gap-2 rounded-2xl bg-blue-700 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Save size={16} />
-                {savingWorkflow ? "Saving workflow…" : "Save workflow"}
-              </button>
-              {selectedOrderId ? (
-                <Link
-                  href={`/dashboard/task/assigntask?orderId=${encodeURIComponent(selectedOrderId)}`}
-                  className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
-                >
-                  <Factory size={16} />
-                  Start production
-                </Link>
-              ) : null}
-              {selectedOrderId ? (
-                <Link
-                  href={`/dashboard/task/employeetask?orderId=${encodeURIComponent(selectedOrderId)}`}
-                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  <CheckCircle2 size={16} />
-                  Open Employee Task
-                </Link>
-              ) : null}
-            </div>
-
-            {stageCoverageIssues.length > 0 ? (
-              <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                Missing stage coverage: {stageCoverageIssues.map((stage) => stage.label).join(", ")}.
-              </div>
-            ) : null}
+              );
+            })}
           </div>
         </div>
-      </div>
+      ) : null}
+
+      {activeTab === "savedStatus" ? (
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center gap-3">
+            <CheckCircle2 className="text-blue-700" size={20} />
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Saved workflow status</h2>
+              <p className="text-sm text-slate-500">Preview what is already attached to this order.</p>
+            </div>
+          </div>
+
+          {loadingOrderContext ? (
+            <div className="mt-4 text-sm text-slate-500">Loading order workflow…</div>
+          ) : !selectedOrderId ? (
+            <div className="mt-4 text-sm text-slate-500">Select an order to inspect its workflow plan.</div>
+          ) : (
+            <div className="mt-5 space-y-4">
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Start of production</div>
+                  <div className="mt-2 text-sm font-semibold text-slate-900">
+                    {currentWorkflow.started_at ? new Date(currentWorkflow.started_at).toLocaleString() : "Not set"}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Estimated completion</div>
+                  <div className="mt-2 text-sm font-semibold text-slate-900">
+                    {currentWorkflow.estimated_completion_date
+                      ? new Date(currentWorkflow.estimated_completion_date).toLocaleString()
+                      : "Not set"}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Workflow tasks</div>
+                  <div className="mt-2 text-sm font-semibold text-slate-900">{existingTasks.length}</div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 p-4">
+                <div className="text-sm font-semibold text-slate-900">Current team</div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {currentWorkflow.team_members.length > 0 ? (
+                    currentWorkflow.team_members.map((member) => (
+                      <span
+                        key={member.admin_id}
+                        className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700"
+                      >
+                        {member.admin_name} • {member.role_labels.join(", ")}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs text-slate-500">No workflow saved yet.</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="mt-6 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={syncWorkflow}
+              disabled={!isLeader || savingWorkflow || !selectedOrderId}
+              className="inline-flex items-center gap-2 rounded-2xl bg-blue-700 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Save size={16} />
+              {savingWorkflow ? "Saving workflow…" : "Save workflow"}
+            </button>
+            {selectedOrderId ? (
+              <Link
+                href={`/dashboard/task/employeetask?orderId=${encodeURIComponent(selectedOrderId)}`}
+                className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                <CheckCircle2 size={16} />
+                Open Employee Task
+              </Link>
+            ) : null}
+          </div>
+
+          {stageCoverageIssues.length > 0 ? (
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Missing stage coverage: {stageCoverageIssues.map((stage) => stage.label).join(", ")}.
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
