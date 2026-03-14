@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ArrowLeft, CalendarClock, Factory, PlayCircle } from "lucide-react";
+import { ArrowLeft, CalendarClock, Factory, PlayCircle, Users, Wrench } from "lucide-react";
 import { supabase } from "../../../Clients/Supabase/SupabaseClients";
 import {
   buildRoleAssignmentsFromWorkflow,
@@ -179,6 +179,27 @@ function getCustomerNameFromEnrichedItem(item: any): string | null {
   );
 }
 
+function mapApprovedOrders(items: any[]): OrderOption[] {
+  return (items || [])
+    .map((row: any) => {
+      const stage = String(row?.order_status || row?.status || "").trim().toLowerCase();
+      if (stage !== "approved") return null;
+
+      return {
+        user_item_id: String(row.id),
+        product_id: String(row.product_id || ""),
+        product_name:
+          String(row?.meta?.product_name || row?.product_details?.name || row?.product_id || "") ||
+          "(Unknown Product)",
+        customer_name: getCustomerNameFromEnrichedItem(row),
+        order_status: (row.order_status || row.status || null) as string | null,
+        created_at: String(row.created_at || new Date().toISOString()),
+        meta: (row.meta || null) as Record<string, unknown> | null,
+      };
+    })
+    .filter(Boolean) as OrderOption[];
+}
+
 export default function StartProductionPage() {
   const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<"select" | "schedule" | "roles" | "blueprint">("select");
@@ -242,28 +263,7 @@ export default function StartProductionPage() {
         }
 
         const json = (await orderRes.json().catch(() => ({}))) as { items?: any[] };
-        const allowed = new Set(["accepted", "approved", "in_production", "quality_check", "packaging"]);
-
-        const mapped: OrderOption[] = (json.items || [])
-          .map((row: any) => {
-            const stage = String(row?.order_status || row?.status || "");
-            if (!allowed.has(stage)) return null;
-
-            return {
-              user_item_id: String(row.id),
-              product_id: String(row.product_id || ""),
-              product_name:
-                String(row?.meta?.product_name || row?.product_details?.name || row?.product_id || "") ||
-                "(Unknown Product)",
-              customer_name: getCustomerNameFromEnrichedItem(row),
-              order_status: (row.order_status || row.status || null) as string | null,
-              created_at: String(row.created_at || new Date().toISOString()),
-              meta: (row.meta || null) as Record<string, unknown> | null,
-            };
-          })
-          .filter(Boolean) as OrderOption[];
-
-        setOrders(mapped);
+        setOrders(mapApprovedOrders(json.items || []));
       } catch (error) {
         console.error("Failed to load orders", error);
         setOrders([]);
@@ -637,6 +637,17 @@ export default function StartProductionPage() {
           : prev
       );
 
+      try {
+        const orderRes = await fetch("/api/order-management/list-items", { cache: "no-store" });
+        const json = (await orderRes.json().catch(() => ({}))) as { items?: any[] };
+        setOrders(mapApprovedOrders(json.items || []));
+      } catch (refreshError) {
+        console.error("Failed to refresh approved order list", refreshError);
+      }
+
+      setSelectedOrderId("");
+      setActiveTab("select");
+
       alert("✅ Production started. The order is now visible in Employee Task for stage review.");
     } catch (error: any) {
       console.error("startProduction error", error);
@@ -845,10 +856,12 @@ export default function StartProductionPage() {
       {activeTab === "roles" ? (
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex items-center gap-3">
-            <Factory className="text-emerald-700" size={20} />
+            <Users className="text-blue-700" size={20} />
             <div>
               <h2 className="text-lg font-semibold text-slate-900">Required construction roles</h2>
-              <p className="text-sm text-slate-500">Select eligible employees per role for this order before starting production.</p>
+              <p className="text-sm text-slate-500">
+                Only employees tagged as Lead Welder, Helper Welder, Sealant Applicator, or Repair Staff can be selected.
+              </p>
             </div>
           </div>
 
@@ -880,7 +893,7 @@ export default function StartProductionPage() {
                             key={employee.id}
                             className={`flex cursor-pointer items-center gap-3 rounded-2xl border px-3 py-3 text-sm transition ${
                               checked
-                                ? "border-emerald-500 bg-emerald-50 text-emerald-900"
+                                ? "border-blue-500 bg-blue-50 text-blue-900"
                                 : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
                             }`}
                           >
@@ -923,10 +936,12 @@ export default function StartProductionPage() {
       {activeTab === "blueprint" ? (
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex items-center gap-3">
-            <Factory className="text-emerald-700" size={20} />
+            <Wrench className="text-blue-700" size={20} />
             <div>
               <h2 className="text-lg font-semibold text-slate-900">Stage blueprint</h2>
-              <p className="text-sm text-slate-500">Stages and who will submit evidence for each stage.</p>
+              <p className="text-sm text-slate-500">
+                These are the five production stages that employees will submit evidence for in Employee Task.
+              </p>
             </div>
           </div>
 

@@ -299,12 +299,10 @@ export default function AssignTaskPage() {
 
       try {
         const json = (await ordersRes.json().catch(() => ({}))) as { items?: any[] };
-        const allowed = new Set(["accepted", "approved", "in_production", "quality_check", "packaging"]);
-
         const mapped: OrderOption[] = (json.items || [])
           .map((row: any) => {
-            const stage = String(row?.order_status || row?.status || "");
-            if (!allowed.has(stage)) return null;
+            const stage = String(row?.order_status || row?.status || "").trim().toLowerCase();
+            if (stage !== "approved") return null;
 
             return {
               user_item_id: String(row.id),
