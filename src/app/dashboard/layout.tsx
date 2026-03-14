@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { Suspense, useEffect, useRef, useState } from "react";
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import Logo from '../../components/Logo';
@@ -29,7 +29,7 @@ import {
   CheckCircle,
 } from "lucide-react";
 
-export default function DashboardLayout({
+function DashboardLayoutInner({
   children,
 }: {
   children: React.ReactNode;
@@ -914,5 +914,28 @@ export default function DashboardLayout({
         </div>
       )}
     </div>
+  );
+}
+
+function DashboardLayoutFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-100">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500 mx-auto mb-4"></div>
+        <p className="text-black">Loading admin panel...</p>
+      </div>
+    </div>
+  );
+}
+
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <Suspense fallback={<DashboardLayoutFallback />}>
+      <DashboardLayoutInner>{children}</DashboardLayoutInner>
+    </Suspense>
   );
 }
