@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import Logo from '../../components/Logo';
 import NotificationBell from "../../components/NotificationBell";
 import RecentActivity from "../../components/RecentActivity";
@@ -35,6 +35,7 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
@@ -493,8 +494,12 @@ export default function DashboardLayout({
       ? (filteredNav.find((item) => item.name === collapsedFlyout.name && item.dropdown) as any)
       : null;
 
+  const hideDashboardChrome =
+    pathname === "/dashboard/task/setup-workflow" && searchParams?.get("popup") === "1";
+
   return (
     <div className="admin-app min-h-screen">
+      {!hideDashboardChrome ? (
       <header className="flex items-center justify-between px-6 py-3 bg-white border-b border-gray-200 shadow-sm">
         <div className="flex items-center gap-4">
           <button
@@ -628,9 +633,10 @@ export default function DashboardLayout({
           </div>
         </div>
       </header>
+      ) : null}
 
       {/* Mobile sidebar backdrop */}
-      {isMobileSidebarOpen && (
+      {!hideDashboardChrome && isMobileSidebarOpen && (
         <div
           className="fixed inset-0 bg-black/40 z-20 lg:hidden"
           onClick={() => setIsMobileSidebarOpen(false)}
@@ -638,6 +644,7 @@ export default function DashboardLayout({
       )}
 
       {/* Sidebar (scrollable) */}
+      {!hideDashboardChrome ? (
       <aside
         className={`admin-sidebar fixed inset-y-0 left-0 z-30 w-64 ${isSidebarCollapsed ? "lg:w-20" : "lg:w-64"} bg-gray-800 text-white transform transition-transform duration-300 ease-in-out ${
           isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'
@@ -754,8 +761,9 @@ export default function DashboardLayout({
           </button>
         </div>
       </aside>
+      ) : null}
 
-      {activeFlyoutItem && (
+      {!hideDashboardChrome && activeFlyoutItem && (
         <div
           className="fixed z-[70] w-56 rounded-md border border-white/10 bg-gray-800 p-2 shadow-lg max-h-[calc(100vh-96px)] overflow-y-auto"
           style={{
@@ -794,8 +802,8 @@ export default function DashboardLayout({
       )}
 
       {/* Main Content */}
-      <div className={`flex-1 ${isSidebarCollapsed ? "lg:ml-20" : "lg:ml-64"}`}>
-        <main className="p-4 lg:p-8">
+      <div className={`flex-1 ${hideDashboardChrome ? "" : isSidebarCollapsed ? "lg:ml-20" : "lg:ml-64"}`}>
+        <main className={hideDashboardChrome ? "p-0" : "p-4 lg:p-8"}>
           {children}
         </main>
       </div>

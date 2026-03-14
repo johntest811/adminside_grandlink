@@ -19,6 +19,8 @@ import {
   type ProductionWorkflowMeta,
 } from "../workflowShared";
 
+const WORKFLOW_POPUP_SOURCE = "grandlink-setup-workflow";
+
 type Task = {
   id: number;
   task_number: string;
@@ -182,6 +184,37 @@ export default function EmployeeTasksPage() {
       }
     }
   }, [canReviewProgress, highlightOrderId, orderGroups]);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const payload = event.data as { source?: string; type?: string };
+      if (!payload || payload.source !== WORKFLOW_POPUP_SOURCE) return;
+
+      if (payload.type === "workflow-saved") {
+        void fetchOrderGroups();
+      }
+
+      if (payload.type === "close") {
+        setWorkflowPopupOrderId(null);
+        void fetchOrderGroups();
+      }
+    };
+
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const openWorkflowEditor = (orderId: string) => {
+    if (!orderId) return;
+    setWorkflowPopupOrderId(orderId);
+  };
+
+  const closeWorkflowEditor = () => {
+    setWorkflowPopupOrderId(null);
+    void fetchOrderGroups();
+  };
 
   const openLightbox = (urls: string[], index: number, title?: string) => {
     if (!urls.length) return;
@@ -698,7 +731,7 @@ export default function EmployeeTasksPage() {
   }, [orderGroups]);
 
   return (
-    <div className="mx-auto min-h-[calc(100vh-8rem)] max-w-7xl space-y-6 rounded-3xl bg-slate-100/80 p-6">
+    <div className="mx-auto max-w-7xl space-y-6 rounded-3xl bg-slate-50/70 p-6">
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-3">
@@ -755,7 +788,7 @@ export default function EmployeeTasksPage() {
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => setWorkflowPopupOrderId(group.user_item_id)}
+                      onClick={() => openWorkflowEditor(group.user_item_id)}
                       className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                     >
                       Edit Workflow
@@ -972,7 +1005,7 @@ export default function EmployeeTasksPage() {
                 <div className="mt-2 flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => setWorkflowPopupOrderId(selectedGroup.user_item_id)}
+                    onClick={() => openWorkflowEditor(selectedGroup.user_item_id)}
                     className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-white"
                   >
                     Edit Workflow
@@ -1143,37 +1176,6 @@ export default function EmployeeTasksPage() {
         </div>
       ) : null}
 
-      {workflowPopupOrderId ? (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 p-4">
-          <div className="relative h-[92vh] w-full max-w-7xl overflow-hidden rounded-3xl bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
-              <div className="text-sm font-semibold text-slate-900">Workflow Editor</div>
-              <div className="flex items-center gap-2">
-                <Link
-                  href={`/dashboard/task/setup-workflow?orderId=${encodeURIComponent(workflowPopupOrderId)}`}
-                  className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  Open full page
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => setWorkflowPopupOrderId(null)}
-                  className="rounded-2xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-            <iframe
-              key={workflowPopupOrderId}
-              title="Setup Workflow"
-              src={`/dashboard/task/setup-workflow?orderId=${encodeURIComponent(workflowPopupOrderId)}&modal=1`}
-              className="h-[calc(92vh-57px)] w-full border-0 bg-white"
-            />
-          </div>
-        </div>
-      ) : null}
-
       {rejectModal ? (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 p-4">
           <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
@@ -1265,6 +1267,25 @@ export default function EmployeeTasksPage() {
         onClose={() => setLightbox(null)}
         onIndexChange={(next) => setLightbox((prev) => (prev ? { ...prev, index: next } : prev))}
       />
+
+      {workflowPopupOrderId ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 p-4">
+          <div className="relative h-[92vh] w-full max-w-7xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+            <button
+              type="button"
+              onClick={closeWorkflowEditor}
+              className="absolute right-4 top-4 z-10 rounded-full border border-slate-200 bg-white px-3 py-1 text-sm text-slate-600 transition hover:bg-slate-50"
+            >
+              ✕
+            </button>
+            <iframe
+              title="Workflow editor"
+              src={`/dashboard/task/setup-workflow?orderId=${encodeURIComponent(workflowPopupOrderId)}&popup=1`}
+              className="h-full w-full border-0"
+            />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

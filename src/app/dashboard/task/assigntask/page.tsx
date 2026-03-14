@@ -6,30 +6,27 @@ import { useSearchParams } from "next/navigation";
 import { ArrowLeft, CalendarClock, Factory, PlayCircle } from "lucide-react";
 import { supabase } from "../../../Clients/Supabase/SupabaseClients";
 import {
+  buildRoleAssignmentsFromWorkflow,
+  buildStagePlansFromAssignments,
+  buildWorkflowMembers,
   canManageProductionWorkflow,
   clampPercent,
+  createEmptyRoleAssignments,
   ensureProductionWorkflow,
   getProductionRoleForAdmin,
   PRODUCTION_ROLE_CONFIGS,
   PRODUCTION_ROLE_LABELS,
+  PRODUCTION_STAGES,
   type ProductionRoleKey,
 } from "../workflowShared";
+
+const WORKFLOW_POPUP_SOURCE = "grandlink-setup-workflow";
 
 type AdminSession = {
   id: string;
   username: string;
   role: string;
   position?: string;
-};
-
-type AdminUser = {
-  id: string;
-  username: string;
-  full_name: string | null;
-  employee_number: string | null;
-  role: string;
-  position: string | null;
-  is_active: boolean;
 };
 
 type OrderOption = {
@@ -48,6 +45,16 @@ type UserItemRecord = {
   progress_history?: unknown[];
   order_status?: string | null;
   status?: string | null;
+};
+
+type AdminUser = {
+  id: string;
+  username: string;
+  full_name: string | null;
+  employee_number: string | null;
+  role: string;
+  position: string | null;
+  is_active?: boolean | null;
 };
 
 const SCHEDULE_TARGET_MIN_OFFSET_DAYS = 1;
@@ -177,16 +184,17 @@ export default function StartProductionPage() {
   const [activeTab, setActiveTab] = useState<"select" | "schedule" | "roles" | "blueprint">("select");
   const [adminSession, setAdminSession] = useState<AdminSession | null>(null);
   const [employees, setEmployees] = useState<AdminUser[]>([]);
-  const [rbacPositionNames, setRbacPositionNames] = useState<Set<string> | null>(null);
   const [orders, setOrders] = useState<OrderOption[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState("");
   const [selectedOrderRecord, setSelectedOrderRecord] = useState<UserItemRecord | null>(null);
   const [existingTaskCount, setExistingTaskCount] = useState(0);
+  const [roleAssignments, setRoleAssignments] = useState<Record<ProductionRoleKey, string[]>>(createEmptyRoleAssignments());
   const [startOfProductionDate, setStartOfProductionDate] = useState("");
   const [estimatedCompletionDate, setEstimatedCompletionDate] = useState("");
   const [startingProduction, setStartingProduction] = useState(false);
   const [loadingOrderContext, setLoadingOrderContext] = useState(false);
   const [workflowPopupOrderId, setWorkflowPopupOrderId] = useState<string | null>(null);
+  const [workflowRefreshKey, setWorkflowRefreshKey] = useState(0);
 
   const isLeader = useMemo(() => canManageProductionWorkflow(adminSession), [adminSession]);
 
@@ -221,41 +229,19 @@ export default function StartProductionPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/rbac/positions", { cache: "no-store" });
-        if (!res.ok) return;
-        const json = (await res.json()) as { positions?: Array<{ name?: string | null }> };
-        const names = (json.positions || [])
-          .map((pos) => normalizeName(pos?.name || ""))
-          .filter(Boolean);
-        setRbacPositionNames(new Set(names));
-      } catch {
-        // ignore
-      }
-    })();
-  }, []);
+        const [empRes, orderRes] = await Promise.all([
+          supabase
+            .from("admins")
+            .select("id, username, full_name, employee_number, role, position, is_active")
+            .order("full_name", { ascending: true }),
+          fetch("/api/order-management/list-items", { cache: "no-store" }),
+        ]);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data, error } = await supabase
-          .from("admins")
-          .select("id, username, full_name, employee_number, role, position, is_active")
-          .eq("is_active", true)
-          .order("full_name", { ascending: true });
-        if (!error) {
-          setEmployees((data || []) as AdminUser[]);
+        if (!empRes.error) {
+          setEmployees((empRes.data || []) as AdminUser[]);
         }
-      } catch {
-        // ignore
-      }
-    })();
-  }, []);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch("/api/order-management/list-items", { cache: "no-store" });
-        const json = (await res.json().catch(() => ({}))) as { items?: any[] };
+        const json = (await orderRes.json().catch(() => ({}))) as { items?: any[] };
         const allowed = new Set(["accepted", "approved", "in_production", "quality_check", "packaging"]);
 
         const mapped: OrderOption[] = (json.items || [])
@@ -286,6 +272,25 @@ export default function StartProductionPage() {
   }, []);
 
   useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const payload = event.data as { source?: string; type?: string };
+      if (!payload || payload.source !== WORKFLOW_POPUP_SOURCE) return;
+
+      if (payload.type === "workflow-saved") {
+        setWorkflowRefreshKey((prev) => prev + 1);
+      }
+      if (payload.type === "close") {
+        setWorkflowPopupOrderId(null);
+        setWorkflowRefreshKey((prev) => prev + 1);
+      }
+    };
+
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
+  useEffect(() => {
     const orderId = searchParams?.get("orderId") || "";
     if (!orderId || selectedOrderId) return;
     setSelectedOrderId(orderId);
@@ -296,6 +301,7 @@ export default function StartProductionPage() {
       if (!selectedOrderId) {
         setSelectedOrderRecord(null);
         setExistingTaskCount(0);
+        setRoleAssignments(createEmptyRoleAssignments());
         setStartOfProductionDate("");
         setEstimatedCompletionDate("");
         return;
@@ -303,23 +309,45 @@ export default function StartProductionPage() {
 
       setLoadingOrderContext(true);
       try {
-        const [{ data: orderRow, error: orderErr }, { data: taskRows, error: taskErr }] = await Promise.all([
+        const [
+          { data: orderRow, error: orderErr },
+          { data: taskRows, error: taskErr },
+          { data: teamRows, error: teamErr },
+        ] = await Promise.all([
           supabase
             .from("user_items")
             .select("id, meta, progress_history, order_status, status")
             .eq("id", selectedOrderId)
             .single(),
           supabase.from("tasks").select("id").eq("user_item_id", selectedOrderId),
+          supabase.from("order_team_members").select("admin_id").eq("user_item_id", selectedOrderId),
         ]);
 
         if (orderErr) throw orderErr;
         if (taskErr) throw taskErr;
+        if (teamErr) throw teamErr;
 
         const record = (orderRow || null) as UserItemRecord | null;
         setSelectedOrderRecord(record);
         setExistingTaskCount((taskRows || []).length);
 
         const workflow = ensureProductionWorkflow(record?.meta?.production_workflow);
+        const nextAssignments = buildRoleAssignmentsFromWorkflow(workflow);
+        const fallbackTeamIds = (teamRows || [])
+          .map((row: { admin_id?: string | null }) => String(row.admin_id || ""))
+          .filter(Boolean);
+
+        if (fallbackTeamIds.length > 0) {
+          for (const adminId of fallbackTeamIds) {
+            const employee = employees.find((item) => item.id === adminId);
+            const roleKey = employee ? getProductionRoleForAdmin(employee) : null;
+            if (roleKey && !nextAssignments[roleKey].includes(adminId)) {
+              nextAssignments[roleKey].push(adminId);
+            }
+          }
+        }
+
+        setRoleAssignments(nextAssignments);
         setStartOfProductionDate(
           toDateTimeLocalValueFromAny(
             String(
@@ -339,13 +367,14 @@ export default function StartProductionPage() {
         console.error("Failed to load order context", error);
         setSelectedOrderRecord(null);
         setExistingTaskCount(0);
+        setRoleAssignments(createEmptyRoleAssignments());
         setStartOfProductionDate("");
         setEstimatedCompletionDate("");
       } finally {
         setLoadingOrderContext(false);
       }
     })();
-  }, [selectedOrderId]);
+  }, [employees, selectedOrderId, workflowRefreshKey]);
 
   const selectedOrder = useMemo(
     () => orders.find((order) => order.user_item_id === selectedOrderId) || null,
@@ -357,20 +386,64 @@ export default function StartProductionPage() {
     [selectedOrderRecord?.meta]
   );
 
+  const workflowPreview = useMemo(() => {
+    const stagePlans = buildStagePlansFromAssignments(roleAssignments);
+    const teamMembers = buildWorkflowMembers(employees, roleAssignments);
+    return { stagePlans, teamMembers };
+  }, [employees, roleAssignments]);
+
+  const stageCoverageIssues = useMemo(
+    () => workflowPreview.stagePlans.filter((stage) => stage.assigned_admin_ids.length === 0),
+    [workflowPreview.stagePlans]
+  );
+
+  const selectedTeamCount = workflowPreview.teamMembers.length;
+
+  const setRoleMember = (roleKey: ProductionRoleKey, adminId: string, checked: boolean) => {
+    setRoleAssignments((prev) => {
+      const current = prev[roleKey] || [];
+      return {
+        ...prev,
+        [roleKey]: checked ? Array.from(new Set([...current, adminId])) : current.filter((id) => id !== adminId),
+      };
+    });
+  };
+
+  const buildTaskBlueprints = () => {
+    const taskBlueprints: Array<{
+      stageKey: (typeof PRODUCTION_STAGES)[number]["key"];
+      stageLabel: string;
+      roleKey: ProductionRoleKey;
+      roleLabel: string;
+      admin: AdminUser;
+    }> = [];
+
+    for (const stage of PRODUCTION_STAGES) {
+      for (const roleKey of stage.roleKeys) {
+        for (const adminId of roleAssignments[roleKey] || []) {
+          const admin = employees.find((item) => item.id === adminId);
+          if (!admin) continue;
+          taskBlueprints.push({
+            stageKey: stage.key,
+            stageLabel: stage.label,
+            roleKey,
+            roleLabel: PRODUCTION_ROLE_LABELS[roleKey],
+            admin,
+          });
+        }
+      }
+    }
+
+    return taskBlueprints;
+  };
+
   const productionEmployeesByRole = useMemo(() => {
-    const grouped = Object.fromEntries(PRODUCTION_ROLE_CONFIGS.map((role) => [role.key, [] as AdminUser[]])) as Record<
-      ProductionRoleKey,
-      AdminUser[]
-    >;
+    const grouped = Object.fromEntries(
+      PRODUCTION_ROLE_CONFIGS.map((role) => [role.key, [] as AdminUser[]])
+    ) as Record<(typeof PRODUCTION_ROLE_CONFIGS)[number]["key"], AdminUser[]>;
 
     for (const employee of employees) {
       if (employee.is_active === false) continue;
-
-      if (rbacPositionNames) {
-        const normalizedPosition = normalizeName(employee.position);
-        if (!normalizedPosition || !rbacPositionNames.has(normalizedPosition)) continue;
-      }
-
       const roleKey = getProductionRoleForAdmin(employee);
       if (!roleKey) continue;
       grouped[roleKey].push(employee);
@@ -378,12 +451,22 @@ export default function StartProductionPage() {
 
     for (const role of PRODUCTION_ROLE_CONFIGS) {
       grouped[role.key].sort((a, b) =>
-        String(a.full_name || a.username || "").localeCompare(String(b.full_name || b.username || ""))
+        normalizeName(a.full_name || a.username).localeCompare(normalizeName(b.full_name || b.username))
       );
     }
 
     return grouped;
-  }, [employees, rbacPositionNames]);
+  }, [employees]);
+
+  const openWorkflowEditor = (orderId: string) => {
+    if (!orderId) return;
+    setWorkflowPopupOrderId(orderId);
+  };
+
+  const closeWorkflowEditor = () => {
+    setWorkflowPopupOrderId(null);
+    setWorkflowRefreshKey((prev) => prev + 1);
+  };
 
   const startProduction = async () => {
     if (!selectedOrderRecord || !selectedOrder) {
@@ -394,8 +477,12 @@ export default function StartProductionPage() {
       alert("Only leaders can start production.");
       return;
     }
-    if (existingTaskCount === 0) {
-      alert("This order has no workflow tasks yet. Please set up the workflow first.");
+    if (selectedTeamCount === 0) {
+      alert("Please assign at least one production employee before starting production.");
+      return;
+    }
+    if (stageCoverageIssues.length > 0) {
+      alert(`Please cover all five stages first. Missing: ${stageCoverageIssues.map((item) => item.label).join(", ")}`);
       return;
     }
 
@@ -416,7 +503,91 @@ export default function StartProductionPage() {
       const nowIso = new Date().toISOString();
       const meta = { ...(selectedOrderRecord.meta || {}) } as Record<string, unknown>;
       const workflow = ensureProductionWorkflow(meta.production_workflow);
+      const stagePlans = buildStagePlansFromAssignments(roleAssignments);
+      const teamMembers = buildWorkflowMembers(employees, roleAssignments);
       const history = Array.isArray(selectedOrderRecord.progress_history) ? selectedOrderRecord.progress_history : [];
+
+      let taskRegistry = workflow.task_registry;
+      let finalizedStagePlans = workflow.stage_plans;
+
+      if (existingTaskCount === 0) {
+        const blueprints = buildTaskBlueprints();
+        if (blueprints.length === 0) {
+          alert("Please assign at least one eligible employee in Required construction roles.");
+          return;
+        }
+
+        const normalizedDueDate = scheduleValidation.value.slice(0, 10);
+        const short = selectedOrder.user_item_id.slice(0, 6).toUpperCase();
+        const payload = blueprints.map((blueprint, index) => ({
+          task_number: `ORD-${short}-${String(index + 1).padStart(2, "0")}`,
+          product_name: selectedOrder.product_name,
+          task_name: `${blueprint.stageLabel} • ${blueprint.roleLabel}`,
+          user_item_id: selectedOrder.user_item_id,
+          product_id: selectedOrder.product_id,
+          assigned_admin_id: blueprint.admin.id,
+          employee_name: blueprint.admin.full_name || blueprint.admin.username,
+          employee_number: blueprint.admin.employee_number || "",
+          start_date: new Date().toISOString().slice(0, 10),
+          due_date: normalizedDueDate,
+          status: "Pending",
+        }));
+
+        const { data: createdTasks, error: insertErr } = await supabase.from("tasks").insert(payload).select("*");
+        if (insertErr) throw insertErr;
+
+        const insertedTasks = (createdTasks || []) as Array<{
+          id: number;
+          assigned_admin_id?: string | null;
+          task_name: string;
+          due_date: string;
+        }>;
+
+        taskRegistry = insertedTasks
+          .map((task) => {
+            const blueprint = blueprints.find(
+              (item) => item.admin.id === task.assigned_admin_id && `${item.stageLabel} • ${item.roleLabel}` === task.task_name
+            );
+            if (!blueprint) return null;
+            return {
+              task_id: task.id,
+              assigned_admin_id: blueprint.admin.id,
+              employee_name: blueprint.admin.full_name || blueprint.admin.username,
+              employee_number: blueprint.admin.employee_number || null,
+              role_key: blueprint.roleKey,
+              role_label: blueprint.roleLabel,
+              stage_key: blueprint.stageKey,
+              stage_label: blueprint.stageLabel,
+              due_date: task.due_date,
+            };
+          })
+          .filter(Boolean) as typeof workflow.task_registry;
+
+        const stageMap = new Map(stagePlans.map((stage) => [stage.key, { ...stage, task_ids: [] as number[] }]));
+        for (const entry of taskRegistry) {
+          stageMap.get(entry.stage_key)?.task_ids.push(entry.task_id);
+        }
+        finalizedStagePlans = Array.from(stageMap.values());
+        setExistingTaskCount(insertedTasks.length);
+      }
+
+      const uniqueAdminIds = Array.from(new Set(teamMembers.map((item) => item.admin_id)));
+      const { error: deleteTeamErr } = await supabase
+        .from("order_team_members")
+        .delete()
+        .eq("user_item_id", selectedOrder.user_item_id);
+      if (deleteTeamErr) throw deleteTeamErr;
+
+      if (uniqueAdminIds.length > 0) {
+        const { error: insertTeamErr } = await supabase.from("order_team_members").insert(
+          uniqueAdminIds.map((adminId) => ({
+            user_item_id: selectedOrder.user_item_id,
+            admin_id: adminId,
+            created_by_admin_id: adminSession?.id || null,
+          }))
+        );
+        if (insertTeamErr) throw insertTeamErr;
+      }
 
       const startedAtIso = startValidation.value || workflow.started_at || nowIso;
       if (startedAtIso && scheduleValidation.value && startedAtIso > scheduleValidation.value) {
@@ -427,6 +598,9 @@ export default function StartProductionPage() {
       const nextWorkflow = ensureProductionWorkflow({
         ...workflow,
         estimated_completion_date: scheduleValidation.value,
+        team_members: teamMembers,
+        stage_plans: finalizedStagePlans,
+        task_registry: taskRegistry,
         started_at: startedAtIso,
         last_updated_at: nowIso,
       });
@@ -502,6 +676,10 @@ export default function StartProductionPage() {
             <div className="mt-1 text-2xl font-bold text-slate-900">{existingTaskCount}</div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Selected people</div>
+            <div className="mt-1 text-2xl font-bold text-slate-900">{selectedTeamCount}</div>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 sm:col-span-2">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Order stage</div>
             <div className="mt-1 text-sm font-semibold text-slate-900">
               {String(selectedOrderRecord?.order_status || selectedOrderRecord?.status || "Not selected").replace(/_/g, " ")}
@@ -543,7 +721,7 @@ export default function StartProductionPage() {
               activeTab === "roles" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:bg-white/60"
             }`}
           >
-            Requirement construction roles
+            Required construction roles
           </button>
           <button
             type="button"
@@ -599,7 +777,7 @@ export default function StartProductionPage() {
               <div className="mt-4 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => setWorkflowPopupOrderId(selectedOrder.user_item_id)}
+                  onClick={() => openWorkflowEditor(selectedOrder.user_item_id)}
                   className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-white"
                 >
                   Set up / Edit workflow
@@ -669,60 +847,60 @@ export default function StartProductionPage() {
           <div className="flex items-center gap-3">
             <Factory className="text-emerald-700" size={20} />
             <div>
-              <h2 className="text-lg font-semibold text-slate-900">Requirement construction roles</h2>
-              <p className="text-sm text-slate-500">This is pulled from the saved workflow attached to the order.</p>
+              <h2 className="text-lg font-semibold text-slate-900">Required construction roles</h2>
+              <p className="text-sm text-slate-500">Select eligible employees per role for this order before starting production.</p>
             </div>
           </div>
 
           <div className="mt-5 space-y-4">
             {PRODUCTION_ROLE_CONFIGS.map((role) => {
-              const eligibleEmployees = productionEmployeesByRole[role.key] || [];
-              const assignedMemberIds = new Set(
-                currentWorkflow.team_members
-                  .filter((member) => member.role_keys.includes(role.key))
-                  .map((member) => member.admin_id)
-              );
+              const candidates = productionEmployeesByRole[role.key] || [];
               return (
-                <div key={role.key} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex items-start justify-between gap-3">
+                <div key={role.key} className="rounded-2xl border border-slate-200 p-4">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <div className="text-sm font-semibold text-slate-900">{role.label}</div>
-                      <div className="mt-1 text-xs text-slate-500">
-                        Assigned: {assignedMemberIds.size} • Eligible: {eligibleEmployees.length}
-                      </div>
+                      <div className="text-xs text-slate-500">Selected: {(roleAssignments[role.key] || []).length}</div>
                     </div>
-                    <span
-                      className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${
-                        assignedMemberIds.size > 0 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
-                      }`}
-                    >
-                      {assignedMemberIds.size > 0 ? "Covered" : "Missing"}
+                    <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                      {candidates.length} eligible account{candidates.length === 1 ? "" : "s"}
                     </span>
                   </div>
 
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {eligibleEmployees.length > 0 ? (
-                      eligibleEmployees.map((employee) => {
-                        const isAssigned = assignedMemberIds.has(employee.id);
+                  {candidates.length === 0 ? (
+                    <div className="mt-3 rounded-2xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      No active employee currently matches the {role.label} role.
+                    </div>
+                  ) : (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {candidates.map((employee) => {
+                        const checked = (roleAssignments[role.key] || []).includes(employee.id);
                         return (
-                        <span
-                          key={`${role.key}-${employee.id}`}
-                          className={`rounded-full px-3 py-1 text-xs font-medium shadow-sm ${
-                            isAssigned
-                              ? "bg-emerald-100 text-emerald-700"
-                              : "bg-white text-slate-700"
-                          }`}
-                        >
-                          {employee.full_name || employee.username}
-                          {employee.employee_number ? ` • ${employee.employee_number}` : ""}
-                          {isAssigned ? " • Assigned" : " • Available"}
-                        </span>
+                          <label
+                            key={employee.id}
+                            className={`flex cursor-pointer items-center gap-3 rounded-2xl border px-3 py-3 text-sm transition ${
+                              checked
+                                ? "border-emerald-500 bg-emerald-50 text-emerald-900"
+                                : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) => setRoleMember(role.key, employee.id, event.target.checked)}
+                            />
+                            <span>
+                              <span className="block font-medium">{employee.full_name || employee.username}</span>
+                              <span className="block text-xs text-slate-500">
+                                {employee.position || role.label}
+                                {employee.employee_number ? ` • ${employee.employee_number}` : ""}
+                              </span>
+                            </span>
+                          </label>
                         );
-                      })
-                    ) : (
-                      <span className="text-xs text-slate-500">No active employee currently matches this role.</span>
-                    )}
-                  </div>
+                      })}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -732,7 +910,7 @@ export default function StartProductionPage() {
             {selectedOrderId ? (
               <button
                 type="button"
-                onClick={() => setWorkflowPopupOrderId(selectedOrderId)}
+                onClick={() => openWorkflowEditor(selectedOrderId)}
                 className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-white"
               >
                 Edit workflow
@@ -753,16 +931,15 @@ export default function StartProductionPage() {
           </div>
 
           <div className="mt-5 space-y-4">
-            {currentWorkflow.stage_plans.map((stage) => {
-              const stageEligibleEmployees = Array.from(
-                new Map(
-                  stage.required_role_keys
-                    .flatMap((roleKey) => productionEmployeesByRole[roleKey] || [])
-                    .map((employee) => [employee.id, employee])
-                ).values()
+            {workflowPreview.stagePlans.map((stage) => {
+              const members = workflowPreview.teamMembers.filter((member) =>
+                member.role_keys.some((roleKey) => stage.required_role_keys.includes(roleKey))
               );
-              const assignedSet = new Set(stage.assigned_admin_ids);
-              const assignedCount = stageEligibleEmployees.filter((employee) => assignedSet.has(employee.id)).length;
+              const eligibleForStage = employees.filter((employee) => {
+                if (employee.is_active === false) return false;
+                const roleKey = getProductionRoleForAdmin(employee);
+                return !!roleKey && stage.required_role_keys.includes(roleKey);
+              });
 
               return (
                 <div key={stage.key} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -772,77 +949,51 @@ export default function StartProductionPage() {
                       <div className="mt-1 text-xs text-slate-500">
                         Required roles: {stage.required_role_keys.map((roleKey) => PRODUCTION_ROLE_LABELS[roleKey]).join(", ")}
                       </div>
-                      <div className="mt-1 text-xs text-slate-500">
-                        Assigned: {assignedCount} • Eligible: {stageEligibleEmployees.length}
-                      </div>
                     </div>
                     <span
                       className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${
-                        assignedCount > 0 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                        members.length > 0 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
                       }`}
                     >
-                      {assignedCount > 0 ? `${assignedCount} assigned` : "Needs assignee"}
+                      {members.length > 0 ? `${members.length} assigned` : "Needs assignee"}
                     </span>
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {stageEligibleEmployees.length > 0 ? (
-                      stageEligibleEmployees.map((employee) => {
-                        const isAssigned = assignedSet.has(employee.id);
-                        const roleKey = getProductionRoleForAdmin(employee);
-                        return (
+                    {members.length > 0 ? (
+                      members.map((member) => (
                         <span
-                          key={`${stage.key}-${employee.id}`}
-                          className={`rounded-full px-3 py-1 text-xs font-medium shadow-sm ${
-                            isAssigned
-                              ? "bg-emerald-100 text-emerald-700"
-                              : "bg-white text-slate-700"
-                          }`}
+                          key={`${stage.key}-${member.admin_id}`}
+                          className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-sm"
                         >
-                          {employee.full_name || employee.username}
-                          {roleKey ? ` • ${PRODUCTION_ROLE_LABELS[roleKey]}` : ""}
-                          {isAssigned ? " • Assigned" : " • Available"}
+                          {member.admin_name} • {member.role_labels
+                            .filter((label) =>
+                              stage.required_role_keys.some((roleKey) => PRODUCTION_ROLE_LABELS[roleKey] === label)
+                            )
+                            .join(", ")}
                         </span>
-                        );
-                      })
+                      ))
                     ) : (
-                      <span className="text-xs text-slate-500">No active employee matches this stage's required roles.</span>
+                      <span className="text-xs text-slate-500">No employee is assigned to this stage yet.</span>
                     )}
                   </div>
+
+                  {members.length === 0 ? <div className="mt-3 text-xs text-slate-500">Eligible accounts for this stage: {eligibleForStage.length}</div> : null}
                 </div>
               );
             })}
           </div>
-        </div>
-      ) : null}
 
-      {workflowPopupOrderId ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 p-4">
-          <div className="relative h-[92vh] w-full max-w-7xl overflow-hidden rounded-3xl bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
-              <div className="text-sm font-semibold text-slate-900">Workflow Editor</div>
-              <div className="flex items-center gap-2">
-                <Link
-                  href={`/dashboard/task/setup-workflow?orderId=${encodeURIComponent(workflowPopupOrderId)}`}
-                  className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  Open full page
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => setWorkflowPopupOrderId(null)}
-                  className="rounded-2xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-            <iframe
-              key={workflowPopupOrderId}
-              title="Setup Workflow"
-              src={`/dashboard/task/setup-workflow?orderId=${encodeURIComponent(workflowPopupOrderId)}&modal=1`}
-              className="h-[calc(92vh-57px)] w-full border-0 bg-white"
-            />
+          <div className="mt-6 flex flex-wrap gap-2">
+            {selectedOrderId ? (
+              <button
+                type="button"
+                onClick={() => openWorkflowEditor(selectedOrderId)}
+                className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-white"
+              >
+                Edit workflow
+              </button>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -852,19 +1003,38 @@ export default function StartProductionPage() {
           {loadingOrderContext
             ? "Loading order details…"
             : existingTaskCount === 0 && selectedOrderId
-              ? "This order has no workflow tasks yet. Set up the workflow first."
+              ? "No workflow tasks found yet. Starting production will generate tasks from your selected role assignments."
               : ""}
         </div>
         <button
           type="button"
           onClick={startProduction}
-          disabled={!selectedOrderId || !isLeader || startingProduction || loadingOrderContext || existingTaskCount === 0}
+          disabled={!selectedOrderId || !isLeader || startingProduction || loadingOrderContext}
           className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:opacity-50"
         >
           <PlayCircle size={18} />
           {startingProduction ? "Starting…" : "Start Production"}
         </button>
       </div>
+
+      {workflowPopupOrderId ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 p-4">
+          <div className="relative h-[92vh] w-full max-w-7xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+            <button
+              type="button"
+              onClick={closeWorkflowEditor}
+              className="absolute right-4 top-4 z-10 rounded-full border border-slate-200 bg-white px-3 py-1 text-sm text-slate-600 transition hover:bg-slate-50"
+            >
+              ✕
+            </button>
+            <iframe
+              title="Workflow editor"
+              src={`/dashboard/task/setup-workflow?orderId=${encodeURIComponent(workflowPopupOrderId)}&popup=1`}
+              className="h-full w-full border-0"
+            />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

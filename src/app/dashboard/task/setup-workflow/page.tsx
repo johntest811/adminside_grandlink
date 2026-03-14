@@ -89,6 +89,13 @@ const ACTIVE_PRODUCTION_STAGES = new Set([
 
 const SCHEDULE_TARGET_MIN_OFFSET_DAYS = 1;
 const SCHEDULE_TARGET_MAX_YEARS_AHEAD = 5;
+const WORKFLOW_POPUP_SOURCE = "grandlink-setup-workflow";
+
+function notifyPopupParent(type: "close" | "workflow-saved") {
+  if (typeof window === "undefined") return;
+  if (window.parent === window) return;
+  window.parent.postMessage({ source: WORKFLOW_POPUP_SOURCE, type }, window.location.origin);
+}
 
 function pad2(value: number) {
   return String(value).padStart(2, "0");
@@ -211,6 +218,7 @@ function getCustomerNameFromEnrichedItem(item: any): string | null {
 
 export default function AssignTaskPage() {
   const searchParams = useSearchParams();
+  const isPopupMode = searchParams?.get("popup") === "1";
   const [activeTab, setActiveTab] = useState<
     "select" | "schedule" | "requiredRoles" | "blueprint" | "savedStatus"
   >("select");
@@ -281,7 +289,6 @@ export default function AssignTaskPage() {
         supabase
           .from("admins")
           .select("id, username, full_name, employee_number, role, position, is_active")
-          .eq("is_active", true)
           .order("full_name", { ascending: true }),
         fetch("/api/order-management/list-items", { cache: "no-store" }),
       ]);
@@ -638,6 +645,7 @@ export default function AssignTaskPage() {
 
       setExistingTasks(insertedTasks);
       setSelectedOrderRecord((prev) => (prev ? { ...prev, meta: nextMeta } : prev));
+      notifyPopupParent("workflow-saved");
       alert("✅ Production workflow saved. Stage tasks were generated successfully.");
     } catch (error: any) {
       console.error("syncWorkflow error", error);
@@ -652,17 +660,35 @@ export default function AssignTaskPage() {
     [selectedOrderRecord?.meta]
   );
 
+  const closePopup = () => {
+    notifyPopupParent("close");
+    if (typeof window !== "undefined" && window.parent === window) {
+      window.history.back();
+    }
+  };
+
   return (
-    <div className="mx-auto max-w-7xl space-y-6 p-6">
+    <div className={`mx-auto max-w-7xl space-y-6 ${isPopupMode ? "p-4 md:p-6" : "p-6"}`}>
       <div className="flex flex-col gap-3 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <Link
-            href="/dashboard/task/employeetask"
-            className="inline-flex items-center gap-2 text-sm font-medium text-slate-500 transition hover:text-slate-800"
-          >
-            <ArrowLeft size={16} />
-            Back to Employee Task
-          </Link>
+          {isPopupMode ? (
+            <button
+              type="button"
+              onClick={closePopup}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+            >
+              <ArrowLeft size={16} />
+              Close editor
+            </button>
+          ) : (
+            <Link
+              href="/dashboard/task/employeetask"
+              className="inline-flex items-center gap-2 text-sm font-medium text-slate-500 transition hover:text-slate-800"
+            >
+              <ArrowLeft size={16} />
+              Back to Employee Task
+            </Link>
+          )}
           <div className="mt-3 flex items-center gap-3">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-700">
               <Factory size={24} />
@@ -1046,13 +1072,24 @@ export default function AssignTaskPage() {
               {savingWorkflow ? "Saving workflow…" : "Save workflow"}
             </button>
             {selectedOrderId ? (
-              <Link
-                href={`/dashboard/task/employeetask?orderId=${encodeURIComponent(selectedOrderId)}`}
-                className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-              >
-                <CheckCircle2 size={16} />
-                Open Employee Task
-              </Link>
+              isPopupMode ? (
+                <button
+                  type="button"
+                  onClick={closePopup}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  <CheckCircle2 size={16} />
+                  Done editing
+                </button>
+              ) : (
+                <Link
+                  href={`/dashboard/task/employeetask?orderId=${encodeURIComponent(selectedOrderId)}`}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  <CheckCircle2 size={16} />
+                  Open Employee Task
+                </Link>
+              )
             ) : null}
           </div>
 
