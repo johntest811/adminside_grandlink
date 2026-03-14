@@ -9,8 +9,10 @@ import {
   canManageProductionWorkflow,
   clampPercent,
   ensureProductionWorkflow,
+  getProductionRoleForAdmin,
   PRODUCTION_ROLE_CONFIGS,
   PRODUCTION_ROLE_LABELS,
+  type ProductionRoleKey,
 } from "../workflowShared";
 
 type AdminSession = {
@@ -18,6 +20,16 @@ type AdminSession = {
   username: string;
   role: string;
   position?: string;
+};
+
+type AdminUser = {
+  id: string;
+  username: string;
+  full_name: string | null;
+  employee_number: string | null;
+  role: string;
+  position: string | null;
+  is_active: boolean;
 };
 
 type OrderOption = {
@@ -138,6 +150,13 @@ function validateStartOfProduction(value: string, minDate: Date, maxDate: Date) 
   return { ok: true as const, value: parsed.toISOString() };
 }
 
+function normalizeName(value: string | null | undefined) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, " ");
+}
+
 function getCustomerNameFromEnrichedItem(item: any): string | null {
   const addr = item?.address_details || null;
   const addressName =
@@ -157,6 +176,8 @@ export default function StartProductionPage() {
   const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<"select" | "schedule" | "roles" | "blueprint">("select");
   const [adminSession, setAdminSession] = useState<AdminSession | null>(null);
+  const [employees, setEmployees] = useState<AdminUser[]>([]);
+  const [rbacPositionNames, setRbacPositionNames] = useState<Set<string> | null>(null);
   const [orders, setOrders] = useState<OrderOption[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState("");
   const [selectedOrderRecord, setSelectedOrderRecord] = useState<UserItemRecord | null>(null);
@@ -165,6 +186,7 @@ export default function StartProductionPage() {
   const [estimatedCompletionDate, setEstimatedCompletionDate] = useState("");
   const [startingProduction, setStartingProduction] = useState(false);
   const [loadingOrderContext, setLoadingOrderContext] = useState(false);
+  const [workflowPopupOrderId, setWorkflowPopupOrderId] = useState<string | null>(null);
 
   const isLeader = useMemo(() => canManageProductionWorkflow(adminSession), [adminSession]);
 
@@ -194,6 +216,39 @@ export default function StartProductionPage() {
     } catch {
       // ignore
     }
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/rbac/positions", { cache: "no-store" });
+        if (!res.ok) return;
+        const json = (await res.json()) as { positions?: Array<{ name?: string | null }> };
+        const names = (json.positions || [])
+          .map((pos) => normalizeName(pos?.name || ""))
+          .filter(Boolean);
+        setRbacPositionNames(new Set(names));
+      } catch {
+        // ignore
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("admins")
+          .select("id, username, full_name, employee_number, role, position, is_active")
+          .eq("is_active", true)
+          .order("full_name", { ascending: true });
+        if (!error) {
+          setEmployees((data || []) as AdminUser[]);
+        }
+      } catch {
+        // ignore
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -301,6 +356,34 @@ export default function StartProductionPage() {
     () => ensureProductionWorkflow(selectedOrderRecord?.meta?.production_workflow),
     [selectedOrderRecord?.meta]
   );
+
+  const productionEmployeesByRole = useMemo(() => {
+    const grouped = Object.fromEntries(PRODUCTION_ROLE_CONFIGS.map((role) => [role.key, [] as AdminUser[]])) as Record<
+      ProductionRoleKey,
+      AdminUser[]
+    >;
+
+    for (const employee of employees) {
+      if (employee.is_active === false) continue;
+
+      if (rbacPositionNames) {
+        const normalizedPosition = normalizeName(employee.position);
+        if (!normalizedPosition || !rbacPositionNames.has(normalizedPosition)) continue;
+      }
+
+      const roleKey = getProductionRoleForAdmin(employee);
+      if (!roleKey) continue;
+      grouped[roleKey].push(employee);
+    }
+
+    for (const role of PRODUCTION_ROLE_CONFIGS) {
+      grouped[role.key].sort((a, b) =>
+        String(a.full_name || a.username || "").localeCompare(String(b.full_name || b.username || ""))
+      );
+    }
+
+    return grouped;
+  }, [employees, rbacPositionNames]);
 
   const startProduction = async () => {
     if (!selectedOrderRecord || !selectedOrder) {
@@ -514,12 +597,13 @@ export default function StartProductionPage() {
               </div>
 
               <div className="mt-4 flex flex-wrap gap-2">
-                <Link
-                  href={`/dashboard/task/setup-workflow?orderId=${encodeURIComponent(selectedOrder.user_item_id)}`}
+                <button
+                  type="button"
+                  onClick={() => setWorkflowPopupOrderId(selectedOrder.user_item_id)}
                   className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-white"
                 >
                   Set up / Edit workflow
-                </Link>
+                </button>
               </div>
             </div>
           ) : null}
@@ -592,36 +676,51 @@ export default function StartProductionPage() {
 
           <div className="mt-5 space-y-4">
             {PRODUCTION_ROLE_CONFIGS.map((role) => {
-              const members = currentWorkflow.team_members.filter((member) => member.role_keys.includes(role.key));
+              const eligibleEmployees = productionEmployeesByRole[role.key] || [];
+              const assignedMemberIds = new Set(
+                currentWorkflow.team_members
+                  .filter((member) => member.role_keys.includes(role.key))
+                  .map((member) => member.admin_id)
+              );
               return (
                 <div key={role.key} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="text-sm font-semibold text-slate-900">{role.label}</div>
-                      <div className="mt-1 text-xs text-slate-500">Assigned: {members.length}</div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        Assigned: {assignedMemberIds.size} • Eligible: {eligibleEmployees.length}
+                      </div>
                     </div>
                     <span
                       className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${
-                        members.length > 0 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                        assignedMemberIds.size > 0 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
                       }`}
                     >
-                      {members.length > 0 ? "Covered" : "Missing"}
+                      {assignedMemberIds.size > 0 ? "Covered" : "Missing"}
                     </span>
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {members.length > 0 ? (
-                      members.map((member) => (
+                    {eligibleEmployees.length > 0 ? (
+                      eligibleEmployees.map((employee) => {
+                        const isAssigned = assignedMemberIds.has(employee.id);
+                        return (
                         <span
-                          key={`${role.key}-${member.admin_id}`}
-                          className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-sm"
+                          key={`${role.key}-${employee.id}`}
+                          className={`rounded-full px-3 py-1 text-xs font-medium shadow-sm ${
+                            isAssigned
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-white text-slate-700"
+                          }`}
                         >
-                          {member.admin_name}
-                          {member.employee_number ? ` • ${member.employee_number}` : ""}
+                          {employee.full_name || employee.username}
+                          {employee.employee_number ? ` • ${employee.employee_number}` : ""}
+                          {isAssigned ? " • Assigned" : " • Available"}
                         </span>
-                      ))
+                        );
+                      })
                     ) : (
-                      <span className="text-xs text-slate-500">No employee is assigned to this role yet.</span>
+                      <span className="text-xs text-slate-500">No active employee currently matches this role.</span>
                     )}
                   </div>
                 </div>
@@ -631,12 +730,13 @@ export default function StartProductionPage() {
 
           <div className="mt-6 flex flex-wrap gap-2">
             {selectedOrderId ? (
-              <Link
-                href={`/dashboard/task/setup-workflow?orderId=${encodeURIComponent(selectedOrderId)}`}
+              <button
+                type="button"
+                onClick={() => setWorkflowPopupOrderId(selectedOrderId)}
                 className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-white"
               >
                 Edit workflow
-              </Link>
+              </button>
             ) : null}
           </div>
         </div>
@@ -654,9 +754,15 @@ export default function StartProductionPage() {
 
           <div className="mt-5 space-y-4">
             {currentWorkflow.stage_plans.map((stage) => {
-              const members = currentWorkflow.team_members.filter((member) =>
-                member.role_keys.some((roleKey) => stage.required_role_keys.includes(roleKey))
+              const stageEligibleEmployees = Array.from(
+                new Map(
+                  stage.required_role_keys
+                    .flatMap((roleKey) => productionEmployeesByRole[roleKey] || [])
+                    .map((employee) => [employee.id, employee])
+                ).values()
               );
+              const assignedSet = new Set(stage.assigned_admin_ids);
+              const assignedCount = stageEligibleEmployees.filter((employee) => assignedSet.has(employee.id)).length;
 
               return (
                 <div key={stage.key} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -666,37 +772,77 @@ export default function StartProductionPage() {
                       <div className="mt-1 text-xs text-slate-500">
                         Required roles: {stage.required_role_keys.map((roleKey) => PRODUCTION_ROLE_LABELS[roleKey]).join(", ")}
                       </div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        Assigned: {assignedCount} • Eligible: {stageEligibleEmployees.length}
+                      </div>
                     </div>
                     <span
                       className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${
-                        members.length > 0 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                        assignedCount > 0 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
                       }`}
                     >
-                      {members.length > 0 ? `${members.length} assigned` : "Needs assignee"}
+                      {assignedCount > 0 ? `${assignedCount} assigned` : "Needs assignee"}
                     </span>
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {members.length > 0 ? (
-                      members.map((member) => (
+                    {stageEligibleEmployees.length > 0 ? (
+                      stageEligibleEmployees.map((employee) => {
+                        const isAssigned = assignedSet.has(employee.id);
+                        const roleKey = getProductionRoleForAdmin(employee);
+                        return (
                         <span
-                          key={`${stage.key}-${member.admin_id}`}
-                          className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-sm"
+                          key={`${stage.key}-${employee.id}`}
+                          className={`rounded-full px-3 py-1 text-xs font-medium shadow-sm ${
+                            isAssigned
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-white text-slate-700"
+                          }`}
                         >
-                          {member.admin_name} • {member.role_labels
-                            .filter((label) =>
-                              stage.required_role_keys.some((roleKey) => PRODUCTION_ROLE_LABELS[roleKey] === label)
-                            )
-                            .join(", ")}
+                          {employee.full_name || employee.username}
+                          {roleKey ? ` • ${PRODUCTION_ROLE_LABELS[roleKey]}` : ""}
+                          {isAssigned ? " • Assigned" : " • Available"}
                         </span>
-                      ))
+                        );
+                      })
                     ) : (
-                      <span className="text-xs text-slate-500">No employee is assigned to this stage yet.</span>
+                      <span className="text-xs text-slate-500">No active employee matches this stage's required roles.</span>
                     )}
                   </div>
                 </div>
               );
             })}
+          </div>
+        </div>
+      ) : null}
+
+      {workflowPopupOrderId ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 p-4">
+          <div className="relative h-[92vh] w-full max-w-7xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
+              <div className="text-sm font-semibold text-slate-900">Workflow Editor</div>
+              <div className="flex items-center gap-2">
+                <Link
+                  href={`/dashboard/task/setup-workflow?orderId=${encodeURIComponent(workflowPopupOrderId)}`}
+                  className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  Open full page
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => setWorkflowPopupOrderId(null)}
+                  className="rounded-2xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <iframe
+              key={workflowPopupOrderId}
+              title="Setup Workflow"
+              src={`/dashboard/task/setup-workflow?orderId=${encodeURIComponent(workflowPopupOrderId)}&modal=1`}
+              className="h-[calc(92vh-57px)] w-full border-0 bg-white"
+            />
           </div>
         </div>
       ) : null}

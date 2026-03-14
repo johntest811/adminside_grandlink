@@ -140,6 +140,7 @@ export default function EmployeeTasksPage() {
   const [rejecting, setRejecting] = useState(false);
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number; title?: string } | null>(null);
   const [highlightOrderId, setHighlightOrderId] = useState("");
+  const [workflowPopupOrderId, setWorkflowPopupOrderId] = useState<string | null>(null);
 
   const canReviewProgress = useMemo(() => {
     return canManageProductionWorkflow(adminSession);
@@ -697,7 +698,7 @@ export default function EmployeeTasksPage() {
   }, [orderGroups]);
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 p-6">
+    <div className="mx-auto min-h-[calc(100vh-8rem)] max-w-7xl space-y-6 rounded-3xl bg-slate-100/80 p-6">
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-3">
@@ -752,12 +753,13 @@ export default function EmployeeTasksPage() {
                     <div className="text-sm text-slate-500">Stage: {String(group.order_status || "—").replace(/_/g, " ")}</div>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <Link
-                      href={`/dashboard/task/setup-workflow?orderId=${encodeURIComponent(group.user_item_id)}`}
+                    <button
+                      type="button"
+                      onClick={() => setWorkflowPopupOrderId(group.user_item_id)}
                       className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                     >
                       Edit Workflow
-                    </Link>
+                    </button>
                     <button
                       type="button"
                       onClick={async () => {
@@ -968,12 +970,13 @@ export default function EmployeeTasksPage() {
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Quick links</div>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <Link
-                    href={`/dashboard/task/setup-workflow?orderId=${encodeURIComponent(selectedGroup.user_item_id)}`}
+                  <button
+                    type="button"
+                    onClick={() => setWorkflowPopupOrderId(selectedGroup.user_item_id)}
                     className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-white"
                   >
                     Edit Workflow
-                  </Link>
+                  </button>
                   <Link
                     href="/dashboard/order_management"
                     className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-white"
@@ -1136,6 +1139,37 @@ export default function EmployeeTasksPage() {
                 );
               })}
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {workflowPopupOrderId ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 p-4">
+          <div className="relative h-[92vh] w-full max-w-7xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
+              <div className="text-sm font-semibold text-slate-900">Workflow Editor</div>
+              <div className="flex items-center gap-2">
+                <Link
+                  href={`/dashboard/task/setup-workflow?orderId=${encodeURIComponent(workflowPopupOrderId)}`}
+                  className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  Open full page
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => setWorkflowPopupOrderId(null)}
+                  className="rounded-2xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <iframe
+              key={workflowPopupOrderId}
+              title="Setup Workflow"
+              src={`/dashboard/task/setup-workflow?orderId=${encodeURIComponent(workflowPopupOrderId)}&modal=1`}
+              className="h-[calc(92vh-57px)] w-full border-0 bg-white"
+            />
           </div>
         </div>
       ) : null}
