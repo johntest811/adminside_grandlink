@@ -75,6 +75,32 @@ export default function AdminInquiriesPage() {
     return result;
   }, [inquiries, query, dateFrom, dateTo]);
 
+  const totalCount = inquiries.length;
+  const filteredCount = filtered.length;
+  const todayCount = useMemo(() => {
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = today.getMonth();
+    const d = today.getDate();
+    return inquiries.filter((item) => {
+      const created = new Date(item.created_at);
+      return created.getFullYear() === y && created.getMonth() === m && created.getDate() === d;
+    }).length;
+  }, [inquiries]);
+
+  useEffect(() => {
+    if (filtered.length === 0) {
+      if (selected) setSelected(null);
+      return;
+    }
+
+    if (selected && filtered.some((item) => item.id === selected.id)) {
+      return;
+    }
+
+    setSelected(filtered[0]);
+  }, [filtered, selected]);
+
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this inquiry? This action cannot be undone.")) return;
     try {
@@ -91,147 +117,186 @@ export default function AdminInquiriesPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-black">Inquiries</h1>
-        <div className="flex items-center gap-3">
-          <Link href="/dashboard" className="text-sm px-3 py-1 rounded bg-gray-100">Back</Link>
+      <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Inquiries</h1>
+            <p className="text-sm text-slate-500">Review customer questions, inspect full details, and clean up resolved records.</p>
+          </div>
+          <Link href="/dashboard" className="w-fit rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+            Back to Dashboard
+          </Link>
         </div>
       </header>
 
-      <div className="bg-white p-4 rounded shadow">
-        <div className="flex gap-3 mb-4 items-center">
+      <section className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total records</div>
+          <div className="mt-1 text-2xl font-bold text-slate-900">{totalCount}</div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Matching filters</div>
+          <div className="mt-1 text-2xl font-bold text-slate-900">{filteredCount}</div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Received today</div>
+          <div className="mt-1 text-2xl font-bold text-slate-900">{todayCount}</div>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
           <input
-            className="flex-1 border rounded px-3 py-2 text-gray-700"
-            placeholder="Search name, email, phone, type or message"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800"
+            placeholder="Search by name, email, phone, type, or message"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <label className="text-black text-sm flex items-center gap-1">
-            From:
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+            From
             <input
               type="date"
               value={dateFrom}
-              onChange={e => setDateFrom(e.target.value)}
-              className="border rounded px-2 py-1 text-black"
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="rounded border border-slate-300 px-2 py-1 text-slate-800"
             />
           </label>
-          <label className="text-black text-sm flex items-center gap-1">
-            To:
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+            To
             <input
               type="date"
               value={dateTo}
-              onChange={e => setDateTo(e.target.value)}
-              className="border rounded px-2 py-1 text-black"
+              onChange={(e) => setDateTo(e.target.value)}
+              className="rounded border border-slate-300 px-2 py-1 text-slate-800"
             />
           </label>
+          <button
+            type="button"
+            onClick={() => {
+              setQuery("");
+              setDateFrom("");
+              setDateTo("");
+            }}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+          >
+            Clear Filters
+          </button>
         </div>
+      </section>
 
-        {loading ? (
-          <div className="py-8 text-center text-black">Loading…</div>
-        ) : filtered.length === 0 ? (
-          <div className="py-8 text-center text-black">No inquiries found.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full table-auto">
-              <thead>
-                <tr className="text-left text-sm text-black border-b">
-                  <th className="p-2">Name</th>
-                  <th className="p-2">Email / Phone</th>
-                  <th className="p-2">Type</th>
-                  <th className="p-2">Message</th>
-                  <th className="p-2">Created</th>
-                  <th className="p-2">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((iq) => (
-                  <tr key={iq.id} className="border-b hover:bg-gray-50 align-top">
-                    <td className="p-2 align-top">
-                      <div className="font-medium text-black">{iq.first_name} {iq.last_name}</div>
-                      {iq.user_id && <div className="text-xs text-black">user: {iq.user_id}</div>}
-                    </td>
-                    <td className="p-2 align-top">
-                      <div className="text-sm text-black">{iq.email ?? "—"}</div>
-                      <div className="text-xs text-black">{iq.phone ?? "—"}</div>
-                    </td>
-                    <td className="p-2 align-top">
-                      <div className="text-sm text-black">{iq.inquiry_type}</div>
-                    </td>
-                    <td className="p-2 truncate max-w-xs align-top">
-                      <div className="text-sm text-black">{iq.message ?? "—"}</div>
-                    </td>
-                    <td className="p-2 align-top text-sm text-black">
-                      {new Date(iq.created_at).toLocaleString()}
-                    </td>
-                    <td className="p-2 align-top text-sm">
-                      <div className="flex flex-col gap-2">
+      <section className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.9fr)]">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 text-sm font-semibold text-slate-700">Inquiry List</div>
+
+          {loading ? (
+            <div className="py-10 text-center text-slate-500">Loading inquiries...</div>
+          ) : filtered.length === 0 ? (
+            <div className="py-10 text-center text-slate-500">No inquiries found for the current filters.</div>
+          ) : (
+            <div className="space-y-3">
+              {filtered.map((iq) => {
+                const isSelected = selected?.id === iq.id;
+                return (
+                  <div
+                    key={iq.id}
+                    className={`rounded-xl border p-4 transition ${
+                      isSelected
+                        ? "border-blue-500 bg-blue-50"
+                        : "border-slate-200 bg-white hover:border-slate-300"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-base font-semibold text-slate-900">{iq.first_name} {iq.last_name}</div>
+                        <div className="mt-1 text-sm text-slate-600">{iq.email || "No email"} · {iq.phone || "No phone"}</div>
+                      </div>
+                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                        {iq.inquiry_type}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 line-clamp-2 text-sm text-slate-700">
+                      {iq.message || "No message provided."}
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-xs text-slate-500">{new Date(iq.created_at).toLocaleString()}</div>
+                      <div className="flex items-center gap-2">
                         <button
+                          type="button"
                           onClick={() => setSelected(iq)}
-                          className="px-3 py-1 rounded bg-blue-600 text-white text-sm"
+                          className="rounded bg-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-blue-700"
                         >
-                          View
+                          View Details
                         </button>
                         <button
+                          type="button"
                           onClick={() => handleDelete(iq.id)}
-                          className="px-3 py-1 rounded bg-red-500 text-white text-sm"
+                          className="rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-700"
                         >
                           Delete
                         </button>
                       </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* detail panel */}
-      {selected && (
-        <div className="bg-white p-4 rounded shadow">
-          <div className="flex items-start justify-between">
-            <h2 className="text-lg font-semibold text-black">Inquiry detail</h2>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setSelected(null)}
-                className="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
-              >
-                Close
-              </button>
-              <button onClick={() => handleDelete(selected.id)} className="px-3 py-1 rounded bg-red-500 text-white">Delete</button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          </div>
-
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <div className="text-xs text-black">Name</div>
-              <div className="font-medium text-black">{selected.first_name} {selected.last_name}</div>
-
-              <div className="mt-3 text-xs text-black">Contact</div>
-              <div className="text-black">{selected.email ?? "—"}</div>
-              <div className="text-black">{selected.phone ?? "—"}</div>
-
-              <div className="mt-3 text-xs text-black">Type</div>
-              <div className="font-medium text-black">{selected.inquiry_type}</div>
-
-              {selected.user_id && (
-                <>
-                  <div className="mt-3 text-xs text-black">User ID</div>
-                  <div className="text-sm text-black">{selected.user_id}</div>
-                </>
-              )}
-            </div>
-
-            <div>
-              <div className="text-xs text-black">Message</div>
-              <div className="whitespace-pre-wrap text-black">{selected.message ?? "—"}</div>
-              <div className="mt-4 text-xs text-black">Created</div>
-              <div className="text-sm text-black">{new Date(selected.created_at).toLocaleString()}</div>
-            </div>
-          </div>
+          )}
         </div>
-      )}
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 text-sm font-semibold text-slate-700">Selected Inquiry</div>
+
+          {!selected ? (
+            <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+              Select an inquiry to view complete details.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Customer</div>
+                <div className="mt-1 text-lg font-bold text-slate-900">{selected.first_name} {selected.last_name}</div>
+                <div className="mt-2 text-sm text-slate-700">Email: {selected.email || "—"}</div>
+                <div className="text-sm text-slate-700">Phone: {selected.phone || "—"}</div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Inquiry Type</div>
+                <div className="mt-1 text-base font-semibold text-slate-900">{selected.inquiry_type}</div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Message</div>
+                <div className="mt-2 whitespace-pre-wrap text-sm text-slate-800">{selected.message || "—"}</div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Meta</div>
+                <div className="mt-1 text-sm text-slate-700">Received: {new Date(selected.created_at).toLocaleString()}</div>
+                {selected.user_id ? <div className="text-sm text-slate-700">User ID: {selected.user_id}</div> : null}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelected(null)}
+                  className="rounded border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Clear Selection
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDelete(selected.id)}
+                  className="rounded bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700"
+                >
+                  Delete Inquiry
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

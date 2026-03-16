@@ -29,6 +29,8 @@ import {
 } from "../../products/productFormConfig";
 
 const ALLOWED_3D_EXTENSIONS = ["fbx", "glb", "gltf"] as const;
+const IMAGE_MAX_FILE_SIZE_BYTES = 6 * 1024 * 1024;
+const MODEL_MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 type FrameFinish = "default" | "matteBlack" | "matteGray" | "narra" | "walnut";
 
 function materialToFrameFinish(material?: string | null): FrameFinish {
@@ -626,12 +628,21 @@ export default function EditProductPage() {
     const files = Array.from(e.target.files || []);
     if (!files.length || !currentAdmin || !product) return;
 
+    const oversizedFiles = files.filter((file) => file.size > IMAGE_MAX_FILE_SIZE_BYTES);
+    const acceptedFiles = files.filter((file) => file.size <= IMAGE_MAX_FILE_SIZE_BYTES);
+
+    if (oversizedFiles.length > 0) {
+      setMessage(`Skipped ${oversizedFiles.length} image(s) above 6MB. Max image size is 6MB per file.`);
+    }
+
+    if (acceptedFiles.length === 0) return;
+
     setUploadingImages(true);
     setMessage("Uploading images...");
 
     try {
       const uploadedUrls: string[] = [];
-      for (const file of files) {
+      for (const file of acceptedFiles) {
         const url = await uploadFile(file, 'images', productId);
         uploadedUrls.push(url);
 
@@ -663,7 +674,7 @@ export default function EditProductPage() {
   // Persist immediately so images don't disappear on re-fetch
   await persistImages(next);
 
-      setMessage(`${files.length} image(s) uploaded successfully!`);
+      setMessage(`${acceptedFiles.length} image(s) uploaded successfully!`);
       setTimeout(() => setMessage(""), 3000);
     } catch (error) {
       console.error('Images upload error:', error);
@@ -703,6 +714,11 @@ export default function EditProductPage() {
 
   const handleReplaceImage = async (idx: number, file: File) => {
     if (!currentAdmin || !product) return;
+    if (file.size > IMAGE_MAX_FILE_SIZE_BYTES) {
+      setMessage(`"${file.name}" exceeds 6MB. Max image size is 6MB per file.`);
+      return;
+    }
+
     setUploadingImages(true);
     setMessage('Replacing image...');
     try {
@@ -857,13 +873,27 @@ export default function EditProductPage() {
     const files = Array.from(e.target.files || []);
     if (!files.length || !currentAdmin || !product) return;
 
-    const accepted = files.filter(isAllowed3DFile);
-    const rejected = files.filter((f) => !isAllowed3DFile(f));
-    if (rejected.length > 0) {
-      setMessage(
-        `Ignored ${rejected.length} unsupported file(s). Allowed: ${ALLOWED_3D_EXTENSIONS.map((x) => `.${x}`).join(", ")}`
+    const rejectedType = files.filter((f) => !isAllowed3DFile(f));
+    const oversizedFiles = files.filter(
+      (f) => isAllowed3DFile(f) && f.size > MODEL_MAX_FILE_SIZE_BYTES
+    );
+    const accepted = files.filter(
+      (f) => isAllowed3DFile(f) && f.size <= MODEL_MAX_FILE_SIZE_BYTES
+    );
+
+    const notices: string[] = [];
+    if (rejectedType.length > 0) {
+      notices.push(
+        `Ignored ${rejectedType.length} unsupported file(s). Allowed: ${ALLOWED_3D_EXTENSIONS.map((x) => `.${x}`).join(", ")}`
       );
     }
+    if (oversizedFiles.length > 0) {
+      notices.push(`Skipped ${oversizedFiles.length} 3D file(s) above 10MB. Max 3D file size is 10MB per file.`);
+    }
+    if (notices.length > 0) {
+      setMessage(notices.join(" "));
+    }
+
     if (accepted.length === 0) return;
 
     setUploadingFbx(true);
@@ -942,7 +972,7 @@ export default function EditProductPage() {
           metadata: {
             error: String(error),
             filesCount: accepted.length,
-            rejectedFileNames: rejected.map((f) => f.name),
+            rejectedFileNames: [...rejectedType, ...oversizedFiles].map((f) => f.name),
             productName: product.name,
             productId: product.id,
             adminAccount: currentAdmin.username,
@@ -1350,7 +1380,7 @@ export default function EditProductPage() {
                   className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
                 />
                 <div className="text-sm text-gray-500 mt-1">
-                  Select multiple 3D model files to upload. Files will be automatically saved to the product.
+                  Select multiple 3D model files to upload. Maximum 10MB per file.
                 </div>
               </div>
 
@@ -1426,7 +1456,7 @@ export default function EditProductPage() {
                   className="border px-3 py-2 rounded w-full text-black bg-white focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
                 />
                 <div className="text-sm text-gray-500 mt-1">
-                  You can upload any number of images. They will be added to this product.
+                  You can upload any number of images. Maximum 6MB per file.
                 </div>
               </div>
 

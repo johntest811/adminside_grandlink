@@ -27,6 +27,8 @@ import {
 } from "./productFormConfig";
 
 const ALLOWED_3D_EXTENSIONS = ["fbx", "glb", "gltf"] as const;
+const IMAGE_MAX_FILE_SIZE_BYTES = 6 * 1024 * 1024;
+const MODEL_MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 
 function getFileExtension(name: string): string {
   const clean = (name || "").split("?")[0].split("#")[0];
@@ -266,8 +268,20 @@ export default function ProductsAdminPage() {
   const handleSingleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
+
+    const oversizedFiles = files.filter((file) => file.size > IMAGE_MAX_FILE_SIZE_BYTES);
+    const acceptedFiles = files.filter((file) => file.size <= IMAGE_MAX_FILE_SIZE_BYTES);
+
+    if (oversizedFiles.length > 0) {
+      setMessage(
+        `Skipped ${oversizedFiles.length} image(s) above 6MB. Max image size is 6MB per file.`
+      );
+    }
+
+    if (acceptedFiles.length === 0) return;
+
     // Allow unlimited images by appending without slicing
-    const newImages = [...images, ...files];
+    const newImages = [...images, ...acceptedFiles];
     setImages(newImages);
     setCarouselIndex(0);
     
@@ -278,13 +292,14 @@ export default function ProductsAdminPage() {
           admin_name: currentAdmin.username,
           action: 'upload',
           entity_type: 'product_images',
-          details: `Added ${files.length} product image(s). Total: ${newImages.length}`,
+          details: `Added ${acceptedFiles.length} product image(s). Total: ${newImages.length}`,
           page: 'products',
           metadata: {
-            addedCount: files.length,
+            addedCount: acceptedFiles.length,
             totalCount: newImages.length,
-            fileNames: files.map(f => f.name),
-            totalSize: files.reduce((sum, f) => sum + f.size, 0),
+            fileNames: acceptedFiles.map(f => f.name),
+            skippedOversizeFileNames: oversizedFiles.map((f) => f.name),
+            totalSize: acceptedFiles.reduce((sum, f) => sum + f.size, 0),
             adminAccount: currentAdmin.username
           }
         });
@@ -329,13 +344,27 @@ export default function ProductsAdminPage() {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
-    const accepted = files.filter(isAllowed3DFile);
-    const rejected = files.filter((f) => !isAllowed3DFile(f));
-    if (rejected.length > 0) {
-      setMessage(
-        `Ignored ${rejected.length} unsupported file(s). Allowed: ${ALLOWED_3D_EXTENSIONS.map((x) => `.${x}`).join(", ")}`
+    const rejectedType = files.filter((f) => !isAllowed3DFile(f));
+    const oversizedFiles = files.filter(
+      (f) => isAllowed3DFile(f) && f.size > MODEL_MAX_FILE_SIZE_BYTES
+    );
+    const accepted = files.filter(
+      (f) => isAllowed3DFile(f) && f.size <= MODEL_MAX_FILE_SIZE_BYTES
+    );
+
+    const notices: string[] = [];
+    if (rejectedType.length > 0) {
+      notices.push(
+        `Ignored ${rejectedType.length} unsupported file(s). Allowed: ${ALLOWED_3D_EXTENSIONS.map((x) => `.${x}`).join(", ")}`
       );
     }
+    if (oversizedFiles.length > 0) {
+      notices.push(`Skipped ${oversizedFiles.length} 3D file(s) above 10MB. Max 3D file size is 10MB per file.`);
+    }
+    if (notices.length > 0) {
+      setMessage(notices.join(" "));
+    }
+
     if (accepted.length === 0) return;
 
     const newFbxFiles = [...fbxFiles, ...accepted];
@@ -354,7 +383,7 @@ export default function ProductsAdminPage() {
             addedCount: accepted.length,
             totalCount: newFbxFiles.length,
             fileNames: accepted.map(f => f.name),
-            rejectedFileNames: rejected.map(f => f.name),
+            rejectedFileNames: [...rejectedType, ...oversizedFiles].map(f => f.name),
             adminAccount: currentAdmin.username
           }
         });
@@ -1154,6 +1183,7 @@ export default function ProductsAdminPage() {
                     <h3 className="text-md font-semibold text-[#233a5e] mb-2">
                       Product Images ({images.length})
                     </h3>
+                    <p className="mb-3 text-xs text-gray-500">Maximum image size: 6MB per file.</p>
 
                     <div className="flex items-center space-x-2 mb-4">
                       <label
@@ -1227,6 +1257,7 @@ export default function ProductsAdminPage() {
                     <h3 className="text-md font-semibold text-[#233a5e] mb-2">
                       3D Models (.fbx, .glb, .gltf) ({fbxFiles.length} files)
                     </h3>
+                    <p className="mb-3 text-xs text-gray-500">Maximum 3D file size: 10MB per file.</p>
 
                     <label
                       htmlFor="fbx-upload"
