@@ -32,7 +32,8 @@ export default function UpdateProductsPage() {
   const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
   const [newCategoryOption, setNewCategoryOption] = useState("");
   const [savingCategories, setSavingCategories] = useState(false);
-  const [showCategoryManagerPopup, setShowCategoryManagerPopup] = useState(false);
+  const [isAddCategoryModalOpen, setIsAddCategoryModalOpen] = useState(false);
+  const [removeCategoryTarget, setRemoveCategoryTarget] = useState<string | null>(null);
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
   const [toast, setToast] = useState<ToastPopupState>({ open: false, type: "info", title: "", message: "" });
 
@@ -104,6 +105,11 @@ export default function UpdateProductsPage() {
     return parseCategorySelection(product.category).some(
       (entry) => normalizeCategoryKey(entry) === expected
     );
+  };
+
+  const productMatchesAnySelectedCategory = (product: Product, selectedFilters: string[]) => {
+    if (selectedFilters.length === 0) return true;
+    return selectedFilters.some((entry) => productMatchesCategory(product, entry));
   };
 
   const loadCategoryOptions = async () => {
@@ -399,71 +405,51 @@ export default function UpdateProductsPage() {
     }
   };
 
-  const handleToggleCategoryFilter = async (category: string) => {
-    const normalized = normalizeCategoryLabel(category);
-    if (!normalized) return;
+  const handleCategoryFiltersUpdate = async (nextFilters: string[]) => {
+    const oldFilters = selectedCategoryFilters;
+    setSelectedCategoryFilters(nextFilters);
 
-    const existed = selectedCategoryFilters.some(
-      (entry) => normalizeCategoryKey(entry) === normalizeCategoryKey(normalized)
-    );
+    if (!currentAdmin) return;
 
-    const nextSelected = existed
-      ? selectedCategoryFilters.filter(
-          (entry) => normalizeCategoryKey(entry) !== normalizeCategoryKey(normalized)
-        )
-      : [...selectedCategoryFilters, normalized];
+    const filteredCount = products.filter((product) =>
+      productMatchesAnySelectedCategory(product, nextFilters)
+    ).length;
 
-    setSelectedCategoryFilters(nextSelected);
-
-    if (currentAdmin) {
-      const filteredCount = products.filter((product) =>
-        nextSelected.length === 0 ||
-        nextSelected.some((selected) => productMatchesCategory(product, selected))
-      ).length;
-
-      await logActivity({
-        admin_id: currentAdmin.id,
-        admin_name: currentAdmin.username,
-        action: 'update',
-        entity_type: 'category_filter',
-        details: `Admin ${currentAdmin.username} updated side category filters (${nextSelected.length || 'All'} selected, ${filteredCount} products)`,
-        page: 'UpdateProducts',
-        metadata: {
-          oldCategories: selectedCategoryFilters,
-          newCategories: nextSelected,
-          toggledCategory: normalized,
-          isSelected: !existed,
-          resultsCount: filteredCount,
-          adminAccount: currentAdmin.username,
-          adminId: currentAdmin.id,
-          timestamp: new Date().toISOString()
-        }
-      });
-    }
+    await logActivity({
+      admin_id: currentAdmin.id,
+      admin_name: currentAdmin.username,
+      action: 'update',
+      entity_type: 'category_filter',
+      details: `Admin ${currentAdmin.username} updated category filters from "${oldFilters.join(', ') || 'All Categories'}" to "${nextFilters.join(', ') || 'All Categories'}" (${filteredCount} products)`,
+      page: 'UpdateProducts',
+      metadata: {
+        oldCategoryFilters: oldFilters,
+        newCategoryFilters: nextFilters,
+        resultsCount: filteredCount,
+        adminAccount: currentAdmin.username,
+        adminId: currentAdmin.id,
+        timestamp: new Date().toISOString()
+      }
+    });
   };
 
-  const handleClearCategoryFilters = async () => {
-    const oldCategories = [...selectedCategoryFilters];
-    setSelectedCategoryFilters([]);
+  const handleCategoryFilterToggle = async (category: string) => {
+    const exists = selectedCategoryFilters.some(
+      (entry) => normalizeCategoryKey(entry) === normalizeCategoryKey(category)
+    );
 
-    if (currentAdmin) {
-      await logActivity({
-        admin_id: currentAdmin.id,
-        admin_name: currentAdmin.username,
-        action: 'update',
-        entity_type: 'category_filter',
-        details: `Admin ${currentAdmin.username} cleared side category filters`,
-        page: 'UpdateProducts',
-        metadata: {
-          oldCategories,
-          newCategories: [],
-          resultsCount: products.length,
-          adminAccount: currentAdmin.username,
-          adminId: currentAdmin.id,
-          timestamp: new Date().toISOString()
-        }
-      });
-    }
+    const nextFilters = exists
+      ? selectedCategoryFilters.filter(
+          (entry) => normalizeCategoryKey(entry) !== normalizeCategoryKey(category)
+        )
+      : [...selectedCategoryFilters, category];
+
+    await handleCategoryFiltersUpdate(nextFilters);
+  };
+
+  const clearCategoryFilters = async () => {
+    if (selectedCategoryFilters.length === 0) return;
+    await handleCategoryFiltersUpdate([]);
   };
 
   const handleAddCategoryOption = async () => {
@@ -474,7 +460,11 @@ export default function UpdateProductsPage() {
       (option) => normalizeCategoryKey(option) === normalizeCategoryKey(normalized)
     );
     if (exists) {
-      setNewCategoryOption("");
+      showToast({
+        type: "info",
+        title: "Category Exists",
+        message: `Category "${normalized}" already exists.`,
+      });
       return;
     }
 
@@ -483,6 +473,12 @@ export default function UpdateProductsPage() {
     try {
       await persistCategoryOptions(nextCategories);
       setNewCategoryOption("");
+      setIsAddCategoryModalOpen(false);
+      showToast({
+        type: "success",
+        title: "Category Added",
+        message: `Category "${normalized}" added successfully.`,
+      });
 
       if (currentAdmin) {
         await logActivity({
@@ -521,9 +517,19 @@ export default function UpdateProductsPage() {
     try {
       await persistCategoryOptions(nextCategories);
 
-      setSelectedCategoryFilters((prev) =>
-        prev.filter((option) => normalizeCategoryKey(option) !== normalizeCategoryKey(normalizedToRemove))
+      const nextSelectedFilters = selectedCategoryFilters.filter(
+        (entry) => normalizeCategoryKey(entry) !== normalizeCategoryKey(normalizedToRemove)
       );
+      if (nextSelectedFilters.length !== selectedCategoryFilters.length) {
+        await handleCategoryFiltersUpdate(nextSelectedFilters);
+      }
+
+      setRemoveCategoryTarget(null);
+      showToast({
+        type: "success",
+        title: "Category Removed",
+        message: `Category "${normalizedToRemove}" removed successfully.`,
+      });
 
       if (currentAdmin) {
         await logActivity({
@@ -551,9 +557,7 @@ export default function UpdateProductsPage() {
   // Filter products
   const filteredProducts = products.filter(product => {
     const matchesName = (product.name || "").toLowerCase().includes((filter || "").toLowerCase());
-    const matchesCategory =
-      selectedCategoryFilters.length === 0 ||
-      selectedCategoryFilters.some((selected) => productMatchesCategory(product, selected));
+    const matchesCategory = productMatchesAnySelectedCategory(product, selectedCategoryFilters);
     return matchesName && matchesCategory;
   });
 
@@ -594,302 +598,318 @@ export default function UpdateProductsPage() {
         </button>
       </div>
 
-      {/* Filters */}
-      <div className="grid grid-cols-1 xl:grid-cols-[250px_1fr] gap-4">
-        <aside className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 h-fit xl:sticky xl:top-24 self-start">
+      <div className="grid grid-cols-1 xl:grid-cols-[250px_minmax(0,1fr)] gap-4 items-start">
+        <aside className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 xl:sticky xl:top-24 xl:max-h-[calc(100vh-7rem)] xl:overflow-auto">
           <div className="flex items-center justify-between gap-2 mb-3">
             <h2 className="text-sm font-semibold text-gray-700">Side Category Filters</h2>
             <button
               type="button"
-              onClick={() => setShowCategoryManagerPopup(true)}
-              className="px-2 py-1 rounded text-xs font-medium border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
+              onClick={() => {
+                setNewCategoryOption("");
+                setIsAddCategoryModalOpen(true);
+              }}
+              className="px-2.5 py-1 rounded-md text-xs font-medium border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
             >
-              Manage
+              Add
             </button>
           </div>
 
-          <p className="mb-3 text-xs text-gray-500">
-            Select multiple categories to narrow products.
-          </p>
-
-          <div className="space-y-2 max-h-[60vh] overflow-auto pr-1">
+          <p className="mb-2 text-xs text-gray-500">Select multiple categories to filter products.</p>
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={() => void clearCategoryFilters()}
+              className={`w-full text-left px-3 py-2 rounded-lg text-sm border transition-colors ${
+                selectedCategoryFilters.length === 0
+                  ? "bg-indigo-50 border-indigo-200 text-indigo-700"
+                  : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
+              }`}
+            >
+              All Categories
+            </button>
             {categories.map((category) => {
-              const checked = selectedCategoryFilters.some(
+              const isSelected = selectedCategoryFilters.some(
                 (entry) => normalizeCategoryKey(entry) === normalizeCategoryKey(category)
               );
 
               return (
-                <label
-                  key={`side-${category}`}
-                  className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm cursor-pointer transition-colors ${
-                    checked
-                      ? "bg-indigo-50 border-indigo-200 text-indigo-700"
-                      : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => void handleToggleCategoryFilter(category)}
-                    className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <span className="truncate">{category}</span>
-                </label>
+                <div key={`side-${category}`} className="w-full">
+                  <div
+                    className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm border transition-colors ${
+                      isSelected
+                        ? "bg-indigo-50 border-indigo-200 text-indigo-700"
+                        : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
+                    }`}
+                  >
+                    <label className="inline-flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => void handleCategoryFilterToggle(category)}
+                        className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span>{category}</span>
+                    </label>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setRemoveCategoryTarget(category);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setRemoveCategoryTarget(category);
+                        }
+                      }}
+                      className="shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold text-red-600 hover:bg-red-50"
+                    >
+                      Remove
+                    </span>
+                  </div>
+                </div>
               );
             })}
           </div>
-
-          <div className="mt-4 flex items-center justify-between text-xs text-gray-600">
-            <span>{selectedCategoryFilters.length} selected</span>
-            <button
-              type="button"
-              onClick={() => void handleClearCategoryFilters()}
-              disabled={selectedCategoryFilters.length === 0}
-              className="text-indigo-700 hover:text-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Clear
-            </button>
-          </div>
         </aside>
 
-        <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex-1 min-w-64">
-              <input
-                type="text"
-                placeholder="Search products..."
-                value={filter}
-                onChange={(e) => handleFilterChange(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-black"
-              />
+        <div className="space-y-4 min-w-0">
+          <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 space-y-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex-1 min-w-64">
+                <input
+                  type="text"
+                  placeholder="Search products..."
+                  value={filter}
+                  onChange={(e) => handleFilterChange(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-black"
+                />
+              </div>
             </div>
+
+            {selectedCategoryFilters.length > 0 && (
+              <div className="text-xs text-gray-600">
+                Active categories: {selectedCategoryFilters.join(", ")}
+              </div>
+            )}
+
+            {(filter || selectedCategoryFilters.length > 0) && (
+              <div className="text-sm text-gray-600">
+                Showing {filteredProducts.length} of {products.length} products
+              </div>
+            )}
           </div>
 
-          {(filter || selectedCategoryFilters.length > 0) && (
-            <div className="text-sm text-gray-600">
-              Showing {filteredProducts.length} of {products.length} products
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {loading ? (
+              Array(8).fill(0).map((_, i) => (
+                <div key={i} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 animate-pulse">
+                  <div className="h-32 bg-gray-200 rounded mb-4"></div>
+                  <div className="h-4 bg-gray-200 rounded mb-2"></div>
+                  <div className="h-8 bg-gray-200 rounded"></div>
+                </div>
+              ))
+            ) : (
+              filteredProducts.map((product) => (
+                <div key={product.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
+                  <div className="h-48 bg-gray-200 relative">
+                    {product.image1 || (product as any).images?.[0] ? (
+                      <img
+                        src={product.image1 || (product as any).images?.[0]}
+                        alt={product.name}
+                        className="w-full h-full object-cover"
+                        onError={() => {
+                          if (currentAdmin) {
+                            logActivity({
+                              admin_id: currentAdmin.id,
+                              admin_name: currentAdmin.username,
+                              action: 'view',
+                              entity_type: 'image_error',
+                              entity_id: product.id,
+                              details: `Broken image detected for product "${product.name}"`,
+                              page: 'UpdateProducts',
+                              metadata: {
+                                productName: product.name,
+                                productId: product.id,
+                                imageUrl: product.image1 || (product as any).images?.[0],
+                                adminAccount: currentAdmin.username
+                              }
+                            });
+                          }
+                        }}
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-gray-400">No Image</div>
+                    )}
+                  </div>
+
+                  <div className="p-4 space-y-3">
+                    <div>
+                      <h3 className="font-semibold text-gray-900 truncate" title={product.name}>
+                        {product.name}
+                      </h3>
+                      <div className="flex justify-between text-sm text-gray-600 mt-1">
+                        <span>{product.category}</span>
+                        <span>{product.type}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-between items-center">
+                      <span className="text-lg font-semibold text-green-600">₱{product.price?.toLocaleString()}</span>
+                      {product.inventory !== undefined && (
+                        <span className={`text-sm px-2 py-1 rounded-full ${
+                          product.inventory === 0
+                            ? 'bg-red-100 text-red-800'
+                            : product.inventory <= 5
+                            ? 'bg-orange-100 text-orange-800'
+                            : 'bg-green-100 text-green-800'
+                        }`}>
+                          {product.inventory} in stock
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => handleEdit(product.id, product.name)}
+                        className="flex-1 px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDelete(product.id, product.name)}
+                        disabled={deleteLoading === product.id}
+                        className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                          deleteLoading === product.id
+                            ? 'bg-gray-400 text-white cursor-not-allowed'
+                            : 'bg-red-600 text-white hover:bg-red-700'
+                        }`}
+                      >
+                        {deleteLoading === product.id ? 'Deleting...' : 'Delete'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          {filteredProducts.length === 0 && !loading && (
+            <div className="text-center py-12">
+              <div className="text-6xl mb-4">📦</div>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">No products found</h3>
+              <p className="text-gray-500 mb-4">
+                {filter || selectedCategoryFilters.length > 0
+                  ? "No products match your current filters."
+                  : "No products available. Add your first product to get started!"}
+              </p>
+              <button
+                onClick={async () => {
+                  if (currentAdmin) {
+                    await logActivity({
+                      admin_id: currentAdmin.id,
+                      admin_name: currentAdmin.username,
+                      action: 'view',
+                      entity_type: 'navigation',
+                      details: `Admin ${currentAdmin.username} navigated to Add Product from empty products state`,
+                      page: 'UpdateProducts',
+                      metadata: {
+                        context: 'empty_products_state',
+                        hasFilters: !!(filter || selectedCategoryFilters.length > 0),
+                        adminAccount: currentAdmin.username
+                      }
+                    });
+                  }
+                  router.push("/dashboard/products");
+                }}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors"
+              >
+                Add New Product
+              </button>
             </div>
           )}
         </div>
       </div>
 
-      {showCategoryManagerPopup && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-xl rounded-xl bg-white shadow-2xl border border-gray-200">
-            <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
-              <h3 className="text-lg font-semibold text-gray-900">Manage Product Categories</h3>
-              <button
-                type="button"
-                onClick={() => setShowCategoryManagerPopup(false)}
-                className="text-gray-500 hover:text-gray-700"
-                aria-label="Close category manager"
-              >
-                Close
-              </button>
+      {isAddCategoryModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl border border-gray-200 p-5 space-y-4">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900">Add Category Option</h3>
+              <p className="mt-1 text-sm text-gray-600">Create a new category that will appear in the side filter list.</p>
             </div>
 
-            <div className="space-y-4 px-5 py-4">
-              <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">Add Category</label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={newCategoryOption}
-                    onChange={(e) => setNewCategoryOption(e.target.value)}
-                    placeholder="Enter new category"
-                    className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-black focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void handleAddCategoryOption()}
-                    disabled={savingCategories || !newCategoryOption.trim()}
-                    className="rounded-lg px-3 py-2 text-sm font-medium border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-60 disabled:cursor-not-allowed"
-                  >
-                    {savingCategories ? "Saving..." : "Add"}
-                  </button>
-                </div>
-              </div>
+            <input
+              type="text"
+              value={newCategoryOption}
+              onChange={(e) => setNewCategoryOption(e.target.value)}
+              placeholder="Category name"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 text-sm text-black"
+              autoFocus
+            />
 
-              <div>
-                <div className="mb-2 text-sm font-medium text-gray-700">Remove Category</div>
-                <div className="max-h-64 overflow-auto space-y-2 pr-1">
-                  {categories.length > 0 ? (
-                    categories.map((category) => {
-                      const hasProductsUsingCategory = products.some((product) =>
-                        productMatchesCategory(product, category)
-                      );
-
-                      return (
-                        <div
-                          key={`popup-remove-${category}`}
-                          className="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2"
-                        >
-                          <div>
-                            <div className="text-sm text-gray-800">{category}</div>
-                            {hasProductsUsingCategory && (
-                              <div className="text-xs text-amber-700">Used by one or more products</div>
-                            )}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => void handleRemoveCategoryOption(category)}
-                            disabled={savingCategories}
-                            className="rounded px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      );
-                    })
-                  ) : (
-                    <div className="text-sm text-gray-500">No category options available.</div>
-                  )}
-                </div>
-              </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddCategoryModalOpen(false);
+                  setNewCategoryOption("");
+                }}
+                className="px-3 py-2 text-sm font-medium rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleAddCategoryOption()}
+                disabled={savingCategories || !newCategoryOption.trim()}
+                className="px-3 py-2 text-sm font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {savingCategories ? "Saving..." : "Add Category"}
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Products Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-        {loading ? (
-          Array(8).fill(0).map((_, i) => (
-            <div key={i} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 animate-pulse">
-              <div className="h-32 bg-gray-200 rounded mb-4"></div>
-              <div className="h-4 bg-gray-200 rounded mb-2"></div>
-              <div className="h-8 bg-gray-200 rounded"></div>
+      {removeCategoryTarget ? (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl border border-gray-200 p-5 space-y-4">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900">Remove Category Option</h3>
+              <p className="mt-1 text-sm text-gray-600">
+                Remove "{removeCategoryTarget}" from category options?
+              </p>
+              {products.some((product) => productMatchesCategory(product, removeCategoryTarget)) && (
+                <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+                  This category is still assigned to one or more products.
+                </p>
+              )}
             </div>
-          ))
-        ) : (
-          filteredProducts.map((product) => (
-            <div key={product.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
-              {/* Product Image */}
-              <div className="h-48 bg-gray-200 relative">
-                {product.image1 || (product as any).images?.[0] ? (
-                  <img
-                    src={product.image1 || (product as any).images?.[0]}
-                    alt={product.name}
-                    className="w-full h-full object-cover"
-                    onError={() => {
-                      // Log broken image
-                      if (currentAdmin) {
-                        logActivity({
-                          admin_id: currentAdmin.id,
-                          admin_name: currentAdmin.username,
-                          action: 'view',
-                          entity_type: 'image_error',
-                          entity_id: product.id,
-                          details: `Broken image detected for product "${product.name}"`,
-                          page: 'UpdateProducts',
-                          metadata: {
-                            productName: product.name,
-                            productId: product.id,
-                            imageUrl: product.image1 || (product as any).images?.[0],
-                            adminAccount: currentAdmin.username
-                          }
-                        });
-                      }
-                    }}
-                  />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center text-gray-400">
-                    No Image
-                  </div>
-                )}
-              </div>
 
-              {/* Product Info */}
-              <div className="p-4 space-y-3">
-                <div>
-                  <h3 className="font-semibold text-gray-900 truncate" title={product.name}>
-                    {product.name}
-                  </h3>
-                  <div className="flex justify-between text-sm text-gray-600 mt-1">
-                    <span>{product.category}</span>
-                    <span>{product.type}</span>
-                  </div>
-                </div>
-
-                <div className="flex justify-between items-center">
-                  <span className="text-lg font-semibold text-green-600">
-                    ₱{product.price?.toLocaleString()}
-                  </span>
-                  {product.inventory !== undefined && (
-                    <span className={`text-sm px-2 py-1 rounded-full ${
-                      product.inventory === 0
-                        ? 'bg-red-100 text-red-800'
-                        : product.inventory <= 5
-                        ? 'bg-orange-100 text-orange-800'
-                        : 'bg-green-100 text-green-800'
-                    }`}>
-                      {product.inventory} in stock
-                    </span>
-                  )}
-                </div>
-
-                {/* Action Buttons */}
-                <div className="flex space-x-2">
-                  <button
-                    onClick={() => handleEdit(product.id, product.name)}
-                    className="flex-1 px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => handleDelete(product.id, product.name)}
-                    disabled={deleteLoading === product.id}
-                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      deleteLoading === product.id
-                        ? 'bg-gray-400 text-white cursor-not-allowed'
-                        : 'bg-red-600 text-white hover:bg-red-700'
-                    }`}
-                  >
-                    {deleteLoading === product.id ? 'Deleting...' : 'Delete'}
-                  </button>
-                </div>
-              </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRemoveCategoryTarget(null)}
+                className="px-3 py-2 text-sm font-medium rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleRemoveCategoryOption(removeCategoryTarget)}
+                disabled={savingCategories}
+                className="px-3 py-2 text-sm font-semibold rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {savingCategories ? "Removing..." : "Remove Category"}
+              </button>
             </div>
-          ))
-        )}
-      </div>
-
-      {filteredProducts.length === 0 && !loading && (
-        <div className="text-center py-12">
-          <div className="text-6xl mb-4">📦</div>
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No products found</h3>
-          <p className="text-gray-500 mb-4">
-            {filter || selectedCategoryFilters.length > 0
-              ? "No products match your current filters."
-              : "No products available. Add your first product to get started!"
-            }
-          </p>
-          <button
-            onClick={async () => {
-              // Log navigation from empty state
-              if (currentAdmin) {
-                await logActivity({
-                  admin_id: currentAdmin.id,
-                  admin_name: currentAdmin.username,
-                  action: 'view',
-                  entity_type: 'navigation',
-                  details: `Admin ${currentAdmin.username} navigated to Add Product from empty products state`,
-                  page: 'UpdateProducts',
-                  metadata: {
-                    context: 'empty_products_state',
-                    hasFilters: !!(filter || selectedCategoryFilters.length > 0),
-                    adminAccount: currentAdmin.username
-                  }
-                });
-              }
-              router.push("/dashboard/products");
-            }}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors"
-          >
-            Add New Product
-          </button>
+          </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
