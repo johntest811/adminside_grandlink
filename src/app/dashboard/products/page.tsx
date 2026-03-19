@@ -19,14 +19,12 @@ import {
   buildAdditionalFeaturesHtml,
   createFeatureOptionsByCategory,
   getCategoryFeatureOptions,
-  getPrimaryProductCategory,
-  getStoredProductCategoryOptions,
-  mergeProductCategoryOptions,
+  mergeCategoryOptions,
   mergeFeatureOptions,
+  normalizeCategoryLabel,
   PRODUCT_CATEGORY_OPTIONS,
   PRODUCT_FORM_TABS,
-  saveProductCategoryOptions,
-  serializeProductCategories,
+  stringifyCategorySelection,
   type ProductFormTabKey,
   stripRichText,
 } from "./productFormConfig";
@@ -97,10 +95,11 @@ export default function ProductsAdminPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [carouselIndex, setCarouselIndex] = useState(0);
+  const [categoryOptions, setCategoryOptions] = useState<string[]>(() => [...PRODUCT_CATEGORY_OPTIONS]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
-  const [activeFeatureCategory, setActiveFeatureCategory] = useState("");
-  const [categoryOptions, setCategoryOptions] = useState<string[]>(() => getStoredProductCategoryOptions());
+  const [featureCategory, setFeatureCategory] = useState("");
   const [newCategoryOption, setNewCategoryOption] = useState("");
+  const [savingCategories, setSavingCategories] = useState(false);
   const [height, setHeight] = useState("");
   const [width, setWidth] = useState("");
   const [thickness, setThickness] = useState("");
@@ -274,19 +273,32 @@ export default function ProductsAdminPage() {
   }, []);
 
   useEffect(() => {
-    setCategoryOptions(getStoredProductCategoryOptions());
+    const loadCategoryOptions = async () => {
+      try {
+        const res = await fetch("/api/product-categories", { cache: "no-store" });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(payload?.error || "Failed to load categories");
+        const nextOptions = mergeCategoryOptions(PRODUCT_CATEGORY_OPTIONS, payload?.categories || []);
+        setCategoryOptions(nextOptions.length ? nextOptions : [...PRODUCT_CATEGORY_OPTIONS]);
+      } catch (error) {
+        console.error("Failed to load product categories", error);
+        setCategoryOptions([...PRODUCT_CATEGORY_OPTIONS]);
+      }
+    };
+
+    void loadCategoryOptions();
   }, []);
 
   useEffect(() => {
     if (selectedCategories.length === 0) {
-      setActiveFeatureCategory("");
+      setFeatureCategory("");
       return;
     }
 
-    setActiveFeatureCategory((prev) =>
-      prev && selectedCategories.includes(prev) ? prev : selectedCategories[0]
-    );
-  }, [selectedCategories]);
+    if (!featureCategory || !selectedCategories.includes(featureCategory)) {
+      setFeatureCategory(selectedCategories[0]);
+    }
+  }, [featureCategory, selectedCategories]);
 
   const handleSingleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -549,9 +561,8 @@ export default function ProductsAdminPage() {
     }
   };
 
-  const primaryCategory = getPrimaryProductCategory(selectedCategories);
-  const selectedCategoryFeatures = activeFeatureCategory
-    ? featureOptionsByCategory[activeFeatureCategory] ?? getCategoryFeatureOptions(activeFeatureCategory)
+  const selectedCategoryFeatures = featureCategory
+    ? featureOptionsByCategory[featureCategory] ?? getCategoryFeatureOptions(featureCategory)
     : [];
   const activeTabIndex = PRODUCT_FORM_TABS.findIndex((tab) => tab.key === activeTab);
 
@@ -560,55 +571,96 @@ export default function ProductsAdminPage() {
     setAdditionalFeatures(buildAdditionalFeaturesHtml(nextSelected));
   };
 
-  const persistCategoryOptions = (nextOptions: string[]) => {
-    const merged = saveProductCategoryOptions(mergeProductCategoryOptions(PRODUCT_CATEGORY_OPTIONS, nextOptions));
-    setCategoryOptions(merged);
+  const persistCategoryOptions = async (nextOptions: string[]) => {
+    setSavingCategories(true);
+    try {
+      const res = await fetch("/api/product-categories", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categories: nextOptions }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload?.error || "Failed to save categories");
+
+      const merged = mergeCategoryOptions(PRODUCT_CATEGORY_OPTIONS, payload?.categories || nextOptions);
+      setCategoryOptions(merged);
+      return merged;
+    } finally {
+      setSavingCategories(false);
+    }
   };
 
-  const handleAddCategoryOption = () => {
-    const nextValue = newCategoryOption.trim();
-    if (!nextValue) return;
-    const merged = mergeProductCategoryOptions(categoryOptions, [nextValue]);
-    persistCategoryOptions(merged);
-    setNewCategoryOption("");
+  const applySelectedCategories = (categories: string[]) => {
+    const nextSelected = mergeCategoryOptions(categories);
+    setSelectedCategories(nextSelected);
+
+    if (nextSelected.length === 0) {
+      setFeatureCategory("");
+      syncAdditionalFeatures([]);
+      return;
+    }
+
+    const nextFeatureCategory =
+      featureCategory && nextSelected.includes(featureCategory) ? featureCategory : nextSelected[0];
+    setFeatureCategory(nextFeatureCategory);
+
+    const options = featureOptionsByCategory[nextFeatureCategory] ?? getCategoryFeatureOptions(nextFeatureCategory);
+    const filtered = selectedFeatureOptions.filter((item) => options.includes(item));
+    syncAdditionalFeatures(filtered);
   };
 
-  const handleDeleteCategoryOption = (categoryToDelete: string) => {
-    const nextOptions = categoryOptions.filter((item) => item !== categoryToDelete);
-    persistCategoryOptions(nextOptions);
-    setSelectedCategories((prev) => prev.filter((item) => item !== categoryToDelete));
-    setFeatureOptionsByCategory((prev) => {
-      const copy = { ...prev };
-      delete copy[categoryToDelete];
-      return copy;
-    });
+  const handleToggleProductCategory = (nextCategory: string) => {
+    const normalized = normalizeCategoryLabel(nextCategory);
+    if (!normalized) return;
+
+    const exists = selectedCategories.includes(normalized);
+    const nextSelected = exists
+      ? selectedCategories.filter((item) => item !== normalized)
+      : [...selectedCategories, normalized];
+
+    applySelectedCategories(nextSelected);
+    setNewFeatureOption("");
   };
 
-  const toggleSelectedCategory = (nextCategory: string) => {
-    setSelectedCategories((prev) => {
-      const exists = prev.includes(nextCategory);
-      const nextSelected = exists
-        ? prev.filter((item) => item !== nextCategory)
-        : [...prev, nextCategory];
+  const handleAddCategoryOption = async () => {
+    const nextCategory = normalizeCategoryLabel(newCategoryOption);
+    if (!nextCategory) return;
 
-      const nextFeatureCategory = nextSelected.includes(activeFeatureCategory)
-        ? activeFeatureCategory
-        : nextSelected[0] || "";
+    const nextOptions = mergeCategoryOptions(categoryOptions, [nextCategory]);
+    if (nextOptions.length === categoryOptions.length) {
+      setMessage(`Category "${nextCategory}" already exists.`);
+      setNewCategoryOption("");
+      return;
+    }
 
-      setActiveFeatureCategory(nextFeatureCategory);
-      setNewFeatureOption("");
+    try {
+      const saved = await persistCategoryOptions(nextOptions);
+      setMessage(`Category "${nextCategory}" added successfully.`);
+      setCategoryOptions(saved);
+      setNewCategoryOption("");
+      applySelectedCategories([...selectedCategories, nextCategory]);
+    } catch (error) {
+      console.error("Failed to add category", error);
+      setMessage(error instanceof Error ? `Error: ${error.message}` : "Error adding category");
+    }
+  };
 
-      if (!nextFeatureCategory) {
-        syncAdditionalFeatures([]);
-      } else {
-        const nextOptions =
-          featureOptionsByCategory[nextFeatureCategory] ?? getCategoryFeatureOptions(nextFeatureCategory);
-        const filteredSelected = selectedFeatureOptions.filter((item) => nextOptions.includes(item));
-        syncAdditionalFeatures(filteredSelected);
+  const handleRemoveCategoryOption = async (categoryToRemove: string) => {
+    const nextOptions = categoryOptions.filter((item) => item !== categoryToRemove);
+    if (nextOptions.length === categoryOptions.length) return;
+
+    try {
+      const saved = await persistCategoryOptions(nextOptions);
+      setCategoryOptions(saved);
+      setMessage(`Category "${categoryToRemove}" removed successfully.`);
+      applySelectedCategories(selectedCategories.filter((item) => item !== categoryToRemove));
+      if (featureCategory === categoryToRemove) {
+        setNewFeatureOption("");
       }
-
-      return nextSelected;
-    });
+    } catch (error) {
+      console.error("Failed to remove category", error);
+      setMessage(error instanceof Error ? `Error: ${error.message}` : "Error removing category");
+    }
   };
 
   const handleFeatureToggle = (feature: string) => {
@@ -621,12 +673,12 @@ export default function ProductsAdminPage() {
 
   const handleAddFeatureOption = () => {
     const nextFeature = newFeatureOption.trim();
-    if (!activeFeatureCategory || !nextFeature) return;
+    if (!featureCategory || !nextFeature) return;
 
     const nextOptions = mergeFeatureOptions(selectedCategoryFeatures, [nextFeature]);
     setFeatureOptionsByCategory((prev) => ({
       ...prev,
-      [activeFeatureCategory]: nextOptions,
+      [featureCategory]: nextOptions,
     }));
     setNewFeatureOption("");
 
@@ -636,10 +688,10 @@ export default function ProductsAdminPage() {
   };
 
   const handleRemoveFeatureOption = (feature: string) => {
-    if (!activeFeatureCategory) return;
+    if (!featureCategory) return;
     setFeatureOptionsByCategory((prev) => ({
       ...prev,
-      [activeFeatureCategory]: (prev[activeFeatureCategory] ?? []).filter((item) => item !== feature),
+      [featureCategory]: (prev[featureCategory] ?? []).filter((item) => item !== feature),
     }));
     syncAdditionalFeatures(selectedFeatureOptions.filter((item) => item !== feature));
   };
@@ -711,13 +763,12 @@ export default function ProductsAdminPage() {
       }
       
       try {
-        const serializedCategories = serializeProductCategories(selectedCategories);
         await logActivity({
           admin_id: currentAdmin.id,
           admin_name: currentAdmin.username,
           action: 'create',
           entity_type: 'product_form_submission',
-          details: `Initiated product creation for "${name}" in categories "${serializedCategories || "Uncategorized"}"`,
+          details: `Initiated product creation for "${name}" in categories "${selectedCategories.join(', ') || 'none'}"`,
           page: 'products',
           metadata: {
             productName: name,
@@ -771,7 +822,6 @@ export default function ProductsAdminPage() {
       console.log("📦 Creating product in database...");
 
       // Prepare the product data
-      const serializedCategories = serializeProductCategories(selectedCategories);
       const productData: any = {
         name: name.trim(),
         fullproductname: fullProductName.trim() || null,
@@ -779,7 +829,7 @@ export default function ProductsAdminPage() {
         description: description.trim() || null,
         price: Number(price) || 0,
         inventory: Number(inventory) || 0,
-        category: serializedCategories,
+        category: stringifyCategorySelection(selectedCategories),
         height: height ? Number(height) : null,
         width: width ? Number(width) : null,
         thickness: thickness ? Number(thickness) : null,
@@ -862,10 +912,11 @@ export default function ProductsAdminPage() {
       setWidth("");
       setThickness("");
       setSelectedCategories([]);
-      setActiveFeatureCategory("");
+      setFeatureCategory("");
       setSelectedFeatureOptions([]);
       setFeatureOptionsByCategory(createFeatureOptionsByCategory());
       setNewFeatureOption("");
+      setNewCategoryOption("");
       setActiveTab("identity");
       setFurthestTabIndex(0);
       setCarouselIndex(0);
@@ -969,7 +1020,7 @@ export default function ProductsAdminPage() {
                   initialIndex={currentFbxIndex}
                   weather={previewWeather}
                   frameFinish="matteBlack"
-                  productCategory={primaryCategory || null}
+                  productCategory={selectedCategories[0] || null}
                   skyboxes={effectivePreviewSkyboxes}
                   productDimensions={{
                     width: width || null,
@@ -1057,88 +1108,80 @@ export default function ProductsAdminPage() {
               <div className="mb-6">
                 <h2 className="text-2xl font-bold text-[#233a5e]">Product Category and Additional Features</h2>
                 <p className="mt-2 text-sm text-gray-600">
-                  Select one or more categories, manage category options, then choose the feature bullets shown on the website.
+                  Add or remove category options, assign multiple categories to this product, then configure feature bullets.
                 </p>
               </div>
 
               <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
                 <div className="rounded-xl border border-gray-200 bg-[#f8fafc] p-5">
-                  <label className="mb-2 block font-semibold text-[#233a5e]">Product Categories <span className="text-red-500">*</span></label>
-
-                  <div className="mb-4 flex flex-col gap-3 sm:flex-row">
-                    <input
-                      type="text"
-                      value={newCategoryOption}
-                      onChange={(e) => setNewCategoryOption(e.target.value)}
-                      placeholder="Add a new category"
-                      className="flex-1 rounded-lg border border-gray-300 bg-white p-3 text-sm text-black outline-none transition focus:border-[#233a5e] focus:ring-2 focus:ring-[#233a5e]/20"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddCategoryOption}
-                      disabled={!newCategoryOption.trim()}
-                      className="rounded-lg bg-[#233a5e] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#1b2d49] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Add Category
-                    </button>
-                  </div>
-
-                  <div className="max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2">
-                    <div className="grid gap-2">
-                      {categoryOptions.map((option) => {
-                        const isSelected = selectedCategories.includes(option);
-                        return (
-                          <div key={option} className="flex items-center justify-between rounded-lg border border-gray-100 px-3 py-2">
-                            <label className="flex items-center gap-2 text-sm text-gray-700">
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => toggleSelectedCategory(option)}
-                                className="h-4 w-4 rounded border-gray-300 text-[#233a5e] focus:ring-[#233a5e]"
-                              />
-                              <span>{option}</span>
-                            </label>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteCategoryOption(option)}
-                              className="rounded px-2 py-1 text-[11px] font-semibold text-red-600 transition hover:bg-red-50"
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        );
-                      })}
+                  <div className="mb-4">
+                    <label className="mb-2 block font-semibold text-[#233a5e]">Manage Category Options</label>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <input
+                        type="text"
+                        value={newCategoryOption}
+                        onChange={(e) => setNewCategoryOption(e.target.value)}
+                        placeholder="Add new category"
+                        className="flex-1 rounded-lg border border-gray-300 bg-white p-3 text-sm text-black outline-none transition focus:border-[#233a5e] focus:ring-2 focus:ring-[#233a5e]/20"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddCategoryOption}
+                        disabled={!newCategoryOption.trim() || savingCategories}
+                        className="rounded-lg bg-[#233a5e] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#1b2d49] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {savingCategories ? "Saving..." : "Add"}
+                      </button>
                     </div>
                   </div>
 
-                  <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
-                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Selected Categories</div>
-                    {selectedCategories.length > 0 ? (
-                      <div className="flex flex-wrap gap-2">
-                        {selectedCategories.map((option) => (
-                          <span key={option} className="inline-flex items-center gap-2 rounded-full border border-[#233a5e]/20 bg-[#233a5e]/5 px-3 py-1 text-xs font-semibold text-[#233a5e]">
-                            {option}
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-gray-500">Select at least one category.</p>
-                    )}
+                  <label className="mb-2 block font-semibold text-[#233a5e]">Assign Categories To This Product <span className="text-red-500">*</span></label>
+                  <div className="max-h-72 space-y-2 overflow-auto rounded-lg border border-gray-200 bg-white p-3">
+                    {categoryOptions.map((option) => {
+                      const checked = selectedCategories.includes(option);
+                      return (
+                        <div key={option} className="flex items-center justify-between gap-3 rounded border border-gray-100 px-3 py-2">
+                          <label className="flex items-center gap-2 text-sm text-gray-700">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => handleToggleProductCategory(option)}
+                              className="h-4 w-4 rounded border-gray-300 text-[#233a5e] focus:ring-[#233a5e]"
+                            />
+                            <span>{option}</span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveCategoryOption(option)}
+                            className="rounded px-2 py-1 text-[11px] font-semibold text-red-600 transition hover:bg-red-50"
+                            title="Delete category option"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
 
-                    {selectedCategories.length > 1 && (
-                      <div className="mt-3">
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Feature Category</label>
-                        <select
-                          value={activeFeatureCategory}
-                          onChange={(e) => setActiveFeatureCategory(e.target.value)}
-                          className="w-full rounded-lg border border-gray-300 bg-white p-2 text-sm text-black outline-none transition focus:border-[#233a5e] focus:ring-2 focus:ring-[#233a5e]/20"
-                        >
-                          {selectedCategories.map((option) => (
-                            <option key={option} value={option}>{option}</option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
+                  <div className="mt-4">
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Selected Categories</div>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedCategories.length > 0 ? (
+                        selectedCategories.map((option) => (
+                          <button
+                            key={option}
+                            type="button"
+                            onClick={() => handleToggleProductCategory(option)}
+                            className="rounded-full bg-[#233a5e] px-3 py-1 text-xs font-semibold text-white"
+                            title="Click to remove"
+                          >
+                            {option} ×
+                          </button>
+                        ))
+                      ) : (
+                        <span className="text-sm text-gray-500">No categories selected yet.</span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -1153,26 +1196,47 @@ export default function ProductsAdminPage() {
                     </div>
                   </div>
 
+                  <div className="mt-4">
+                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Feature Category Scope</label>
+                    <select
+                      value={featureCategory}
+                      onChange={(e) => {
+                        const nextCategory = e.target.value;
+                        setFeatureCategory(nextCategory);
+                        const nextOptions = featureOptionsByCategory[nextCategory] ?? getCategoryFeatureOptions(nextCategory);
+                        const filtered = selectedFeatureOptions.filter((item) => nextOptions.includes(item));
+                        syncAdditionalFeatures(filtered);
+                      }}
+                      className="w-full rounded-lg border border-gray-300 bg-white p-3 text-sm text-black outline-none transition focus:border-[#233a5e] focus:ring-2 focus:ring-[#233a5e]/20 disabled:bg-gray-100"
+                      disabled={selectedCategories.length === 0}
+                    >
+                      <option value="">Select category</option>
+                      {selectedCategories.map((option) => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div className="mt-4 flex flex-col gap-3 sm:flex-row">
                     <input
                       type="text"
                       value={newFeatureOption}
                       onChange={(e) => setNewFeatureOption(e.target.value)}
-                      placeholder={activeFeatureCategory ? `Create a new feature checkbox for ${activeFeatureCategory}` : "Select at least one category first"}
-                      disabled={!activeFeatureCategory}
+                      placeholder={featureCategory ? "Create a new feature checkbox for this category" : "Select a category first"}
+                      disabled={!featureCategory}
                       className="flex-1 rounded-lg border border-gray-300 bg-white p-3 text-sm text-black outline-none transition focus:border-[#233a5e] focus:ring-2 focus:ring-[#233a5e]/20 disabled:bg-gray-100 disabled:text-gray-400"
                     />
                     <button
                       type="button"
                       onClick={handleAddFeatureOption}
-                      disabled={!activeFeatureCategory || !newFeatureOption.trim()}
+                      disabled={!featureCategory || !newFeatureOption.trim()}
                       className="rounded-lg bg-[#233a5e] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#1b2d49] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Add Feature
                     </button>
                   </div>
 
-                  {activeFeatureCategory ? (
+                  {featureCategory ? (
                     <div className="mt-4 grid gap-3 sm:grid-cols-2">
                       {selectedCategoryFeatures.map((feature) => {
                         const checked = selectedFeatureOptions.includes(feature);
@@ -1207,7 +1271,7 @@ export default function ProductsAdminPage() {
                     </div>
                   ) : (
                     <div className="mt-4 rounded-lg border border-dashed border-gray-300 bg-white px-4 py-6 text-sm text-gray-500">
-                      Select at least one category first to load matching feature checkboxes.
+                      Select a category first to load the matching feature checkboxes.
                     </div>
                   )}
 
