@@ -20,10 +20,16 @@ import {
   buildAdditionalFeaturesHtml,
   createFeatureOptionsByCategory,
   getCategoryFeatureOptions,
+  getPrimaryProductCategory,
+  getStoredProductCategoryOptions,
+  mergeProductCategoryOptions,
   mergeFeatureOptions,
+  parseProductCategories,
   parseFeatureItems,
   PRODUCT_CATEGORY_OPTIONS,
   PRODUCT_FORM_TABS,
+  saveProductCategoryOptions,
+  serializeProductCategories,
   type ProductFormTabKey,
   stripRichText,
 } from "../../products/productFormConfig";
@@ -103,6 +109,9 @@ export default function EditProductPage() {
   const [selectedFeatureOptions, setSelectedFeatureOptions] = useState<string[]>([]);
   const [featureOptionsByCategory, setFeatureOptionsByCategory] = useState<Record<string, string[]>>(() => createFeatureOptionsByCategory());
   const [newFeatureOption, setNewFeatureOption] = useState("");
+  const [activeFeatureCategory, setActiveFeatureCategory] = useState("");
+  const [categoryOptions, setCategoryOptions] = useState<string[]>(() => getStoredProductCategoryOptions());
+  const [newCategoryOption, setNewCategoryOption] = useState("");
 
   useEffect(() => {
     if (!message) return;
@@ -117,6 +126,10 @@ export default function EditProductPage() {
     }
     setToast({ open: true, type: "info", title: "Notice", message });
   }, [message]);
+
+  useEffect(() => {
+    setCategoryOptions(getStoredProductCategoryOptions());
+  }, []);
 
   // Persist images (already exists)
   const persistImages = async (imgs: string[]) => {
@@ -296,13 +309,30 @@ export default function EditProductPage() {
     if (!originalProduct) return;
     const existingFeatures = parseFeatureItems(originalProduct.additionalfeatures || "");
     const nextMap = createFeatureOptionsByCategory();
-    if (originalProduct.category) {
-      nextMap[originalProduct.category] = mergeFeatureOptions(nextMap[originalProduct.category], existingFeatures);
+    const parsedCategories = parseProductCategories(originalProduct.category || "");
+    const primaryCategory = parsedCategories[0];
+    if (primaryCategory) {
+      nextMap[primaryCategory] = mergeFeatureOptions(nextMap[primaryCategory], existingFeatures);
+      setActiveFeatureCategory(primaryCategory);
+    } else {
+      setActiveFeatureCategory("");
     }
     setFeatureOptionsByCategory(nextMap);
     setSelectedFeatureOptions(existingFeatures);
     setNewFeatureOption("");
   }, [originalProduct]);
+
+  useEffect(() => {
+    const parsedCategories = parseProductCategories(product?.category || "");
+    if (parsedCategories.length === 0) {
+      setActiveFeatureCategory("");
+      return;
+    }
+
+    setActiveFeatureCategory((prev) =>
+      prev && parsedCategories.includes(prev) ? prev : parsedCategories[0]
+    );
+  }, [product?.category]);
 
   // Enhanced change handler with logging
   const handleChange = async (field: keyof Product, value: any) => {
@@ -337,8 +367,11 @@ export default function EditProductPage() {
     }
   };
 
-  const selectedCategoryFeatures = product?.category
-    ? featureOptionsByCategory[product.category] ?? getCategoryFeatureOptions(product.category)
+  const selectedCategories = parseProductCategories(product?.category || "");
+  const primaryCategory = getPrimaryProductCategory(selectedCategories);
+
+  const selectedCategoryFeatures = activeFeatureCategory
+    ? featureOptionsByCategory[activeFeatureCategory] ?? getCategoryFeatureOptions(activeFeatureCategory)
     : [];
 
   const syncAdditionalFeatures = (nextSelected: string[]) => {
@@ -347,10 +380,73 @@ export default function EditProductPage() {
     setProduct((prev) => (prev ? { ...prev, additionalfeatures: nextHtml } : prev));
   };
 
+  const persistCategoryOptions = (nextOptions: string[]) => {
+    const merged = saveProductCategoryOptions(mergeProductCategoryOptions(PRODUCT_CATEGORY_OPTIONS, nextOptions));
+    setCategoryOptions(merged);
+  };
+
+  const handleAddCategoryOption = () => {
+    const nextValue = newCategoryOption.trim();
+    if (!nextValue) return;
+    const merged = mergeProductCategoryOptions(categoryOptions, [nextValue]);
+    persistCategoryOptions(merged);
+    setNewCategoryOption("");
+  };
+
+  const handleDeleteCategoryOption = async (categoryToDelete: string) => {
+    if (!product) return;
+
+    const nextOptions = categoryOptions.filter((item) => item !== categoryToDelete);
+    persistCategoryOptions(nextOptions);
+
+    const currentSelected = parseProductCategories(product.category || "");
+    const nextSelected = currentSelected.filter((item) => item !== categoryToDelete);
+    await handleChange("category", serializeProductCategories(nextSelected));
+
+    setFeatureOptionsByCategory((prev) => {
+      const copy = { ...prev };
+      delete copy[categoryToDelete];
+      return copy;
+    });
+
+    const nextFeatureCategory = nextSelected.includes(activeFeatureCategory)
+      ? activeFeatureCategory
+      : nextSelected[0] || "";
+    setActiveFeatureCategory(nextFeatureCategory);
+    if (!nextFeatureCategory) {
+      syncAdditionalFeatures([]);
+    }
+  };
+
   const handleCategorySelection = async (nextCategory: string) => {
     if (!product) return;
-    await handleChange("category", nextCategory);
+
+    const currentSelected = parseProductCategories(product.category || "");
+    const exists = currentSelected.includes(nextCategory);
+    const nextSelected = exists
+      ? currentSelected.filter((item) => item !== nextCategory)
+      : [...currentSelected, nextCategory];
+
+    await handleChange("category", serializeProductCategories(nextSelected));
     setNewFeatureOption("");
+
+    const nextFeatureCategory = nextSelected.includes(activeFeatureCategory)
+      ? activeFeatureCategory
+      : nextSelected[0] || "";
+    setActiveFeatureCategory(nextFeatureCategory);
+
+    if (!nextFeatureCategory) {
+      syncAdditionalFeatures([]);
+      return;
+    }
+
+    const nextOptions = featureOptionsByCategory[nextFeatureCategory] ?? getCategoryFeatureOptions(nextFeatureCategory);
+    const filteredSelected = selectedFeatureOptions.filter((item) => nextOptions.includes(item));
+    syncAdditionalFeatures(filteredSelected);
+  };
+
+  const handleFeatureCategoryChange = (nextCategory: string) => {
+    setActiveFeatureCategory(nextCategory);
     const nextOptions = featureOptionsByCategory[nextCategory] ?? getCategoryFeatureOptions(nextCategory);
     const filteredSelected = selectedFeatureOptions.filter((item) => nextOptions.includes(item));
     syncAdditionalFeatures(filteredSelected);
@@ -365,14 +461,14 @@ export default function EditProductPage() {
   };
 
   const handleAddFeatureOption = () => {
-    if (!product?.category) return;
+    if (!activeFeatureCategory) return;
     const nextFeature = newFeatureOption.trim();
     if (!nextFeature) return;
 
     const nextOptions = mergeFeatureOptions(selectedCategoryFeatures, [nextFeature]);
     setFeatureOptionsByCategory((prev) => ({
       ...prev,
-      [product.category!]: nextOptions,
+      [activeFeatureCategory]: nextOptions,
     }));
     setNewFeatureOption("");
 
@@ -382,10 +478,10 @@ export default function EditProductPage() {
   };
 
   const handleRemoveFeatureOption = (feature: string) => {
-    if (!product?.category) return;
+    if (!activeFeatureCategory) return;
     setFeatureOptionsByCategory((prev) => ({
       ...prev,
-      [product.category!]: (prev[product.category!] ?? []).filter((item) => item !== feature),
+      [activeFeatureCategory]: (prev[activeFeatureCategory] ?? []).filter((item) => item !== feature),
     }));
     syncAdditionalFeatures(selectedFeatureOptions.filter((item) => item !== feature));
   };
@@ -401,8 +497,8 @@ export default function EditProductPage() {
     if (!stripRichText(product.description || "").trim()) {
       return { tab: "identity", message: "Product description is required before saving the product." };
     }
-    if (!String(product.category || "").trim()) {
-      return { tab: "classification", message: "Product category is required before saving the product." };
+    if (selectedCategories.length === 0) {
+      return { tab: "classification", message: "At least one product category is required before saving the product." };
     }
     if (product.price === undefined || product.price === null || Number.isNaN(Number(product.price))) {
       return { tab: "details", message: "Price (PHP) is required before saving the product." };
@@ -1119,7 +1215,7 @@ export default function EditProductPage() {
                 initialIndex={currentFbxIndex}
                 weather={previewWeather}
                 frameFinish={materialToFrameFinish(product.material)}
-                productCategory={product?.category ?? product?.type ?? null}
+                productCategory={primaryCategory ?? product?.type ?? null}
                 skyboxes={effectiveCurrentSkyboxes}
                 productDimensions={{
                   width: product.width ?? null,
@@ -1200,17 +1296,83 @@ export default function EditProductPage() {
 
             <div className="grid gap-6 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.2fr)]">
               <div className="rounded-xl border border-gray-200 bg-white p-5">
-                <label className="mb-2 block font-medium text-black">Product Category *</label>
-                <select
-                  value={product.category ?? ""}
-                  onChange={(e) => handleCategorySelection(e.target.value)}
-                  className="w-full rounded border px-3 py-2 text-black bg-white focus:ring-2 focus:ring-indigo-500"
-                >
-                  <option value="">Select Category</option>
-                  {PRODUCT_CATEGORY_OPTIONS.map((option) => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
+                <label className="mb-2 block font-medium text-black">Product Categories *</label>
+
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row">
+                  <input
+                    type="text"
+                    value={newCategoryOption}
+                    onChange={(e) => setNewCategoryOption(e.target.value)}
+                    placeholder="Add a new category"
+                    className="flex-1 rounded border px-3 py-2 text-sm text-black bg-white focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddCategoryOption}
+                    disabled={!newCategoryOption.trim()}
+                    className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Add Category
+                  </button>
+                </div>
+
+                <div className="max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-2">
+                  <div className="grid gap-2">
+                    {categoryOptions.map((option) => {
+                      const isSelected = selectedCategories.includes(option);
+                      return (
+                        <div key={option} className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2">
+                          <label className="flex items-center gap-2 text-sm text-gray-700">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => void handleCategorySelection(option)}
+                              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <span>{option}</span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteCategoryOption(option)}
+                            className="rounded px-2 py-1 text-[11px] font-semibold text-red-600 transition hover:bg-red-50"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Selected Categories</div>
+                  {selectedCategories.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {selectedCategories.map((option) => (
+                        <span key={option} className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
+                          {option}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500">Select at least one category.</p>
+                  )}
+
+                  {selectedCategories.length > 1 && (
+                    <div className="mt-3">
+                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Feature Category</label>
+                      <select
+                        value={activeFeatureCategory}
+                        onChange={(e) => handleFeatureCategoryChange(e.target.value)}
+                        className="w-full rounded border px-3 py-2 text-sm text-black bg-white focus:ring-2 focus:ring-indigo-500"
+                      >
+                        {selectedCategories.map((option) => (
+                          <option key={option} value={option}>{option}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="rounded-xl border border-gray-200 bg-white p-5">
@@ -1229,21 +1391,21 @@ export default function EditProductPage() {
                     type="text"
                     value={newFeatureOption}
                     onChange={(e) => setNewFeatureOption(e.target.value)}
-                    placeholder={product.category ? "Create a new feature checkbox for this category" : "Select a category first"}
-                    disabled={!product.category}
+                    placeholder={activeFeatureCategory ? `Create a new feature checkbox for ${activeFeatureCategory}` : "Select at least one category first"}
+                    disabled={!activeFeatureCategory}
                     className="flex-1 rounded border px-3 py-2 text-sm text-black bg-white focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
                   />
                   <button
                     type="button"
                     onClick={handleAddFeatureOption}
-                    disabled={!product.category || !newFeatureOption.trim()}
+                    disabled={!activeFeatureCategory || !newFeatureOption.trim()}
                     className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Add Feature
                   </button>
                 </div>
 
-                {product.category ? (
+                {activeFeatureCategory ? (
                   <div className="mt-4 grid gap-3 sm:grid-cols-2">
                     {selectedCategoryFeatures.map((feature) => {
                       const checked = selectedFeatureOptions.includes(feature);
@@ -1278,7 +1440,7 @@ export default function EditProductPage() {
                   </div>
                 ) : (
                   <div className="mt-4 rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-sm text-gray-500">
-                    Select a category first to load the matching feature checkboxes.
+                    Select at least one category first to load matching feature checkboxes.
                   </div>
                 )}
 

@@ -229,3 +229,85 @@ export function getFeatureSelectionFromValue(category: string | null | undefined
     custom: custom.join("\n"),
   };
 }
+
+const PRODUCT_CATEGORY_STORAGE_KEY = "gl_admin_product_categories_v1";
+
+function normalizeCategoryLabel(value: string): string {
+  const plain = stripRichText(value).replace(/\s+/g, " ").trim();
+  if (!plain) return "";
+  return plain
+    .split(" ")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function categoryKey(value: string): string {
+  return normalizeFeatureKey(value);
+}
+
+export function parseProductCategories(input: unknown): string[] {
+  const values = Array.isArray(input) ? input : [input];
+  const seen = new Set<string>();
+  const parsed: string[] = [];
+
+  values
+    .flatMap((value) => String(value ?? "").split(/[\,\|\/]+/))
+    .map((value) => normalizeCategoryLabel(value))
+    .filter(Boolean)
+    .forEach((value) => {
+      const key = categoryKey(value);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      parsed.push(value);
+    });
+
+  return parsed;
+}
+
+export function serializeProductCategories(categories: string[]): string {
+  return parseProductCategories(categories).join(" | ");
+}
+
+export function getPrimaryProductCategory(categories: string[]): string {
+  return parseProductCategories(categories)[0] || "";
+}
+
+export function productHasCategory(productCategoryValue: unknown, category: string): boolean {
+  const targetKey = categoryKey(category);
+  if (!targetKey) return false;
+  return parseProductCategories(productCategoryValue).some((item) => categoryKey(item) === targetKey);
+}
+
+export function sortProductCategories(categories: string[]): string[] {
+  return [...parseProductCategories(categories)].sort((left, right) => left.localeCompare(right));
+}
+
+export function mergeProductCategoryOptions(...groups: unknown[]): string[] {
+  return sortProductCategories(groups.flatMap((group) => parseProductCategories(group)));
+}
+
+export function getStoredProductCategoryOptions(): string[] {
+  if (typeof window === "undefined") {
+    return sortProductCategories([...PRODUCT_CATEGORY_OPTIONS]);
+  }
+
+  try {
+    const raw = window.localStorage.getItem(PRODUCT_CATEGORY_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return mergeProductCategoryOptions(PRODUCT_CATEGORY_OPTIONS, parsed);
+  } catch {
+    return sortProductCategories([...PRODUCT_CATEGORY_OPTIONS]);
+  }
+}
+
+export function saveProductCategoryOptions(categories: string[]): string[] {
+  const normalized = sortProductCategories(categories);
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(PRODUCT_CATEGORY_STORAGE_KEY, JSON.stringify(normalized));
+    } catch {
+      // Ignore localStorage failures and keep in-memory state.
+    }
+  }
+  return normalized;
+}

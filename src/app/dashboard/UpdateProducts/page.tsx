@@ -5,6 +5,14 @@ import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 import { logActivity } from "@/app/lib/activity";
 import { notifyProductDeleted } from "@/app/lib/notifications";
 import ToastPopup, { type ToastPopupState } from "@/components/ToastPopup";
+import {
+  getStoredProductCategoryOptions,
+  isProductInCategory,
+  mergeProductCategoryOptions,
+  parseProductCategories,
+  PRODUCT_CATEGORY_OPTIONS,
+  saveProductCategoryOptions,
+} from "../products/productFormConfig";
 
 type Product = {
   id: string;
@@ -24,6 +32,8 @@ export default function UpdateProductsPage() {
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
+  const [categoryOptions, setCategoryOptions] = useState<string[]>(() => getStoredProductCategoryOptions());
+  const [newCategoryOption, setNewCategoryOption] = useState("");
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
   const [toast, setToast] = useState<ToastPopupState>({ open: false, type: "info", title: "", message: "" });
 
@@ -78,6 +88,10 @@ export default function UpdateProductsPage() {
         console.error("Error parsing success message:", error);
       }
     }
+  }, []);
+
+  useEffect(() => {
+    setCategoryOptions(getStoredProductCategoryOptions());
   }, []);
 
   // Fetch products with enhanced logging
@@ -342,7 +356,7 @@ export default function UpdateProductsPage() {
     
     if (currentAdmin) {
       const filteredCount = products.filter(product => 
-        !newCategory || product.category === newCategory
+        !newCategory || isProductInCategory(product.category, newCategory)
       ).length;
       
       await logActivity({
@@ -364,31 +378,71 @@ export default function UpdateProductsPage() {
     }
   };
 
+  const persistCategoryOptions = (nextOptions: string[]) => {
+    const merged = saveProductCategoryOptions(mergeProductCategoryOptions(PRODUCT_CATEGORY_OPTIONS, nextOptions));
+    setCategoryOptions(merged);
+  };
+
+  const handleAddCategoryOption = async () => {
+    const nextValue = newCategoryOption.trim();
+    if (!nextValue) return;
+
+    const merged = mergeProductCategoryOptions(categoryOptions, [nextValue]);
+    persistCategoryOptions(merged);
+    setNewCategoryOption("");
+
+    if (currentAdmin) {
+      await logActivity({
+        admin_id: currentAdmin.id,
+        admin_name: currentAdmin.username,
+        action: "update",
+        entity_type: "category_catalog",
+        details: `Admin ${currentAdmin.username} added product category "${nextValue}" from Update Products`,
+        page: "UpdateProducts",
+        metadata: {
+          category: nextValue,
+          adminAccount: currentAdmin.username,
+          adminId: currentAdmin.id,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  };
+
+  const handleDeleteCategoryOption = async (categoryToDelete: string) => {
+    const nextOptions = categoryOptions.filter((item) => item !== categoryToDelete);
+    persistCategoryOptions(nextOptions);
+    if (categoryFilter === categoryToDelete) {
+      setCategoryFilter("");
+    }
+
+    if (currentAdmin) {
+      await logActivity({
+        admin_id: currentAdmin.id,
+        admin_name: currentAdmin.username,
+        action: "update",
+        entity_type: "category_catalog",
+        details: `Admin ${currentAdmin.username} deleted product category "${categoryToDelete}" from Update Products`,
+        page: "UpdateProducts",
+        metadata: {
+          category: categoryToDelete,
+          adminAccount: currentAdmin.username,
+          adminId: currentAdmin.id,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  };
+
   // Filter products
   const filteredProducts = products.filter(product => {
-    const normalize = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    const keyFor = (s: string | null | undefined) => {
-      const k = normalize(s);
-      if (k.includes("curtain") && k.includes("wall")) return "curtainwall";
-      if (k.includes("enclosure")) return "enclosure";
-      return k;
-    };
-
     const matchesName = (product.name || "").toLowerCase().includes((filter || "").toLowerCase());
-    const matchesCategory = !categoryFilter || keyFor(product.category) === keyFor(categoryFilter);
+    const matchesCategory = !categoryFilter || isProductInCategory(product.category, categoryFilter);
     return matchesName && matchesCategory;
   });
 
-  // Build categories list and ensure "Curtain Walls" option is available
-  const existingCategories = (products.map(p => p.category).filter(Boolean) as string[]);
-  const hasCurtainWalls = existingCategories.some(c => {
-    const k = (c || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    return k.includes("curtain") && k.includes("wall");
-  });
-  const categories = Array.from(new Set([...
-    existingCategories,
-    ...(hasCurtainWalls ? [] as string[] : ["Curtain Walls"]) 
-  ]));
+  const existingCategories = products.flatMap((product) => parseProductCategories(product.category || ""));
+  const categories = mergeProductCategoryOptions(categoryOptions, existingCategories);
 
   return (
     <div className="space-y-6">
@@ -448,6 +502,43 @@ export default function UpdateProductsPage() {
                 </option>
               ))}
             </select>
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Manage Category Options</div>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <input
+              type="text"
+              value={newCategoryOption}
+              onChange={(e) => setNewCategoryOption(e.target.value)}
+              placeholder="Add a new category option"
+              className="flex-1 rounded border border-gray-300 px-3 py-2 text-sm text-black bg-white focus:ring-2 focus:ring-indigo-500"
+            />
+            <button
+              type="button"
+              onClick={() => void handleAddCategoryOption()}
+              disabled={!newCategoryOption.trim()}
+              className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Add Category
+            </button>
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {categories.map((category) => (
+              <span key={category} className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700">
+                {category}
+                <button
+                  type="button"
+                  onClick={() => void handleDeleteCategoryOption(category)}
+                  className="rounded px-1 text-[11px] font-semibold text-red-600 transition hover:bg-red-50"
+                  aria-label={`Delete ${category}`}
+                >
+                  x
+                </button>
+              </span>
+            ))}
           </div>
         </div>
         
@@ -514,7 +605,7 @@ export default function UpdateProductsPage() {
                     {product.name}
                   </h3>
                   <div className="flex justify-between text-sm text-gray-600 mt-1">
-                    <span>{product.category}</span>
+                    <span>{parseProductCategories(product.category).join(", ") || product.category}</span>
                     <span>{product.type}</span>
                   </div>
                 </div>

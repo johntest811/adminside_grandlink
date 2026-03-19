@@ -19,9 +19,14 @@ import {
   buildAdditionalFeaturesHtml,
   createFeatureOptionsByCategory,
   getCategoryFeatureOptions,
+  getPrimaryProductCategory,
+  getStoredProductCategoryOptions,
+  mergeProductCategoryOptions,
   mergeFeatureOptions,
   PRODUCT_CATEGORY_OPTIONS,
   PRODUCT_FORM_TABS,
+  saveProductCategoryOptions,
+  serializeProductCategories,
   type ProductFormTabKey,
   stripRichText,
 } from "./productFormConfig";
@@ -92,7 +97,10 @@ export default function ProductsAdminPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [carouselIndex, setCarouselIndex] = useState(0);
-  const [category, setCategory] = useState("");
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [activeFeatureCategory, setActiveFeatureCategory] = useState("");
+  const [categoryOptions, setCategoryOptions] = useState<string[]>(() => getStoredProductCategoryOptions());
+  const [newCategoryOption, setNewCategoryOption] = useState("");
   const [height, setHeight] = useState("");
   const [width, setWidth] = useState("");
   const [thickness, setThickness] = useState("");
@@ -264,6 +272,21 @@ export default function ProductsAdminPage() {
 
     void loadGlobalSkyboxDefaults();
   }, []);
+
+  useEffect(() => {
+    setCategoryOptions(getStoredProductCategoryOptions());
+  }, []);
+
+  useEffect(() => {
+    if (selectedCategories.length === 0) {
+      setActiveFeatureCategory("");
+      return;
+    }
+
+    setActiveFeatureCategory((prev) =>
+      prev && selectedCategories.includes(prev) ? prev : selectedCategories[0]
+    );
+  }, [selectedCategories]);
 
   const handleSingleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -526,8 +549,9 @@ export default function ProductsAdminPage() {
     }
   };
 
-  const selectedCategoryFeatures = category
-    ? featureOptionsByCategory[category] ?? getCategoryFeatureOptions(category)
+  const primaryCategory = getPrimaryProductCategory(selectedCategories);
+  const selectedCategoryFeatures = activeFeatureCategory
+    ? featureOptionsByCategory[activeFeatureCategory] ?? getCategoryFeatureOptions(activeFeatureCategory)
     : [];
   const activeTabIndex = PRODUCT_FORM_TABS.findIndex((tab) => tab.key === activeTab);
 
@@ -536,12 +560,55 @@ export default function ProductsAdminPage() {
     setAdditionalFeatures(buildAdditionalFeaturesHtml(nextSelected));
   };
 
-  const handleCategoryChange = (nextCategory: string) => {
-    setCategory(nextCategory);
-    setNewFeatureOption("");
-    const nextOptions = featureOptionsByCategory[nextCategory] ?? getCategoryFeatureOptions(nextCategory);
-    const filteredSelected = selectedFeatureOptions.filter((item) => nextOptions.includes(item));
-    syncAdditionalFeatures(filteredSelected);
+  const persistCategoryOptions = (nextOptions: string[]) => {
+    const merged = saveProductCategoryOptions(mergeProductCategoryOptions(PRODUCT_CATEGORY_OPTIONS, nextOptions));
+    setCategoryOptions(merged);
+  };
+
+  const handleAddCategoryOption = () => {
+    const nextValue = newCategoryOption.trim();
+    if (!nextValue) return;
+    const merged = mergeProductCategoryOptions(categoryOptions, [nextValue]);
+    persistCategoryOptions(merged);
+    setNewCategoryOption("");
+  };
+
+  const handleDeleteCategoryOption = (categoryToDelete: string) => {
+    const nextOptions = categoryOptions.filter((item) => item !== categoryToDelete);
+    persistCategoryOptions(nextOptions);
+    setSelectedCategories((prev) => prev.filter((item) => item !== categoryToDelete));
+    setFeatureOptionsByCategory((prev) => {
+      const copy = { ...prev };
+      delete copy[categoryToDelete];
+      return copy;
+    });
+  };
+
+  const toggleSelectedCategory = (nextCategory: string) => {
+    setSelectedCategories((prev) => {
+      const exists = prev.includes(nextCategory);
+      const nextSelected = exists
+        ? prev.filter((item) => item !== nextCategory)
+        : [...prev, nextCategory];
+
+      const nextFeatureCategory = nextSelected.includes(activeFeatureCategory)
+        ? activeFeatureCategory
+        : nextSelected[0] || "";
+
+      setActiveFeatureCategory(nextFeatureCategory);
+      setNewFeatureOption("");
+
+      if (!nextFeatureCategory) {
+        syncAdditionalFeatures([]);
+      } else {
+        const nextOptions =
+          featureOptionsByCategory[nextFeatureCategory] ?? getCategoryFeatureOptions(nextFeatureCategory);
+        const filteredSelected = selectedFeatureOptions.filter((item) => nextOptions.includes(item));
+        syncAdditionalFeatures(filteredSelected);
+      }
+
+      return nextSelected;
+    });
   };
 
   const handleFeatureToggle = (feature: string) => {
@@ -554,12 +621,12 @@ export default function ProductsAdminPage() {
 
   const handleAddFeatureOption = () => {
     const nextFeature = newFeatureOption.trim();
-    if (!category || !nextFeature) return;
+    if (!activeFeatureCategory || !nextFeature) return;
 
     const nextOptions = mergeFeatureOptions(selectedCategoryFeatures, [nextFeature]);
     setFeatureOptionsByCategory((prev) => ({
       ...prev,
-      [category]: nextOptions,
+      [activeFeatureCategory]: nextOptions,
     }));
     setNewFeatureOption("");
 
@@ -569,10 +636,10 @@ export default function ProductsAdminPage() {
   };
 
   const handleRemoveFeatureOption = (feature: string) => {
-    if (!category) return;
+    if (!activeFeatureCategory) return;
     setFeatureOptionsByCategory((prev) => ({
       ...prev,
-      [category]: (prev[category] ?? []).filter((item) => item !== feature),
+      [activeFeatureCategory]: (prev[activeFeatureCategory] ?? []).filter((item) => item !== feature),
     }));
     syncAdditionalFeatures(selectedFeatureOptions.filter((item) => item !== feature));
   };
@@ -585,7 +652,7 @@ export default function ProductsAdminPage() {
     }
 
     if (tab === "classification") {
-      if (!category.trim()) return "Product category is required before moving to the next tab.";
+      if (selectedCategories.length === 0) return "At least one product category is required before moving to the next tab.";
     }
 
     if (tab === "details") {
@@ -644,16 +711,17 @@ export default function ProductsAdminPage() {
       }
       
       try {
+        const serializedCategories = serializeProductCategories(selectedCategories);
         await logActivity({
           admin_id: currentAdmin.id,
           admin_name: currentAdmin.username,
           action: 'create',
           entity_type: 'product_form_submission',
-          details: `Initiated product creation for "${name}" in category "${category}"`,
+          details: `Initiated product creation for "${name}" in categories "${serializedCategories || "Uncategorized"}"`,
           page: 'products',
           metadata: {
             productName: name,
-            category,
+            categories: selectedCategories,
             price: Number(price) || 0,
             inventory: Number(inventory) || 0,
             hasImages: images.length > 0,
@@ -703,6 +771,7 @@ export default function ProductsAdminPage() {
       console.log("📦 Creating product in database...");
 
       // Prepare the product data
+      const serializedCategories = serializeProductCategories(selectedCategories);
       const productData: any = {
         name: name.trim(),
         fullproductname: fullProductName.trim() || null,
@@ -710,7 +779,7 @@ export default function ProductsAdminPage() {
         description: description.trim() || null,
         price: Number(price) || 0,
         inventory: Number(inventory) || 0,
-        category: category.trim(),
+        category: serializedCategories,
         height: height ? Number(height) : null,
         width: width ? Number(width) : null,
         thickness: thickness ? Number(thickness) : null,
@@ -792,7 +861,8 @@ export default function ProductsAdminPage() {
       setHeight("");
       setWidth("");
       setThickness("");
-      setCategory("");
+      setSelectedCategories([]);
+      setActiveFeatureCategory("");
       setSelectedFeatureOptions([]);
       setFeatureOptionsByCategory(createFeatureOptionsByCategory());
       setNewFeatureOption("");
@@ -899,7 +969,7 @@ export default function ProductsAdminPage() {
                   initialIndex={currentFbxIndex}
                   weather={previewWeather}
                   frameFinish="matteBlack"
-                  productCategory={category || null}
+                  productCategory={primaryCategory || null}
                   skyboxes={effectivePreviewSkyboxes}
                   productDimensions={{
                     width: width || null,
@@ -987,25 +1057,88 @@ export default function ProductsAdminPage() {
               <div className="mb-6">
                 <h2 className="text-2xl font-bold text-[#233a5e]">Product Category and Additional Features</h2>
                 <p className="mt-2 text-sm text-gray-600">
-                  Pick the product category, then select the preloaded feature bullets you want shown on the website.
+                  Select one or more categories, manage category options, then choose the feature bullets shown on the website.
                 </p>
               </div>
 
               <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
                 <div className="rounded-xl border border-gray-200 bg-[#f8fafc] p-5">
-                  <label className="mb-2 block font-semibold text-[#233a5e]">Product Category <span className="text-red-500">*</span></label>
-                  <div className="relative">
-                    <select
-                      className="w-full appearance-none rounded-lg border border-gray-300 bg-white p-3 pr-10 text-black outline-none transition focus:border-[#233a5e] focus:ring-2 focus:ring-[#233a5e]/20"
-                      value={category}
-                      onChange={(e) => handleCategoryChange(e.target.value)}
+                  <label className="mb-2 block font-semibold text-[#233a5e]">Product Categories <span className="text-red-500">*</span></label>
+
+                  <div className="mb-4 flex flex-col gap-3 sm:flex-row">
+                    <input
+                      type="text"
+                      value={newCategoryOption}
+                      onChange={(e) => setNewCategoryOption(e.target.value)}
+                      placeholder="Add a new category"
+                      className="flex-1 rounded-lg border border-gray-300 bg-white p-3 text-sm text-black outline-none transition focus:border-[#233a5e] focus:ring-2 focus:ring-[#233a5e]/20"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddCategoryOption}
+                      disabled={!newCategoryOption.trim()}
+                      className="rounded-lg bg-[#233a5e] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#1b2d49] disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <option value="">Select Category</option>
-                      {PRODUCT_CATEGORY_OPTIONS.map((option) => (
-                        <option key={option} value={option}>{option}</option>
-                      ))}
-                    </select>
-                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">▼</span>
+                      Add Category
+                    </button>
+                  </div>
+
+                  <div className="max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2">
+                    <div className="grid gap-2">
+                      {categoryOptions.map((option) => {
+                        const isSelected = selectedCategories.includes(option);
+                        return (
+                          <div key={option} className="flex items-center justify-between rounded-lg border border-gray-100 px-3 py-2">
+                            <label className="flex items-center gap-2 text-sm text-gray-700">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleSelectedCategory(option)}
+                                className="h-4 w-4 rounded border-gray-300 text-[#233a5e] focus:ring-[#233a5e]"
+                              />
+                              <span>{option}</span>
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCategoryOption(option)}
+                              className="rounded px-2 py-1 text-[11px] font-semibold text-red-600 transition hover:bg-red-50"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Selected Categories</div>
+                    {selectedCategories.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {selectedCategories.map((option) => (
+                          <span key={option} className="inline-flex items-center gap-2 rounded-full border border-[#233a5e]/20 bg-[#233a5e]/5 px-3 py-1 text-xs font-semibold text-[#233a5e]">
+                            {option}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500">Select at least one category.</p>
+                    )}
+
+                    {selectedCategories.length > 1 && (
+                      <div className="mt-3">
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Feature Category</label>
+                        <select
+                          value={activeFeatureCategory}
+                          onChange={(e) => setActiveFeatureCategory(e.target.value)}
+                          className="w-full rounded-lg border border-gray-300 bg-white p-2 text-sm text-black outline-none transition focus:border-[#233a5e] focus:ring-2 focus:ring-[#233a5e]/20"
+                        >
+                          {selectedCategories.map((option) => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1025,21 +1158,21 @@ export default function ProductsAdminPage() {
                       type="text"
                       value={newFeatureOption}
                       onChange={(e) => setNewFeatureOption(e.target.value)}
-                      placeholder={category ? "Create a new feature checkbox for this category" : "Select a category first"}
-                      disabled={!category}
+                      placeholder={activeFeatureCategory ? `Create a new feature checkbox for ${activeFeatureCategory}` : "Select at least one category first"}
+                      disabled={!activeFeatureCategory}
                       className="flex-1 rounded-lg border border-gray-300 bg-white p-3 text-sm text-black outline-none transition focus:border-[#233a5e] focus:ring-2 focus:ring-[#233a5e]/20 disabled:bg-gray-100 disabled:text-gray-400"
                     />
                     <button
                       type="button"
                       onClick={handleAddFeatureOption}
-                      disabled={!category || !newFeatureOption.trim()}
+                      disabled={!activeFeatureCategory || !newFeatureOption.trim()}
                       className="rounded-lg bg-[#233a5e] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#1b2d49] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Add Feature
                     </button>
                   </div>
 
-                  {category ? (
+                  {activeFeatureCategory ? (
                     <div className="mt-4 grid gap-3 sm:grid-cols-2">
                       {selectedCategoryFeatures.map((feature) => {
                         const checked = selectedFeatureOptions.includes(feature);
@@ -1074,7 +1207,7 @@ export default function ProductsAdminPage() {
                     </div>
                   ) : (
                     <div className="mt-4 rounded-lg border border-dashed border-gray-300 bg-white px-4 py-6 text-sm text-gray-500">
-                      Select a category first to load the matching feature checkboxes.
+                      Select at least one category first to load matching feature checkboxes.
                     </div>
                   )}
 
