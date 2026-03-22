@@ -67,11 +67,17 @@ type TaskUpdate = {
 type UserItemLite = {
   id: string;
   customer_name?: string | null;
+  delivery_address_id?: string | null;
   order_status?: string | null;
   status?: string | null;
   meta?: Record<string, any> | null;
   progress_history?: any[];
   products?: { name?: string | null } | null;
+};
+
+type AddressLite = {
+  id: string;
+  full_name?: string | null;
 };
 
 type OrderGroup = {
@@ -120,6 +126,22 @@ function getStageStatusBadgeClass(status: string) {
   return "bg-slate-200 text-slate-600";
 }
 
+function resolveCustomerName(userItem: UserItemLite | undefined, addressMap: Map<string, AddressLite>) {
+  const directName = String(userItem?.customer_name || "").trim();
+  if (directName) return directName;
+
+  const addressId = String(userItem?.delivery_address_id || userItem?.meta?.delivery_address_id || "").trim();
+  if (addressId) {
+    const fromAddress = String(addressMap.get(addressId)?.full_name || "").trim();
+    if (fromAddress) return fromAddress;
+  }
+
+  const fromMetaAddress = String(userItem?.meta?.delivery_address?.full_name || "").trim();
+  if (fromMetaAddress) return fromMetaAddress;
+
+  return null;
+}
+
 export default function EmployeeTasksPage() {
   const searchParams = useSearchParams();
   const [adminSession, setAdminSession] = useState<AdminSession | null>(null);
@@ -128,7 +150,7 @@ export default function EmployeeTasksPage() {
   const [selectedGroup, setSelectedGroup] = useState<OrderGroup | null>(null);
   const [groupUpdates, setGroupUpdates] = useState<Record<number, TaskUpdate[]>>({});
   const [myRecentUpdates, setMyRecentUpdates] = useState<Record<number, TaskUpdate[]>>({});
-  const [groupProgressDraft, setGroupProgressDraft] = useState<Record<string, number>>({});
+  const [groupProgressDraft, setGroupProgressDraft] = useState<Record<string, number | "">>({});
   const [savingGroupProgressId, setSavingGroupProgressId] = useState<string | null>(null);
   const [savingStageStatusId, setSavingStageStatusId] = useState<string | null>(null);
   const [progressModal, setProgressModal] = useState<{ task: EnrichedTask } | null>(null);
@@ -299,12 +321,29 @@ export default function EmployeeTasksPage() {
 
       const { data: uiRows, error: uiErr } = await supabase
         .from("user_items")
-        .select("id, customer_name, order_status, status, meta, progress_history, products(name)")
+        .select("id, customer_name, delivery_address_id, order_status, status, meta, progress_history, products(name)")
         .in("id", orderIds);
       if (uiErr) throw uiErr;
 
       const uiMap = new Map<string, UserItemLite>();
       (uiRows || []).forEach((row: any) => uiMap.set(String(row.id), row as UserItemLite));
+
+      const addressIds = Array.from(
+        new Set(
+          (uiRows || [])
+            .map((row: any) => String(row?.delivery_address_id || row?.meta?.delivery_address_id || "").trim())
+            .filter(Boolean)
+        )
+      );
+      const addressMap = new Map<string, AddressLite>();
+      if (addressIds.length > 0) {
+        const { data: addressRows, error: addressErr } = await supabase
+          .from("addresses")
+          .select("id, full_name")
+          .in("id", addressIds);
+        if (addressErr) throw addressErr;
+        (addressRows || []).forEach((row: any) => addressMap.set(String(row.id), row as AddressLite));
+      }
 
       const groupedTasks = new Map<string, EnrichedTask[]>();
       for (const task of rawTasks) {
@@ -324,7 +363,7 @@ export default function EmployeeTasksPage() {
         return {
           user_item_id: orderId,
           product_name: userItem?.products?.name || groupedTasks.get(orderId)?.[0]?.product_name || "(Unknown Product)",
-          customer_name: userItem?.customer_name || null,
+          customer_name: resolveCustomerName(userItem, addressMap),
           order_status: (userItem?.order_status || userItem?.status || null) as string | null,
           production_percent: pct,
           estimatedCompletionDate: String(
@@ -514,7 +553,8 @@ export default function EmployeeTasksPage() {
   };
 
   const saveGroupProductionPercent = async (group: OrderGroup) => {
-    const nextPct = clampPercent(Number(groupProgressDraft[group.user_item_id] || 0));
+    const rawDraft = groupProgressDraft[group.user_item_id];
+    const nextPct = clampPercent(Number(rawDraft === "" ? 0 : rawDraft || 0));
     setSavingGroupProgressId(group.user_item_id);
     try {
       const { data: uiData, error: uiErr } = await supabase
@@ -822,13 +862,29 @@ export default function EmployeeTasksPage() {
                       type="number"
                       min={0}
                       max={100}
-                      value={pct}
+                      value={groupProgressDraft[group.user_item_id] ?? pct}
+                      onFocus={() => {
+                        setGroupProgressDraft((prev) => {
+                          const current = prev[group.user_item_id] ?? pct;
+                          if (Number(current) !== 0) return prev;
+                          return {
+                            ...prev,
+                            [group.user_item_id]: "",
+                          };
+                        });
+                      }}
                       onChange={(event) =>
                         setGroupProgressDraft((prev) => ({
                           ...prev,
-                          [group.user_item_id]: clampPercent(Number(event.target.value || 0)),
+                          [group.user_item_id]: event.target.value === "" ? "" : clampPercent(Number(event.target.value || 0)),
                         }))
                       }
+                      onBlur={() => {
+                        setGroupProgressDraft((prev) => ({
+                          ...prev,
+                          [group.user_item_id]: prev[group.user_item_id] === "" ? 0 : prev[group.user_item_id],
+                        }));
+                      }}
                       className="w-20 rounded-2xl border border-slate-300 px-3 py-2 text-sm"
                     />
                     <button
@@ -981,13 +1037,29 @@ export default function EmployeeTasksPage() {
                     type="number"
                     min={0}
                     max={100}
-                    value={clampPercent(Number(groupProgressDraft[selectedGroup.user_item_id] ?? selectedGroup.production_percent))}
+                    value={groupProgressDraft[selectedGroup.user_item_id] ?? clampPercent(Number(selectedGroup.production_percent))}
+                    onFocus={() => {
+                      setGroupProgressDraft((prev) => {
+                        const current = prev[selectedGroup.user_item_id] ?? clampPercent(Number(selectedGroup.production_percent));
+                        if (Number(current) !== 0) return prev;
+                        return {
+                          ...prev,
+                          [selectedGroup.user_item_id]: "",
+                        };
+                      });
+                    }}
                     onChange={(event) =>
                       setGroupProgressDraft((prev) => ({
                         ...prev,
-                        [selectedGroup.user_item_id]: clampPercent(Number(event.target.value || 0)),
+                        [selectedGroup.user_item_id]: event.target.value === "" ? "" : clampPercent(Number(event.target.value || 0)),
                       }))
                     }
+                    onBlur={() => {
+                      setGroupProgressDraft((prev) => ({
+                        ...prev,
+                        [selectedGroup.user_item_id]: prev[selectedGroup.user_item_id] === "" ? 0 : prev[selectedGroup.user_item_id],
+                      }));
+                    }}
                     className="w-24 rounded-2xl border border-slate-300 px-3 py-2 text-sm"
                   />
                   <button

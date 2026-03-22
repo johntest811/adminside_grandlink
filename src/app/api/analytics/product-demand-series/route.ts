@@ -44,9 +44,53 @@ function parseSalesForecastDate(value: unknown) {
     return excelSerialToIso(Number(text));
   }
 
+  // Handle day-first strings from CSV exports like 31/12/2025.
+  const dmyMatch = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
+  if (dmyMatch) {
+    const day = Number(dmyMatch[1]);
+    const month = Number(dmyMatch[2]);
+    const yearRaw = Number(dmyMatch[3]);
+    const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    if (
+      !Number.isNaN(parsed.getTime()) &&
+      parsed.getUTCFullYear() === year &&
+      parsed.getUTCMonth() === month - 1 &&
+      parsed.getUTCDate() === day
+    ) {
+      return parsed.toISOString().slice(0, 10);
+    }
+  }
+
   const parsed = new Date(text);
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed.toISOString().slice(0, 10);
+}
+
+async function fetchAllSalesForecastRows() {
+  const pageSize = 1000;
+  const allRows: any[] = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + pageSize - 1;
+    const { data, error } = await supabase
+      .from("SalesForecast")
+      .select("Date,Product_ID,Product_Name,Category,Selling_Price,Units_Sold,Revenue,Ending_Stock")
+      .range(from, to);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    if (!data?.length) break;
+    allRows.push(...data);
+
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return allRows;
 }
 
 function enumerateDates(startISO: string, endISO: string) {
@@ -62,15 +106,13 @@ function enumerateDates(startISO: string, endISO: string) {
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
-    const days = Math.max(90, Math.min(3650, Number(url.searchParams.get("days") || 1095)));
+    const daysParam = url.searchParams.get("days");
+    const parsedDays = Number(daysParam || 0);
+    const days = Number.isFinite(parsedDays) && parsedDays > 0 ? Math.max(90, Math.min(3650, parsedDays)) : null;
     const limit = Math.max(3, Math.min(50, Number(url.searchParams.get("limit") || 12)));
     const category = (url.searchParams.get("category") || "").trim().toLowerCase();
 
-    const { data: rawRows, error } = await supabase
-      .from("SalesForecast")
-      .select("Date,Product_ID,Product_Name,Category,Selling_Price,Units_Sold,Revenue,Ending_Stock")
-      .limit(100000);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    const rawRows = await fetchAllSalesForecastRows();
 
     const rows = (rawRows || [])
       .map((row: any) => {
@@ -104,7 +146,7 @@ export async function GET(req: NextRequest) {
 
     const latestAvailableDate = rows[rows.length - 1].date;
     const earliestAvailableDate = rows[0].date;
-    const defaultStart = addDaysISO(latestAvailableDate, -(days - 1));
+    const defaultStart = days ? addDaysISO(latestAvailableDate, -(days - 1)) : earliestAvailableDate;
     const startDate = defaultStart < earliestAvailableDate ? earliestAvailableDate : defaultStart;
     const endDate = latestAvailableDate;
     const labels = enumerateDates(startDate, endDate);

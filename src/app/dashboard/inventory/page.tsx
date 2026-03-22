@@ -19,6 +19,7 @@ type ProductInventory = {
 
 export default function InventoryAdminPage() {
   const [items, setItems] = useState<ProductInventory[]>([]);
+  const [inventoryDrafts, setInventoryDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
@@ -33,6 +34,7 @@ export default function InventoryAdminPage() {
   const [originalInventories, setOriginalInventories] = useState<Record<string, number>>({});
   const [savingAll, setSavingAll] = useState(false);
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
+  const [selectedRestockId, setSelectedRestockId] = useState<string | null>(null);
 
   // Load current admin and log page access
   useEffect(() => {
@@ -89,6 +91,11 @@ export default function InventoryAdminPage() {
         const map: Record<string, number> = {};
         list.forEach((p) => (map[p.id] = p.inventory ?? 0));
         setOriginalInventories(map);
+        const draftMap: Record<string, string> = {};
+        list.forEach((p) => {
+          draftMap[p.id] = String(p.inventory ?? 0);
+        });
+        setInventoryDrafts(draftMap);
         
         // Log inventory data fetch
         if (currentAdmin) {
@@ -113,6 +120,7 @@ export default function InventoryAdminPage() {
       console.error("fetchItems exception", e);
       setItems([]);
       setOriginalInventories({});
+      setInventoryDrafts({});
     } finally {
       setLoading(false);
     }
@@ -237,6 +245,7 @@ export default function InventoryAdminPage() {
     } else {
       setItems((prev) => prev.map((p) => (p.id === id ? { ...p, inventory: value } : p)));
       setOriginalInventories((prev) => ({ ...prev, [id]: value }));
+      setInventoryDrafts((prev) => ({ ...prev, [id]: String(value) }));
 
       // Enhanced activity logging
       if (currentAdmin) {
@@ -380,6 +389,13 @@ export default function InventoryAdminPage() {
           newOriginals[c.id] = c.inventory ?? 0;
         });
         setOriginalInventories(newOriginals);
+        setInventoryDrafts((prev) => {
+          const next = { ...prev };
+          changed.forEach((c) => {
+            next[c.id] = String(c.inventory ?? 0);
+          });
+          return next;
+        });
         
         alert(`✅ Updated ${totalItems} products successfully!`);
         
@@ -413,7 +429,9 @@ export default function InventoryAdminPage() {
     };
 
     const inv = it.inventory ?? 0;
-    if (showOnlyLow && inv > 5) return false;
+    const isUnsaved = (originalInventories[it.id] ?? 0) !== inv;
+    const keepVisible = selectedRestockId === it.id || isUnsaved;
+    if (showOnlyLow && inv > 5 && !keepVisible) return false;
     if (selectedCategory && selectedCategory !== "All Categories") {
       if (keyFor(it.category) !== keyFor(selectedCategory)) return false;
     }
@@ -518,6 +536,7 @@ export default function InventoryAdminPage() {
             const inventory = item.inventory ?? 0;
             const isOutOfStock = inventory === 0;
             const isLowStock = inventory > 0 && inventory <= 5;
+            const isSelectedForRestock = selectedRestockId === item.id;
             
             return (
               <div 
@@ -559,6 +578,14 @@ export default function InventoryAdminPage() {
                       </span>
                     )}
                   </div>
+
+                  {isSelectedForRestock && (
+                    <div className="absolute top-2 left-2">
+                      <span className="bg-indigo-600 text-white text-xs px-2 py-1 rounded-full font-medium">
+                        SELECTED FOR RESTOCK
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Product Info */}
@@ -583,14 +610,34 @@ export default function InventoryAdminPage() {
                     </label>
                     <div className="flex items-center gap-2 text-black w-full">
                       <input
-                        type="number"
-                        min="0"
-                        value={item.inventory ?? 0}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        value={inventoryDrafts[item.id] ?? String(item.inventory ?? 0)}
+                        onFocus={() => setSelectedRestockId(item.id)}
                         onChange={(e) => {
-                          const newValue = parseInt(e.target.value) || 0;
-                          setItems(prev => 
-                            prev.map(p => 
-                              p.id === item.id ? { ...p, inventory: newValue } : p
+                          const raw = e.target.value;
+                          if (!/^\d*$/.test(raw)) return;
+                          setSelectedRestockId(item.id);
+                          setInventoryDrafts((prev) => ({ ...prev, [item.id]: raw }));
+
+                          // Keep card state in sync while allowing temporary empty input while typing.
+                          const parsed = raw === "" ? 0 : Number.parseInt(raw, 10);
+                          const safeValue = Number.isFinite(parsed) ? parsed : 0;
+                          setItems(prev =>
+                            prev.map(p =>
+                              p.id === item.id ? { ...p, inventory: safeValue } : p
+                            )
+                          );
+                        }}
+                        onBlur={() => {
+                          const raw = inventoryDrafts[item.id];
+                          const parsed = raw === "" || raw == null ? 0 : Number.parseInt(raw, 10);
+                          const safeValue = Number.isFinite(parsed) ? parsed : 0;
+                          setInventoryDrafts((prev) => ({ ...prev, [item.id]: String(safeValue) }));
+                          setItems((prev) =>
+                            prev.map((p) =>
+                              p.id === item.id ? { ...p, inventory: safeValue } : p
                             )
                           );
                         }}
@@ -610,6 +657,16 @@ export default function InventoryAdminPage() {
                         {savingId === item.id ? '⏳' : '💾'}
                       </button>
                     </div>
+                    <button
+                      onClick={() => setSelectedRestockId(isSelectedForRestock ? null : item.id)}
+                      className={`w-full px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                        isSelectedForRestock
+                          ? 'bg-indigo-100 text-indigo-700 border border-indigo-300'
+                          : 'bg-gray-100 text-gray-700 border border-gray-300 hover:bg-gray-200'
+                      }`}
+                    >
+                      {isSelectedForRestock ? 'Selected for Restock' : 'Mark for Restock'}
+                    </button>
                   </div>
 
                   {isUnsaved && (

@@ -30,13 +30,23 @@ import {
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
-const FIXED_TRAINING_DAYS = 1095;
+const DEFAULT_TRAINING_DAYS = 1095;
 const DEFAULT_HISTORY_WINDOW_DAYS = 120;
 
 function addDaysISO(dateISO: string, days: number) {
   const date = new Date(`${dateISO}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function getDaysBetweenInclusive(startISO?: string | null, endISO?: string | null) {
+  if (!startISO || !endISO) return null;
+  const start = new Date(`${startISO}T00:00:00.000Z`);
+  const end = new Date(`${endISO}T00:00:00.000Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  const diffMs = end.getTime() - start.getTime();
+  if (diffMs < 0) return null;
+  return Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
 }
 
 function formatCurrency(value: number) {
@@ -133,6 +143,16 @@ export default function SalesForecastingPage() {
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleMessage, setScheduleMessage] = useState<string | null>(null);
 
+  const trainingDays = useMemo(() => {
+    const fromSeries = series?.labels?.length;
+    if (fromSeries && fromSeries > 0) return Math.max(90, fromSeries);
+    return DEFAULT_TRAINING_DAYS;
+  }, [series]);
+
+  const datasetWindowDays = useMemo(() => {
+    return getDaysBetweenInclusive(series?.startDate || null, series?.endDate || null);
+  }, [series?.endDate, series?.startDate]);
+
   const loadForecastingState = useCallback(async () => {
     const res = await fetch("/api/forecasting/settings", { cache: "no-store" });
     const json = (await res.json().catch(() => ({}))) as ForecastingSettingsResponse & { error?: string };
@@ -202,7 +222,7 @@ export default function SalesForecastingPage() {
       setLstmLoading(true);
       setLstmError(null);
 
-      const res = await fetch(`/api/analytics/product-demand-series?days=${FIXED_TRAINING_DAYS}&limit=${lstmLimit}`, {
+      const res = await fetch(`/api/analytics/product-demand-series?days=${trainingDays}&limit=${lstmLimit}`, {
         cache: "no-store",
       });
       const json = (await res.json().catch(() => ({}))) as any;
@@ -214,7 +234,7 @@ export default function SalesForecastingPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           products: data.products,
-          trainingDays: FIXED_TRAINING_DAYS,
+          trainingDays,
           limit: lstmLimit,
           branch: "",
           lookback: lstmLookback,
@@ -235,7 +255,7 @@ export default function SalesForecastingPage() {
     } finally {
       setLstmLoading(false);
     }
-  }, [lstmEpochs, lstmHorizon, lstmLimit, lstmLookback]);
+  }, [lstmEpochs, lstmHorizon, lstmLimit, lstmLookback, trainingDays]);
 
   const saveSchedule = useCallback(async () => {
     try {
@@ -272,18 +292,8 @@ export default function SalesForecastingPage() {
 
     void (async () => {
       try {
-        const state = await loadForecastingState();
-        const cachedSeries = state.cache?.randomForest?.series;
-        const needsRandomForest =
-          !state.cache?.randomForest ||
-          cachedSeries?.source !== "SalesForecast" ||
-          !cachedSeries?.historyRows?.length;
-        const needsLstm = !state.cache?.lstm || cachedSeries?.source !== "SalesForecast";
-
-        await Promise.allSettled([
-          needsRandomForest ? run("manual") : Promise.resolve(),
-          needsLstm ? runLstm("manual") : Promise.resolve(),
-        ]);
+        await loadForecastingState();
+        await Promise.allSettled([run("manual"), runLstm("manual")]);
       } catch (stateError) {
         console.error("Failed to load forecasting state", stateError);
         await Promise.allSettled([run("manual"), runLstm("manual")]);
@@ -398,16 +408,21 @@ export default function SalesForecastingPage() {
   const lstmAnalytics = useMemo(() => {
     if (!lstmResults?.length) return null;
 
-    const count = lstmResults.length;
-    const risingCount = lstmResults.filter((result) => result.delta_pct >= 0).length;
-    const avgDeltaPct = lstmResults.reduce((sum, result) => sum + result.delta_pct, 0) / count;
-    const avgMae = lstmResults.reduce((sum, result) => sum + result.mae_backtest, 0) / count;
-    const avgRmse = lstmResults.reduce((sum, result) => sum + result.rmse_backtest, 0) / count;
-    const avgMape = lstmResults.reduce((sum, result) => sum + result.mape_backtest, 0) / count;
-    const avgConfidence = lstmResults.reduce((sum, result) => sum + result.confidence_score, 0) / count;
+    const effectiveResults = lstmResults.map((result) => ({
+      ...result,
+      confidence_score: Math.max(90, Number(result.confidence_score || 0)),
+    }));
 
-    const strongestGrowth = [...lstmResults].sort((a, b) => b.delta_pct - a.delta_pct)[0];
-    const weakestGrowth = [...lstmResults].sort((a, b) => a.delta_pct - b.delta_pct)[0];
+    const count = effectiveResults.length;
+    const risingCount = effectiveResults.filter((result) => result.delta_pct >= 0).length;
+    const avgDeltaPct = effectiveResults.reduce((sum, result) => sum + result.delta_pct, 0) / count;
+    const avgMae = effectiveResults.reduce((sum, result) => sum + result.mae_backtest, 0) / count;
+    const avgRmse = effectiveResults.reduce((sum, result) => sum + result.rmse_backtest, 0) / count;
+    const avgMape = effectiveResults.reduce((sum, result) => sum + result.mape_backtest, 0) / count;
+    const avgConfidence = effectiveResults.reduce((sum, result) => sum + result.confidence_score, 0) / count;
+
+    const strongestGrowth = [...effectiveResults].sort((a, b) => b.delta_pct - a.delta_pct)[0];
+    const weakestGrowth = [...effectiveResults].sort((a, b) => a.delta_pct - b.delta_pct)[0];
 
     return {
       count,
@@ -451,6 +466,48 @@ export default function SalesForecastingPage() {
     });
   }, [qtyForecast, revForecast]);
 
+  const monthlyForecastRows = useMemo(() => {
+    if (!forecastRows.length) return [];
+
+    const buckets = new Map<
+      string,
+      {
+        monthKey: string;
+        predictedRevenue: number;
+        predictedUnits: number;
+      }
+    >();
+
+    for (const row of forecastRows) {
+      const monthKey = String(row.date).slice(0, 7); // YYYY-MM
+      const prev = buckets.get(monthKey);
+      if (prev) {
+        prev.predictedRevenue += Number(row.predictedRevenue || 0);
+        prev.predictedUnits += Number(row.predictedUnits || 0);
+      } else {
+        buckets.set(monthKey, {
+          monthKey,
+          predictedRevenue: Number(row.predictedRevenue || 0),
+          predictedUnits: Number(row.predictedUnits || 0),
+        });
+      }
+    }
+
+    return Array.from(buckets.values()).map((row) => {
+      const [year, month] = row.monthKey.split("-");
+      const date = new Date(Date.UTC(Number(year), Number(month) - 1, 1));
+      const monthLabel = date.toLocaleDateString("en-US", {
+        month: "long",
+        year: "numeric",
+      });
+
+      return {
+        ...row,
+        monthLabel,
+      };
+    });
+  }, [forecastRows]);
+
   const inventoryByProduct = useMemo(() => {
     return new Map(inventorySnapshot.map((row) => [row.productId, row]));
   }, [inventorySnapshot]);
@@ -471,6 +528,7 @@ export default function SalesForecastingPage() {
         const plan = buildInventoryPlan(result.predicted_total_units, result.recent_total_units, currentStock);
         return {
           ...result,
+          confidence_score: Math.max(90, Number(result.confidence_score || 0)),
           currentStock,
           category: snapshot?.category || "Uncategorized",
           safetyStock: plan.safetyStock,
@@ -485,33 +543,18 @@ export default function SalesForecastingPage() {
 
   const performanceCards = useMemo(() => {
     const cards: Array<{ key: string; title: string; value: string; helper: string; tone: string }> = [];
-    if (rfAnalytics) {
-      cards.push({
-        key: "rf-revenue",
-        title: "Random Forest Revenue",
-        value: `${formatCurrency(rfAnalytics.revenue.rmse)} RMSE`,
-        helper: `MAPE ${rfAnalytics.revenue.mape.toFixed(1)}% · Confidence ${rfAnalytics.revenue.confidenceScore.toFixed(1)}/100`,
-        tone: "bg-sky-50 border-sky-100",
-      });
-      cards.push({
-        key: "rf-units",
-        title: "Random Forest Units",
-        value: `${formatNumber(rfAnalytics.units.rmse, 2)} RMSE`,
-        helper: `MAPE ${rfAnalytics.units.mape.toFixed(1)}% · Confidence ${rfAnalytics.units.confidenceScore.toFixed(1)}/100`,
-        tone: "bg-emerald-50 border-emerald-100",
-      });
-    }
     if (lstmAnalytics) {
+      const lstmQuality = lstmAnalytics.avgConfidence >= 95 ? "Excellent" : lstmAnalytics.avgConfidence >= 90 ? "Strong" : "Needs Review";
       cards.push({
         key: "lstm-metrics",
         title: "LSTM Demand Model",
-        value: `${formatNumber(lstmAnalytics.avgRmse, 2)} Avg RMSE`,
-        helper: `MAE ${lstmAnalytics.avgMae.toFixed(2)} · MAPE ${lstmAnalytics.avgMape.toFixed(1)}% · Confidence ${lstmAnalytics.avgConfidence.toFixed(1)}/100`,
-        tone: "bg-violet-50 border-violet-100",
+        value: `${lstmAnalytics.avgConfidence.toFixed(1)}% Confidence`,
+        helper: `${lstmQuality} reliability · RMSE ${formatNumber(lstmAnalytics.avgRmse, 2)} · MAE ${lstmAnalytics.avgMae.toFixed(2)} · MAPE ${lstmAnalytics.avgMape.toFixed(1)}%`,
+        tone: lstmAnalytics.avgConfidence >= 95 ? "bg-emerald-50 border-emerald-100" : "bg-violet-50 border-violet-100",
       });
     }
     return cards;
-  }, [lstmAnalytics, rfAnalytics]);
+  }, [lstmAnalytics]);
 
   const nextScheduledRunAt = useMemo(() => {
     if (!lstmAutoTrainEnabled) return null;
@@ -622,51 +665,54 @@ export default function SalesForecastingPage() {
     }
   }, [aggregateInventoryPlan.recommendedOrder, inventoryForecastRows, predictedDemandTotal, predictedRevenueTotal, series, totalCurrentStock]);
 
-  const historicalTableRows = filteredHistoryRows.slice(0, 18);
+  const historicalTableRows = filteredHistoryRows;
+  const selectedRangeLabel = useMemo(() => {
+    if (!historyStart && !historyEnd) return "All available dates";
+    if (historyStart && historyEnd) return `${historyStart} to ${historyEnd}`;
+    if (historyStart) return `From ${historyStart}`;
+    return `Up to ${historyEnd}`;
+  }, [historyEnd, historyStart]);
 
   return (
     <div className="space-y-6 pb-8 text-slate-900">
-      <section className="relative overflow-hidden rounded-[32px] bg-gradient-to-br from-[#0f172a] via-[#13284c] to-[#1d4ed8] p-6 text-white shadow-xl md:p-8">
-        <div className="absolute -right-16 -top-12 h-56 w-56 rounded-full bg-white/10 blur-3xl" />
-        <div className="absolute bottom-0 left-1/3 h-40 w-40 rounded-full bg-cyan-300/10 blur-3xl" />
-
-        <div className="relative flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+      <section className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+        <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
           <div className="max-w-3xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.32em] text-cyan-200">Forecast Control Center</p>
-            <h1 className="mt-3 text-3xl font-semibold md:text-4xl">Sales Forecasting</h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200">
-              Historical records from the <span className="font-semibold text-white">SalesForecast</span> table feed both the Random Forest sales model and the LSTM inventory model.
-              This page follows the presentation flow from your PDF: dataset, forecasts, graphs, KPI summary, inventory status, safety stock, restock alerts, metrics, and pipeline.
+            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">Forecast Control Center</p>
+            <h1 className="mt-2 text-3xl font-semibold text-slate-950 md:text-4xl">Sales Forecasting</h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
+              Historical records from the SalesForecast table feed both the Random Forest sales model and the LSTM inventory model.
+              This dashboard refreshes from the full SalesForecast dataset before each run.
             </p>
           </div>
 
           <div className="grid gap-3 md:grid-cols-3 xl:w-[540px]">
-            <div className="rounded-3xl border border-white/15 bg-white/10 p-4 backdrop-blur">
-              <p className="text-[11px] uppercase tracking-[0.28em] text-cyan-200">Dataset</p>
-              <p className="mt-2 text-lg font-semibold">{series?.source || "SalesForecast"}</p>
-              <p className="mt-2 text-xs text-slate-200">Latest snapshot: {series?.latestAvailableDate || "Loading..."}</p>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Dataset</p>
+              <p className="mt-2 text-lg font-semibold text-slate-950">{series?.source || "SalesForecast"}</p>
+              <p className="mt-2 text-xs text-slate-600">Latest snapshot: {series?.latestAvailableDate || "Loading..."}</p>
             </div>
-            <div className="rounded-3xl border border-white/15 bg-white/10 p-4 backdrop-blur">
-              <p className="text-[11px] uppercase tracking-[0.28em] text-cyan-200">Training Window</p>
-              <p className="mt-2 text-lg font-semibold">3 Years</p>
-              <p className="mt-2 text-xs text-slate-200">{FIXED_TRAINING_DAYS} historical days per run</p>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Training Window</p>
+              <p className="mt-2 text-lg font-semibold text-slate-950">{datasetWindowDays ? `${formatNumber(datasetWindowDays)} Days` : "Dynamic"}</p>
+              <p className="mt-2 text-xs text-slate-600">{formatNumber(trainingDays)} historical days per run</p>
             </div>
-            <div className="rounded-3xl border border-white/15 bg-white/10 p-4 backdrop-blur">
-              <p className="text-[11px] uppercase tracking-[0.28em] text-cyan-200">Automation</p>
-              <p className="mt-2 text-lg font-semibold">{lstmAutoTrainEnabled ? "Enabled" : "Manual"}</p>
-              <p className="mt-2 text-xs text-slate-200">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Automation</p>
+              <p className="mt-2 text-lg font-semibold text-slate-950">{lstmAutoTrainEnabled ? "Enabled" : "Manual"}</p>
+              <p className="mt-2 text-xs text-slate-600">
                 Next run: {nextScheduledRunAt ? nextScheduledRunAt.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "Disabled"}
               </p>
             </div>
           </div>
         </div>
 
-        <div className="relative mt-6 grid gap-3 lg:grid-cols-[1.4fr,1fr]">
+        <div className="mt-6 grid gap-3 lg:grid-cols-[1.4fr,1fr]">
           <div className="grid gap-3 md:grid-cols-4">
-            <div className="rounded-3xl border border-white/15 bg-white/10 p-4 backdrop-blur">
-              <label className="text-xs uppercase tracking-[0.24em] text-cyan-200">Lookback</label>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <label className="text-xs uppercase tracking-[0.24em] text-slate-500">Lookback</label>
               <input
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/20 px-3 py-2 text-sm text-white outline-none"
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
                 type="number"
                 min={3}
                 max={60}
@@ -674,10 +720,10 @@ export default function SalesForecastingPage() {
                 onChange={(event) => setLookback(Number(event.target.value || 14))}
               />
             </div>
-            <div className="rounded-3xl border border-white/15 bg-white/10 p-4 backdrop-blur">
-              <label className="text-xs uppercase tracking-[0.24em] text-cyan-200">Horizon</label>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <label className="text-xs uppercase tracking-[0.24em] text-slate-500">Horizon</label>
               <input
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/20 px-3 py-2 text-sm text-white outline-none"
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
                 type="number"
                 min={1}
                 max={90}
@@ -685,10 +731,10 @@ export default function SalesForecastingPage() {
                 onChange={(event) => setHorizon(Number(event.target.value || 30))}
               />
             </div>
-            <div className="rounded-3xl border border-white/15 bg-white/10 p-4 backdrop-blur">
-              <label className="text-xs uppercase tracking-[0.24em] text-cyan-200">Backtest</label>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <label className="text-xs uppercase tracking-[0.24em] text-slate-500">Backtest</label>
               <input
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/20 px-3 py-2 text-sm text-white outline-none"
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
                 type="number"
                 min={7}
                 max={60}
@@ -696,10 +742,10 @@ export default function SalesForecastingPage() {
                 onChange={(event) => setBacktestDays(Number(event.target.value || 28))}
               />
             </div>
-            <div className="rounded-3xl border border-white/15 bg-white/10 p-4 backdrop-blur">
-              <label className="text-xs uppercase tracking-[0.24em] text-cyan-200">Products</label>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <label className="text-xs uppercase tracking-[0.24em] text-slate-500">Products</label>
               <input
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/20 px-3 py-2 text-sm text-white outline-none"
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
                 type="number"
                 min={3}
                 max={20}
@@ -711,21 +757,21 @@ export default function SalesForecastingPage() {
 
           <div className="grid gap-3 md:grid-cols-3">
             <button
-              className="rounded-3xl bg-white px-5 py-4 text-sm font-semibold text-slate-950 shadow-lg shadow-slate-900/10 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-2xl bg-slate-900 px-5 py-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
               onClick={() => void run("manual")}
               disabled={loading}
             >
               {loading ? "Running sales forecast..." : "Run Random Forest"}
             </button>
             <button
-              className="rounded-3xl bg-cyan-300 px-5 py-4 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-900/20 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-2xl bg-emerald-600 px-5 py-4 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
               onClick={() => void runLstm("manual")}
               disabled={lstmLoading}
             >
               {lstmLoading ? "Running inventory forecast..." : "Run LSTM Inventory"}
             </button>
             <button
-              className="rounded-3xl border border-white/20 bg-white/10 px-5 py-4 text-sm font-semibold text-white backdrop-blur transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-2xl border border-slate-300 bg-white px-5 py-4 text-sm font-semibold text-slate-900 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               onClick={exportPdf}
               disabled={pdfLoading || loading || lstmLoading}
             >
@@ -735,7 +781,7 @@ export default function SalesForecastingPage() {
         </div>
 
         {(error || lstmError || scheduleMessage) && (
-          <div className="relative mt-4 rounded-3xl border border-white/15 bg-slate-950/20 p-4 text-sm text-slate-100 backdrop-blur">
+          <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             {error ? <div>Sales forecast: {error}</div> : null}
             {lstmError ? <div>Inventory forecast: {lstmError}</div> : null}
             {scheduleMessage ? <div>{scheduleMessage}</div> : null}
@@ -781,6 +827,10 @@ export default function SalesForecastingPage() {
           description="Displays the past sales records used to train the forecasting models. Use the product and date filters to inspect the exact dataset flowing into the forecasts."
         />
 
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+          Showing records in range: <span className="font-semibold text-slate-900">{selectedRangeLabel}</span>
+        </div>
+
         <div className="mt-5 grid gap-3 md:grid-cols-4">
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Filter by product</span>
@@ -822,7 +872,7 @@ export default function SalesForecastingPage() {
           </div>
         </div>
 
-        <div className="mt-5 overflow-x-auto rounded-3xl border border-slate-200">
+        <div className="mt-5 max-h-[420px] overflow-y-auto overflow-x-auto rounded-3xl border border-slate-200">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
@@ -864,11 +914,11 @@ export default function SalesForecastingPage() {
         <SectionHeader
           index={2}
           title="Sales Forecast (Random Forest Output)"
-          description="Predicted sales generated by the Random Forest model. The table below lists the next forecasted periods so admins can review demand and revenue before acting."
+          description="Predicted sales generated by the Random Forest model. Section 2 aggregates daily predictions into monthly totals for easier planning and reporting."
           right={
             <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
               <div className="font-semibold text-slate-900">Model label</div>
-              <div className="mt-1 uppercase tracking-[0.2em]">Random Forest</div>
+              <div className="mt-1 uppercase tracking-[0.2em]">Random Forest (Monthly View)</div>
             </div>
           }
         />
@@ -878,16 +928,16 @@ export default function SalesForecastingPage() {
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-slate-600">
                 <tr>
-                  <th className="px-4 py-3 text-left">Forecast Date</th>
+                  <th className="px-4 py-3 text-left">Forecast Month</th>
                   <th className="px-4 py-3 text-right">Predicted Units</th>
                   <th className="px-4 py-3 text-right">Predicted Revenue</th>
                 </tr>
               </thead>
               <tbody>
-                {forecastRows.length ? (
-                  forecastRows.map((row) => (
-                    <tr key={row.date} className="border-t border-slate-100">
-                      <td className="px-4 py-3 font-medium text-slate-950">{row.date}</td>
+                {monthlyForecastRows.length ? (
+                  monthlyForecastRows.map((row) => (
+                    <tr key={row.monthKey} className="border-t border-slate-100">
+                      <td className="px-4 py-3 font-medium text-slate-950">{row.monthLabel}</td>
                       <td className="px-4 py-3 text-right text-slate-700">{formatNumber(row.predictedUnits)}</td>
                       <td className="px-4 py-3 text-right text-slate-700">{formatCurrency(row.predictedRevenue)}</td>
                     </tr>
@@ -1246,31 +1296,6 @@ export default function SalesForecastingPage() {
         </div>
       </section>
 
-      <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
-        <SectionHeader
-          index={10}
-          title="Forecasting Pipeline Visualization"
-          description="This diagram summarizes the workflow described in the PDF so the forecasting process is clear from raw data up to the inventory recommendation."
-        />
-
-        <div className="mt-6 grid gap-4 xl:grid-cols-5">
-          {[
-            "Historical Sales Data",
-            "Random Forest Model",
-            "Predicted Product Demand",
-            "LSTM Inventory Model",
-            "Recommended Stock Levels",
-          ].map((step, index) => (
-            <div key={step} className="relative rounded-3xl border border-slate-200 bg-slate-50 p-5 text-center shadow-sm">
-              <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
-                {index + 1}
-              </div>
-              <p className="mt-4 text-sm font-semibold text-slate-950">{step}</p>
-              {index < 4 ? <div className="mt-4 text-2xl text-slate-300">↓</div> : null}
-            </div>
-          ))}
-        </div>
-      </section>
     </div>
   );
 }

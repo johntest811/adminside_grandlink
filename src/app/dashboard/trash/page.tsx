@@ -9,6 +9,7 @@ type ArchivedProduct = {
   product_name: string | null;
   product_category: string | null;
   product_price: number | null;
+  product_image?: string | null;
   archived_at: string;
   archived_by: string | null;
   archived_by_name: string | null;
@@ -206,6 +207,7 @@ export default function InventoryTrashPage() {
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50 text-gray-700">
               <tr>
+                <th className="text-left px-4 py-3">Image</th>
                 <th className="text-left px-4 py-3">Product</th>
                 <th className="text-left px-4 py-3">Category</th>
                 <th className="text-left px-4 py-3">Price</th>
@@ -217,7 +219,7 @@ export default function InventoryTrashPage() {
             <tbody>
               {!loading && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-6 text-center text-gray-500">
+                  <td colSpan={7} className="px-4 py-6 text-center text-gray-500">
                     Trashcan is empty.
                   </td>
                 </tr>
@@ -227,6 +229,15 @@ export default function InventoryTrashPage() {
                 const label = it.product_name || it.product_id;
                 return (
                   <tr key={it.id} className="border-t">
+                    <td className="px-4 py-3">
+                      <div className="h-12 w-12 overflow-hidden rounded border border-gray-200 bg-gray-100">
+                        {it.product_image ? (
+                          <img src={it.product_image} alt={label} className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-[10px] text-gray-500">No image</div>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-black font-medium">{label}</td>
                     <td className="px-4 py-3 text-gray-700">{it.product_category || "—"}</td>
                     <td className="px-4 py-3 text-gray-700">

@@ -53,9 +53,53 @@ function parseSalesForecastDate(value: unknown) {
     return excelSerialToIso(Number(text));
   }
 
+  // Handle day-first strings from CSV exports like 31/12/2025.
+  const dmyMatch = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
+  if (dmyMatch) {
+    const day = Number(dmyMatch[1]);
+    const month = Number(dmyMatch[2]);
+    const yearRaw = Number(dmyMatch[3]);
+    const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    if (
+      !Number.isNaN(parsed.getTime()) &&
+      parsed.getUTCFullYear() === year &&
+      parsed.getUTCMonth() === month - 1 &&
+      parsed.getUTCDate() === day
+    ) {
+      return parsed.toISOString().slice(0, 10);
+    }
+  }
+
   const parsed = new Date(text);
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed.toISOString().slice(0, 10);
+}
+
+async function fetchAllSalesForecastRows() {
+  const pageSize = 1000;
+  const allRows: any[] = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + pageSize - 1;
+    const { data, error } = await supabase
+      .from("SalesForecast")
+      .select("Date,Product_ID,Product_Name,Category,Selling_Price,Beginning_Stock,Units_Sold,Revenue,Ending_Stock")
+      .range(from, to);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    if (!data?.length) break;
+    allRows.push(...data);
+
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return allRows;
 }
 
 function enumerateDates(startISO: string, endISO: string) {
@@ -70,12 +114,7 @@ function enumerateDates(startISO: string, endISO: string) {
 
 export async function GET(req: NextRequest) {
   try {
-    const { data: rawRows, error } = await supabase
-      .from("SalesForecast")
-      .select("Date,Product_ID,Product_Name,Category,Selling_Price,Beginning_Stock,Units_Sold,Revenue,Ending_Stock")
-      .limit(100000);
-
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    const rawRows = await fetchAllSalesForecastRows();
 
     const rows = (rawRows || [])
       .map((row: any) => {
@@ -117,10 +156,10 @@ export async function GET(req: NextRequest) {
     const requestedStart = parseIsoInput(url.searchParams.get("start"));
 
     const safeEnd = requestedEnd && requestedEnd <= latestAvailableDate ? requestedEnd : latestAvailableDate;
-    const defaultStart = addDaysISO(safeEnd, -1094);
+    const defaultStart = earliestAvailableDate;
     const safeStart = requestedStart
       ? (requestedStart < earliestAvailableDate ? earliestAvailableDate : requestedStart > safeEnd ? defaultStart : requestedStart)
-      : (defaultStart < earliestAvailableDate ? earliestAvailableDate : defaultStart);
+      : defaultStart;
 
     const labels = enumerateDates(safeStart, safeEnd);
     const revenueByDay: Record<string, number> = {};
@@ -158,6 +197,7 @@ export async function GET(req: NextRequest) {
       revenue,
       quantities,
       source: "SalesForecast",
+      earliestAvailableDate,
       latestAvailableDate,
       historyRows,
       inventorySnapshot,

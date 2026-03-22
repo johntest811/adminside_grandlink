@@ -29,6 +29,8 @@ export default function UpdateProductsPage() {
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [selectedCategoryFilters, setSelectedCategoryFilters] = useState<string[]>([]);
+  const [minPriceFilter, setMinPriceFilter] = useState("");
+  const [maxPriceFilter, setMaxPriceFilter] = useState("");
   const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
   const [newCategoryOption, setNewCategoryOption] = useState("");
   const [savingCategories, setSavingCategories] = useState(false);
@@ -558,7 +560,12 @@ export default function UpdateProductsPage() {
   const filteredProducts = products.filter(product => {
     const matchesName = (product.name || "").toLowerCase().includes((filter || "").toLowerCase());
     const matchesCategory = productMatchesAnySelectedCategory(product, selectedCategoryFilters);
-    return matchesName && matchesCategory;
+    const price = Number(product.price || 0);
+    const minPrice = minPriceFilter.trim() === "" ? null : Number(minPriceFilter);
+    const maxPrice = maxPriceFilter.trim() === "" ? null : Number(maxPriceFilter);
+    const matchesMinPrice = minPrice === null || Number.isNaN(minPrice) || price >= minPrice;
+    const matchesMaxPrice = maxPrice === null || Number.isNaN(maxPrice) || price <= maxPrice;
+    return matchesName && matchesCategory && matchesMinPrice && matchesMaxPrice;
   });
 
   const categories = mergeCategoryOptions([
@@ -615,6 +622,40 @@ export default function UpdateProductsPage() {
           </div>
 
           <p className="mb-2 text-xs text-gray-500">Select multiple categories to filter products.</p>
+          <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-gray-600">Price Filter</div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <input
+                type="number"
+                min="0"
+                placeholder="Min"
+                value={minPriceFilter}
+                onChange={(e) => setMinPriceFilter(e.target.value)}
+                className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs text-gray-800 focus:border-indigo-500 focus:outline-none"
+              />
+              <input
+                type="number"
+                min="0"
+                placeholder="Max"
+                value={maxPriceFilter}
+                onChange={(e) => setMaxPriceFilter(e.target.value)}
+                className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs text-gray-800 focus:border-indigo-500 focus:outline-none"
+              />
+            </div>
+            {(minPriceFilter || maxPriceFilter) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMinPriceFilter("");
+                  setMaxPriceFilter("");
+                }}
+                className="mt-2 text-[11px] font-semibold text-indigo-700 hover:text-indigo-900"
+              >
+                Clear price filter
+              </button>
+            )}
+          </div>
+
           <div className="space-y-2">
             <button
               type="button"
@@ -696,7 +737,7 @@ export default function UpdateProductsPage() {
               </div>
             )}
 
-            {(filter || selectedCategoryFilters.length > 0) && (
+            {(filter || selectedCategoryFilters.length > 0 || minPriceFilter || maxPriceFilter) && (
               <div className="text-sm text-gray-600">
                 Showing {filteredProducts.length} of {products.length} products
               </div>
@@ -802,7 +843,7 @@ export default function UpdateProductsPage() {
               <div className="text-6xl mb-4">📦</div>
               <h3 className="text-lg font-medium text-gray-900 mb-2">No products found</h3>
               <p className="text-gray-500 mb-4">
-                {filter || selectedCategoryFilters.length > 0
+                {filter || selectedCategoryFilters.length > 0 || minPriceFilter || maxPriceFilter
                   ? "No products match your current filters."
                   : "No products available. Add your first product to get started!"}
               </p>
@@ -818,7 +859,7 @@ export default function UpdateProductsPage() {
                       page: 'UpdateProducts',
                       metadata: {
                         context: 'empty_products_state',
-                        hasFilters: !!(filter || selectedCategoryFilters.length > 0),
+                        hasFilters: !!(filter || selectedCategoryFilters.length > 0 || minPriceFilter || maxPriceFilter),
                         adminAccount: currentAdmin.username
                       }
                     });

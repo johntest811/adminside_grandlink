@@ -206,6 +206,7 @@ export default function StartProductionPage() {
   const [adminSession, setAdminSession] = useState<AdminSession | null>(null);
   const [employees, setEmployees] = useState<AdminUser[]>([]);
   const [orders, setOrders] = useState<OrderOption[]>([]);
+  const [orderSearch, setOrderSearch] = useState("");
   const [selectedOrderId, setSelectedOrderId] = useState("");
   const [selectedOrderRecord, setSelectedOrderRecord] = useState<UserItemRecord | null>(null);
   const [existingTaskCount, setExistingTaskCount] = useState(0);
@@ -380,6 +381,17 @@ export default function StartProductionPage() {
     () => orders.find((order) => order.user_item_id === selectedOrderId) || null,
     [orders, selectedOrderId]
   );
+
+  const filteredOrders = useMemo(() => {
+    const q = orderSearch.trim().toLowerCase();
+    if (!q) return orders;
+    return orders.filter((order) => {
+      const product = String(order.product_name || "").toLowerCase();
+      const customer = String(order.customer_name || "").toLowerCase();
+      const orderId = String(order.user_item_id || "").toLowerCase();
+      return product.includes(q) || customer.includes(q) || orderId.includes(q);
+    });
+  }, [orderSearch, orders]);
 
   const currentWorkflow = useMemo(
     () => ensureProductionWorkflow(selectedOrderRecord?.meta?.production_workflow),
@@ -758,13 +770,21 @@ export default function StartProductionPage() {
             </div>
           </div>
 
+          <input
+            type="text"
+            value={orderSearch}
+            onChange={(event) => setOrderSearch(event.target.value)}
+            placeholder="Search order by product, customer, or order ID"
+            className="mt-4 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-800 outline-none ring-0 transition focus:border-emerald-500"
+          />
+
           <select
             value={selectedOrderId}
             onChange={(event) => setSelectedOrderId(event.target.value)}
             className="mt-4 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-800 outline-none ring-0 transition focus:border-emerald-500"
           >
             <option value="">Select an order…</option>
-            {orders.map((order) => (
+            {filteredOrders.map((order) => (
               <option key={order.user_item_id} value={order.user_item_id}>
                 {order.product_name} • {order.customer_name || "No customer"} • {order.order_status || "—"}
               </option>

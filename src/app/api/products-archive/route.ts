@@ -20,7 +20,7 @@ export async function GET(req: Request) {
     let query = supabase
       .from("products_archive")
       .select(
-        "id, product_id, product_name, product_category, product_price, archived_at, archived_by, archived_by_name"
+        "id, product_id, product_name, product_category, product_price, archived_at, archived_by, archived_by_name, product_data"
       )
       .order("archived_at", { ascending: false })
       .limit(limit);
@@ -33,7 +33,28 @@ export async function GET(req: Request) {
     const { data, error } = await query;
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    return NextResponse.json({ items: data || [] }, { status: 200 });
+    const items = (data || []).map((row: any) => {
+      const productData = row?.product_data || {};
+      const productImage =
+        productData?.image1 ||
+        (Array.isArray(productData?.images) ? productData.images[0] : null) ||
+        productData?.image2 ||
+        null;
+
+      return {
+        id: row.id,
+        product_id: row.product_id,
+        product_name: row.product_name,
+        product_category: row.product_category,
+        product_price: row.product_price,
+        archived_at: row.archived_at,
+        archived_by: row.archived_by,
+        archived_by_name: row.archived_by_name,
+        product_image: productImage,
+      };
+    });
+
+    return NextResponse.json({ items }, { status: 200 });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "Internal server error" }, { status: 500 });
   }
