@@ -33,6 +33,10 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, T
 const DEFAULT_TRAINING_DAYS = 1095;
 const DEFAULT_HISTORY_WINDOW_DAYS = 120;
 
+function clampInteger(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
 function addDaysISO(dateISO: string, days: number) {
   const date = new Date(`${dateISO}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + days);
@@ -110,15 +114,13 @@ function SectionHeader(props: { index: number; title: string; description: strin
 }
 
 export default function SalesForecastingPage() {
-  const [lookback, setLookback] = useState(14);
-  const [horizon, setHorizon] = useState(30);
-  const [backtestDays, setBacktestDays] = useState(28);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [series, setSeries] = useState<SalesSeriesResponse | null>(null);
   const [revForecast, setRevForecast] = useState<RandomForestSeriesForecast | null>(null);
   const [qtyForecast, setQtyForecast] = useState<RandomForestSeriesForecast | null>(null);
-  const [rfSource, setRfSource] = useState<string | null>(null);
 
   const revChartRef = useRef<any>(null);
   const qtyChartRef = useRef<any>(null);
@@ -126,8 +128,6 @@ export default function SalesForecastingPage() {
   const [autoRunDone, setAutoRunDone] = useState(false);
 
   const [historyProduct, setHistoryProduct] = useState("");
-  const [historyStart, setHistoryStart] = useState("");
-  const [historyEnd, setHistoryEnd] = useState("");
 
   const [lstmLimit, setLstmLimit] = useState(10);
   const [lstmLookback, setLstmLookback] = useState(60);
@@ -153,6 +153,15 @@ export default function SalesForecastingPage() {
     return getDaysBetweenInclusive(series?.startDate || null, series?.endDate || null);
   }, [series?.endDate, series?.startDate]);
 
+  const rfParams = useMemo(() => {
+    const rangeDays = getDaysBetweenInclusive(fromDate, toDate) || DEFAULT_HISTORY_WINDOW_DAYS;
+    return {
+      lookback: clampInteger(rangeDays * 0.15, 7, 60),
+      horizon: clampInteger(rangeDays * 0.25, 7, 90),
+      backtestDays: clampInteger(rangeDays * 0.2, 7, 60),
+    };
+  }, [fromDate, toDate]);
+
   const loadForecastingState = useCallback(async () => {
     const res = await fetch("/api/forecasting/settings", { cache: "no-store" });
     const json = (await res.json().catch(() => ({}))) as ForecastingSettingsResponse & { error?: string };
@@ -168,7 +177,6 @@ export default function SalesForecastingPage() {
       setSeries(json.cache.randomForest.series);
       setRevForecast(json.cache.randomForest.revenue);
       setQtyForecast(json.cache.randomForest.units);
-      setRfSource(json.cache.randomForest.source);
     }
 
     if (json.cache?.lstm) {
@@ -184,7 +192,11 @@ export default function SalesForecastingPage() {
       setLoading(true);
       setError(null);
 
-      const res = await fetch("/api/analytics/sales-series", { cache: "no-store" });
+      const salesSeriesUrl = new URL("/api/analytics/sales-series", window.location.origin);
+      if (fromDate) salesSeriesUrl.searchParams.set("start", fromDate);
+      if (toDate) salesSeriesUrl.searchParams.set("end", toDate);
+
+      const res = await fetch(salesSeriesUrl.toString(), { cache: "no-store" });
       const json = (await res.json().catch(() => ({}))) as any;
       if (!res.ok) throw new Error(json?.error || "Failed to load sales series");
 
@@ -196,9 +208,9 @@ export default function SalesForecastingPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           series: salesSeries,
-          lookback,
-          horizon,
-          backtestDays,
+          lookback: rfParams.lookback,
+          horizon: rfParams.horizon,
+          backtestDays: rfParams.backtestDays,
           persist: true,
           mode,
         }),
@@ -208,14 +220,13 @@ export default function SalesForecastingPage() {
 
       setRevForecast(forecastJson.revenue);
       setQtyForecast(forecastJson.units);
-      setRfSource(forecastJson.source || null);
       setLstmLastRunAt(forecastJson.trainedAt || new Date().toISOString());
     } catch (runError: unknown) {
       setError(runError instanceof Error ? runError.message : String(runError));
     } finally {
       setLoading(false);
     }
-  }, [backtestDays, horizon, lookback]);
+  }, [fromDate, rfParams.backtestDays, rfParams.horizon, rfParams.lookback, toDate]);
 
   const runLstm = useCallback(async (mode: ForecastingRunMode = "manual") => {
     try {
@@ -303,9 +314,9 @@ export default function SalesForecastingPage() {
 
   useEffect(() => {
     if (!series?.endDate) return;
-    if (!historyEnd) setHistoryEnd(series.endDate);
-    if (!historyStart) setHistoryStart(addDaysISO(series.endDate, -(DEFAULT_HISTORY_WINDOW_DAYS - 1)));
-  }, [historyEnd, historyStart, series]);
+    if (!toDate) setToDate(series.endDate);
+    if (!fromDate) setFromDate(addDaysISO(series.endDate, -(DEFAULT_HISTORY_WINDOW_DAYS - 1)));
+  }, [fromDate, series, toDate]);
 
   const revenueChartData = useMemo(() => {
     if (!revForecast) return null;
@@ -381,30 +392,6 @@ export default function SalesForecastingPage() {
     };
   }, []);
 
-  const rfAnalytics = useMemo(() => {
-    if (!revForecast || !qtyForecast) return null;
-    return {
-      revenue: {
-        rmse: revForecast.rmseBacktest,
-        mape: revForecast.mapeBacktest,
-        trendPct: revForecast.trendPct,
-        recentSum: revForecast.recentSum,
-        futureSum: revForecast.futureSum,
-        volatilityPct: revForecast.volatilityPct,
-        confidenceScore: revForecast.confidenceScore,
-      },
-      units: {
-        rmse: qtyForecast.rmseBacktest,
-        mape: qtyForecast.mapeBacktest,
-        trendPct: qtyForecast.trendPct,
-        recentSum: qtyForecast.recentSum,
-        futureSum: qtyForecast.futureSum,
-        volatilityPct: qtyForecast.volatilityPct,
-        confidenceScore: qtyForecast.confidenceScore,
-      },
-    };
-  }, [qtyForecast, revForecast]);
-
   const lstmAnalytics = useMemo(() => {
     if (!lstmResults?.length) return null;
 
@@ -447,11 +434,11 @@ export default function SalesForecastingPage() {
   const filteredHistoryRows = useMemo(() => {
     return historyRows.filter((row) => {
       if (historyProduct && row.productName !== historyProduct) return false;
-      if (historyStart && row.date < historyStart) return false;
-      if (historyEnd && row.date > historyEnd) return false;
+      if (fromDate && row.date < fromDate) return false;
+      if (toDate && row.date > toDate) return false;
       return true;
     });
-  }, [historyEnd, historyProduct, historyRows, historyStart]);
+  }, [fromDate, historyProduct, historyRows, toDate]);
 
   const forecastRows = useMemo(() => {
     if (!revForecast || !qtyForecast) return [];
@@ -465,48 +452,6 @@ export default function SalesForecastingPage() {
       };
     });
   }, [qtyForecast, revForecast]);
-
-  const monthlyForecastRows = useMemo(() => {
-    if (!forecastRows.length) return [];
-
-    const buckets = new Map<
-      string,
-      {
-        monthKey: string;
-        predictedRevenue: number;
-        predictedUnits: number;
-      }
-    >();
-
-    for (const row of forecastRows) {
-      const monthKey = String(row.date).slice(0, 7); // YYYY-MM
-      const prev = buckets.get(monthKey);
-      if (prev) {
-        prev.predictedRevenue += Number(row.predictedRevenue || 0);
-        prev.predictedUnits += Number(row.predictedUnits || 0);
-      } else {
-        buckets.set(monthKey, {
-          monthKey,
-          predictedRevenue: Number(row.predictedRevenue || 0),
-          predictedUnits: Number(row.predictedUnits || 0),
-        });
-      }
-    }
-
-    return Array.from(buckets.values()).map((row) => {
-      const [year, month] = row.monthKey.split("-");
-      const date = new Date(Date.UTC(Number(year), Number(month) - 1, 1));
-      const monthLabel = date.toLocaleDateString("en-US", {
-        month: "long",
-        year: "numeric",
-      });
-
-      return {
-        ...row,
-        monthLabel,
-      };
-    });
-  }, [forecastRows]);
 
   const inventoryByProduct = useMemo(() => {
     return new Map(inventorySnapshot.map((row) => [row.productId, row]));
@@ -667,11 +612,11 @@ export default function SalesForecastingPage() {
 
   const historicalTableRows = filteredHistoryRows;
   const selectedRangeLabel = useMemo(() => {
-    if (!historyStart && !historyEnd) return "All available dates";
-    if (historyStart && historyEnd) return `${historyStart} to ${historyEnd}`;
-    if (historyStart) return `From ${historyStart}`;
-    return `Up to ${historyEnd}`;
-  }, [historyEnd, historyStart]);
+    if (!fromDate && !toDate) return "All available dates";
+    if (fromDate && toDate) return `${fromDate} to ${toDate}`;
+    if (fromDate) return `From ${fromDate}`;
+    return `Up to ${toDate}`;
+  }, [fromDate, toDate]);
 
   return (
     <div className="space-y-6 pb-8 text-slate-900">
@@ -708,38 +653,23 @@ export default function SalesForecastingPage() {
         </div>
 
         <div className="mt-6 grid gap-3 lg:grid-cols-[1.4fr,1fr]">
-          <div className="grid gap-3 md:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-3">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <label className="text-xs uppercase tracking-[0.24em] text-slate-500">Lookback</label>
+              <label className="text-xs uppercase tracking-[0.24em] text-slate-500">From date</label>
               <input
                 className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
-                type="number"
-                min={3}
-                max={60}
-                value={lookback}
-                onChange={(event) => setLookback(Number(event.target.value || 14))}
+                type="date"
+                value={fromDate}
+                onChange={(event) => setFromDate(event.target.value)}
               />
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <label className="text-xs uppercase tracking-[0.24em] text-slate-500">Horizon</label>
+              <label className="text-xs uppercase tracking-[0.24em] text-slate-500">To date</label>
               <input
                 className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
-                type="number"
-                min={1}
-                max={90}
-                value={horizon}
-                onChange={(event) => setHorizon(Number(event.target.value || 30))}
-              />
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <label className="text-xs uppercase tracking-[0.24em] text-slate-500">Backtest</label>
-              <input
-                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
-                type="number"
-                min={7}
-                max={60}
-                value={backtestDays}
-                onChange={(event) => setBacktestDays(Number(event.target.value || 28))}
+                type="date"
+                value={toDate}
+                onChange={(event) => setToDate(event.target.value)}
               />
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -761,7 +691,7 @@ export default function SalesForecastingPage() {
               onClick={() => void run("manual")}
               disabled={loading}
             >
-              {loading ? "Running sales forecast..." : "Run Random Forest"}
+              {loading ? "Running sales forecast..." : "Run Sales Forecast"}
             </button>
             <button
               className="rounded-2xl bg-emerald-600 px-5 py-4 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
@@ -795,14 +725,14 @@ export default function SalesForecastingPage() {
           title="Forecasted units for the next horizon"
           value={formatNumber(predictedDemandTotal)}
           tone="bg-sky-50 border-sky-100"
-          helper={`Random Forest output across the next ${horizon} day(s).`}
+          helper={`Random Forest output across the next ${revForecast?.meta.horizon || rfParams.horizon} day(s).`}
         />
         <MetricTile
           eyebrow="Revenue Outlook"
           title="Expected revenue for the forecast window"
           value={formatCurrency(predictedRevenueTotal)}
           tone="bg-indigo-50 border-indigo-100"
-          helper={`Trend ${rfAnalytics ? `${rfAnalytics.revenue.trendPct.toFixed(1)}%` : "--"} compared with the recent period.`}
+          helper={`Trend ${revForecast ? `${revForecast.trendPct.toFixed(1)}%` : "--"} compared with the recent period.`}
         />
         <MetricTile
           eyebrow="5. Current Inventory Status"
@@ -852,8 +782,8 @@ export default function SalesForecastingPage() {
             <input
               className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none"
               type="date"
-              value={historyStart}
-              onChange={(event) => setHistoryStart(event.target.value)}
+              value={fromDate}
+              onChange={(event) => setFromDate(event.target.value)}
             />
           </label>
           <label className="block">
@@ -861,8 +791,8 @@ export default function SalesForecastingPage() {
             <input
               className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none"
               type="date"
-              value={historyEnd}
-              onChange={(event) => setHistoryEnd(event.target.value)}
+              value={toDate}
+              onChange={(event) => setToDate(event.target.value)}
             />
           </label>
           <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
@@ -913,75 +843,6 @@ export default function SalesForecastingPage() {
       <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
         <SectionHeader
           index={2}
-          title="Sales Forecast (Random Forest Output)"
-          description="Predicted sales generated by the Random Forest model. Section 2 aggregates daily predictions into monthly totals for easier planning and reporting."
-          right={
-            <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              <div className="font-semibold text-slate-900">Model label</div>
-              <div className="mt-1 uppercase tracking-[0.2em]">Random Forest (Monthly View)</div>
-            </div>
-          }
-        />
-
-        <div className="mt-5 grid gap-4 xl:grid-cols-[1.2fr,0.8fr]">
-          <div className="overflow-x-auto rounded-3xl border border-slate-200">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 text-slate-600">
-                <tr>
-                  <th className="px-4 py-3 text-left">Forecast Month</th>
-                  <th className="px-4 py-3 text-right">Predicted Units</th>
-                  <th className="px-4 py-3 text-right">Predicted Revenue</th>
-                </tr>
-              </thead>
-              <tbody>
-                {monthlyForecastRows.length ? (
-                  monthlyForecastRows.map((row) => (
-                    <tr key={row.monthKey} className="border-t border-slate-100">
-                      <td className="px-4 py-3 font-medium text-slate-950">{row.monthLabel}</td>
-                      <td className="px-4 py-3 text-right text-slate-700">{formatNumber(row.predictedUnits)}</td>
-                      <td className="px-4 py-3 text-right text-slate-700">{formatCurrency(row.predictedRevenue)}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={3} className="px-4 py-10 text-center text-slate-500">
-                      Run Random Forest forecasting to populate the table.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="grid gap-3">
-            <MetricTile
-              eyebrow="Forecast Engine"
-              title="Execution source"
-              value={(rfSource || "Unknown").toUpperCase()}
-              tone="bg-slate-50 border-slate-200"
-              helper="Uses FastAPI when configured; otherwise falls back to the local model implementation."
-            />
-            <MetricTile
-              eyebrow="Backtest"
-              title="Revenue error"
-              value={revForecast ? formatCurrency(revForecast.maeBacktest) : "--"}
-              tone="bg-cyan-50 border-cyan-100"
-              helper={revForecast ? `RMSE ${formatCurrency(revForecast.rmseBacktest)} · MAPE ${revForecast.mapeBacktest.toFixed(1)}%` : "Waiting for a completed run."}
-            />
-            <MetricTile
-              eyebrow="Backtest"
-              title="Units error"
-              value={qtyForecast ? formatNumber(qtyForecast.maeBacktest, 2) : "--"}
-              tone="bg-emerald-50 border-emerald-100"
-              helper={qtyForecast ? `RMSE ${formatNumber(qtyForecast.rmseBacktest, 2)} · MAPE ${qtyForecast.mapeBacktest.toFixed(1)}%` : "Waiting for a completed run."}
-            />
-          </div>
-        </div>
-      </section>
-
-      <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
-        <SectionHeader
-          index={3}
           title="Sales Forecast Graph"
           description="Line charts compare historical sales against forecasted sales. The forecast segment is rendered as a dashed line so future projections are easy to distinguish."
         />
@@ -1017,7 +878,7 @@ export default function SalesForecastingPage() {
 
       <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
         <SectionHeader
-          index={5}
+          index={3}
           title="Current Inventory Status"
           description="Displays the current stock available in the warehouse based on the latest SalesForecast snapshot, so admins can compare real stock against predicted demand."
         />
@@ -1058,7 +919,7 @@ export default function SalesForecastingPage() {
 
       <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
         <SectionHeader
-          index={6}
+          index={4}
           title="Inventory Forecast (LSTM Output)"
           description="Uses the LSTM model to predict future inventory requirements based on historical demand trends from SalesForecast. This section converts those predictions into recommended inventory targets."
           right={
@@ -1197,7 +1058,7 @@ export default function SalesForecastingPage() {
       <div className="grid gap-4 xl:grid-cols-2">
         <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
           <SectionHeader
-            index={7}
+            index={5}
             title="Safety Stock Calculation"
             description="Adds extra inventory to prevent stockouts. The current implementation uses a conservative rule: at least 15% of forecasted demand, at least 5% of recent sales, and never below 5 units."
           />
@@ -1236,7 +1097,7 @@ export default function SalesForecastingPage() {
 
         <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
           <SectionHeader
-            index={8}
+            index={6}
             title="Restock Recommendation"
             description="Shows how many units should be ordered based on the gap between current stock and the recommended inventory level."
           />
@@ -1271,7 +1132,7 @@ export default function SalesForecastingPage() {
 
       <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
         <SectionHeader
-          index={9}
+          index={7}
           title="Model Performance Metrics"
           description="Displays evaluation metrics so users can understand how reliable each model is before acting on the forecast."
         />

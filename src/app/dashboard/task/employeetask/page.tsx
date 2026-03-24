@@ -70,6 +70,7 @@ type UserItemLite = {
   delivery_address_id?: string | null;
   order_status?: string | null;
   status?: string | null;
+  special_instructions?: string | null;
   meta?: Record<string, any> | null;
   progress_history?: any[];
   products?: { name?: string | null } | null;
@@ -87,6 +88,8 @@ type OrderGroup = {
   order_status: string | null;
   production_percent: number;
   estimatedCompletionDate: string | null;
+  special_instructions?: string | null;
+  meta?: Record<string, any> | null;
   workflow: ProductionWorkflowMeta;
   tasks: EnrichedTask[];
 };
@@ -142,6 +145,63 @@ function resolveCustomerName(userItem: UserItemLite | undefined, addressMap: Map
   return null;
 }
 
+function formatRequestValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => formatRequestValue(entry))
+      .filter(Boolean)
+      .join(", ");
+  }
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, entry]) => {
+        const formatted = formatRequestValue(entry);
+        if (!formatted) return "";
+        return `${key.replace(/_/g, " ")}: ${formatted}`;
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  return "";
+}
+
+function extractRequestDetails(group: Pick<OrderGroup, "special_instructions" | "meta"> | null) {
+  const meta = (group?.meta || {}) as Record<string, any>;
+  const specialInstructions = [
+    group?.special_instructions,
+    meta.special_instructions,
+    meta.specialInstructions,
+    meta.customer_special_instructions,
+    meta.customer_request?.special_instructions,
+    meta.customer_request?.specialInstructions,
+    meta.customization?.special_instructions,
+    meta.customization?.notes,
+    meta.notes,
+  ]
+    .map((entry) => formatRequestValue(entry))
+    .find(Boolean) || "";
+
+  const colorCustomization = [
+    meta.color_customization,
+    meta.colorCustomization,
+    meta.custom_color,
+    meta.customColor,
+    meta.preferred_color,
+    meta.preferredColor,
+    meta.color,
+    meta.product_color,
+    meta.customization?.color,
+    meta.customization?.colors,
+  ]
+    .map((entry) => formatRequestValue(entry))
+    .find(Boolean) || "";
+
+  return { specialInstructions, colorCustomization };
+}
+
 export default function EmployeeTasksPage() {
   const searchParams = useSearchParams();
   const [adminSession, setAdminSession] = useState<AdminSession | null>(null);
@@ -165,6 +225,7 @@ export default function EmployeeTasksPage() {
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number; title?: string } | null>(null);
   const [highlightOrderId, setHighlightOrderId] = useState("");
   const [workflowPopupOrderId, setWorkflowPopupOrderId] = useState<string | null>(null);
+  const [requestDetailsGroup, setRequestDetailsGroup] = useState<OrderGroup | null>(null);
 
   const canReviewProgress = useMemo(() => {
     return canManageProductionWorkflow(adminSession);
@@ -321,7 +382,7 @@ export default function EmployeeTasksPage() {
 
       const { data: uiRows, error: uiErr } = await supabase
         .from("user_items")
-        .select("id, customer_name, delivery_address_id, order_status, status, meta, progress_history, products(name)")
+        .select("id, customer_name, delivery_address_id, order_status, status, special_instructions, meta, progress_history, products(name)")
         .in("id", orderIds);
       if (uiErr) throw uiErr;
 
@@ -369,6 +430,8 @@ export default function EmployeeTasksPage() {
           estimatedCompletionDate: String(
             workflow.estimated_completion_date || userItem?.meta?.production_estimated_completion_date || ""
           ) || null,
+          special_instructions: (userItem?.special_instructions || null) as string | null,
+          meta: (userItem?.meta || null) as Record<string, any> | null,
           workflow,
           tasks: sortTasks(groupedTasks.get(orderId) || []),
         };
@@ -770,6 +833,8 @@ export default function EmployeeTasksPage() {
     };
   }, [orderGroups]);
 
+  const requestDetails = useMemo(() => extractRequestDetails(requestDetailsGroup), [requestDetailsGroup]);
+
   return (
     <div className="mx-auto max-w-7xl space-y-6 rounded-3xl bg-slate-50/70 p-6">
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -826,6 +891,13 @@ export default function EmployeeTasksPage() {
                     <div className="text-sm text-slate-500">Stage: {String(group.order_status || "—").replace(/_/g, " ")}</div>
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setRequestDetailsGroup(group)}
+                      className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      View request details
+                    </button>
                     <button
                       type="button"
                       onClick={() => openWorkflowEditor(group.user_item_id)}
@@ -1074,6 +1146,13 @@ export default function EmployeeTasksPage() {
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Quick links</div>
                 <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRequestDetailsGroup(selectedGroup)}
+                    className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-white"
+                  >
+                    Request details
+                  </button>
                   <button
                     type="button"
                     onClick={() => openWorkflowEditor(selectedGroup.user_item_id)}
@@ -1354,6 +1433,53 @@ export default function EmployeeTasksPage() {
               src={`/dashboard/task/setup-workflow?orderId=${encodeURIComponent(workflowPopupOrderId)}&popup=1`}
               className="h-full w-full border-0"
             />
+          </div>
+        </div>
+      ) : null}
+
+      {requestDetailsGroup ? (
+        <div className="fixed inset-0 z-[82] flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-2xl rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-lg font-semibold text-slate-900">Customer request details</div>
+                <div className="mt-1 text-sm text-slate-500">
+                  {requestDetailsGroup.product_name} • {requestDetailsGroup.customer_name || "No customer"}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRequestDetailsGroup(null)}
+                className="rounded-full border border-slate-200 px-3 py-1 text-sm text-slate-600 transition hover:bg-slate-50"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Special Instructions</div>
+                <div className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
+                  {requestDetails.specialInstructions || "No special instructions provided."}
+                </div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Color Customization</div>
+                <div className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
+                  {requestDetails.colorCustomization || "No color customization provided."}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setRequestDetailsGroup(null)}
+                className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

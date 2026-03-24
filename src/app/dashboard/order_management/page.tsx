@@ -39,6 +39,63 @@ type UserItem = {
   customer?: { name?: string|null; email?: string|null; phone?: string|null };
 };
 
+function formatRequestValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => formatRequestValue(entry))
+      .filter(Boolean)
+      .join(', ');
+  }
+  if (typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, entry]) => {
+        const formatted = formatRequestValue(entry);
+        if (!formatted) return '';
+        return `${key.replace(/_/g, ' ')}: ${formatted}`;
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+  return '';
+}
+
+function extractRequestDetails(item: UserItem | null) {
+  const meta = (item?.meta || {}) as Record<string, any>;
+  const specialInstructions = [
+    item?.special_instructions,
+    meta.special_instructions,
+    meta.specialInstructions,
+    meta.customer_special_instructions,
+    meta.customer_request?.special_instructions,
+    meta.customer_request?.specialInstructions,
+    meta.customization?.special_instructions,
+    meta.customization?.notes,
+    meta.notes,
+  ]
+    .map((entry) => formatRequestValue(entry))
+    .find(Boolean) || '';
+
+  const colorCustomization = [
+    meta.color_customization,
+    meta.colorCustomization,
+    meta.custom_color,
+    meta.customColor,
+    meta.preferred_color,
+    meta.preferredColor,
+    meta.color,
+    meta.product_color,
+    meta.customization?.color,
+    meta.customization?.colors,
+  ]
+    .map((entry) => formatRequestValue(entry))
+    .find(Boolean) || '';
+
+  return { specialInstructions, colorCustomization };
+}
+
 export default function OrdersPage() {
   const [reservations, setReservations] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,6 +113,7 @@ export default function OrdersPage() {
     payment_id: '',
     payment_method: '',
   });
+  const [requestDetailsItem, setRequestDetailsItem] = useState<UserItem | null>(null);
   // New: date/time filter
   const [startDateTime, setStartDateTime] = useState<string>('');
   const [endDateTime, setEndDateTime] = useState<string>('');
@@ -320,6 +378,8 @@ export default function OrdersPage() {
     return counts;
   }, [filteredReservations]);
 
+  const requestDetails = useMemo(() => extractRequestDetails(requestDetailsItem), [requestDetailsItem]);
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -561,6 +621,13 @@ export default function OrdersPage() {
                           );
                         })
                       )}
+                      <button
+                        type="button"
+                        onClick={() => setRequestDetailsItem(r)}
+                        className="text-xs font-semibold bg-white text-slate-700 border border-slate-200 px-2 py-1 rounded hover:bg-slate-50 transition-colors"
+                      >
+                        Request Details
+                      </button>
                     </div>
                     {['approved', 'in_production', 'quality_check', 'packaging'].includes(String(stage || '')) ? (
                       <div className="mt-3 flex flex-wrap gap-2">
@@ -695,6 +762,53 @@ export default function OrdersPage() {
                 }}
               >
                 Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {requestDetailsItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-2xl rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-lg font-semibold text-slate-900">Customer request details</div>
+                <div className="mt-1 text-sm text-slate-500">
+                  {requestDetailsItem.meta?.product_name || requestDetailsItem.product_details?.name || requestDetailsItem.product_id} • {requestDetailsItem.customer?.name || requestDetailsItem.customer_name || 'No customer'}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRequestDetailsItem(null)}
+                className="rounded-full border border-slate-200 px-3 py-1 text-sm text-slate-600 transition hover:bg-slate-50"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Special Instructions</div>
+                <div className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
+                  {requestDetails.specialInstructions || 'No special instructions provided.'}
+                </div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Color Customization</div>
+                <div className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
+                  {requestDetails.colorCustomization || 'No color customization provided.'}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setRequestDetailsItem(null)}
+                className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+              >
+                Close
               </button>
             </div>
           </div>
