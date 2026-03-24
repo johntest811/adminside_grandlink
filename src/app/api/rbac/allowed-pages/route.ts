@@ -19,6 +19,16 @@ export async function GET(req: Request) {
 
     const supabase = supabaseAdmin();
 
+    await supabase.from("rbac_pages").upsert(
+      {
+        key: "content_management_downloads",
+        name: "Content Management - Downloads Page",
+        path: "/dashboard/Content_management/downloads",
+        group_name: "Content Management",
+      },
+      { onConflict: "key" }
+    );
+
     const { data: adminRow, error: adminErr } = await supabase
       .from("admins")
       .select("id,role,position")

@@ -14,6 +14,7 @@ const supabase = createClient(SUPABASE_URL || "", SUPABASE_SERVICE_ROLE_KEY || "
 // use a fixed UUID so we keep a single row (singleton)
 // NOTE: id column in the DB is uuid, so use a valid UUID string here.
 const SINGLETON_ID = "00000000-0000-0000-0000-000000000000";
+const GET_CACHE_CONTROL = "public, max-age=60, s-maxage=300, stale-while-revalidate=1800";
 
 export async function GET() {
   try {
@@ -30,10 +31,13 @@ export async function GET() {
     }
 
     if (!data) {
-      return NextResponse.json({ content: {} });
+      return NextResponse.json({ content: {} }, { headers: { "Cache-Control": GET_CACHE_CONTROL } });
     }
 
-    return NextResponse.json({ id: data.id, content: data.content ?? {}, updated_at: data.updated_at });
+    return NextResponse.json(
+      { id: data.id, content: data.content ?? {}, updated_at: data.updated_at },
+      { headers: { "Cache-Control": GET_CACHE_CONTROL } }
+    );
   } catch (err: any) {
     console.error("GET /api/home error:", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });
@@ -67,7 +71,10 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: error.message || error }, { status: 500 });
     }
 
-    return NextResponse.json({ id: data.id, content: data.content ?? {}, updated_at: data.updated_at });
+    return NextResponse.json(
+      { id: data.id, content: data.content ?? {}, updated_at: data.updated_at },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (err: any) {
     console.error("PUT /api/home error:", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });

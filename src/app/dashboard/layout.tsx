@@ -134,6 +134,7 @@ function DashboardLayoutInner({
         { name: 'Services We Offer', path: '/dashboard/Content_management/Service' },
         { name: 'Featured Projects', path: '/dashboard/Content_management/Featured' },
         { name: 'Products Page', path: '/dashboard/Content_management/products' },
+        { name: 'Downloads', path: '/dashboard/Content_management/downloads' },
         { name: 'Delivery & Ordering Process', path: '/dashboard/Content_management/DeliveryProcess' },
         { name: 'FAQs', path: '/dashboard/Content_management/FAQs' },
         { name: 'Inquire Page Editor', path: '/dashboard/inquiries/editor', icon: '📝' },

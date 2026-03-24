@@ -23,6 +23,12 @@ export async function GET() {
             group_name: "Content Management",
           },
           {
+            key: "content_management_downloads",
+            name: "Content Management - Downloads Page",
+            path: "/dashboard/Content_management/downloads",
+            group_name: "Content Management",
+          },
+          {
             key: "user_accounts_delete",
             name: "User Accounts Delete",
             path: "/dashboard/user-accounts/delete",
