@@ -19,6 +19,11 @@ Optional (server-side/admin only):
 
 - `SUPABASE_SERVICE_ROLE_KEY`
 
+Forecasting (recommended for Vercel):
+
+- `FORECASTING_FASTAPI_URL` (URL of the FastAPI forecasting service)
+- `FORECASTING_ALLOW_LOCAL_FALLBACK` (optional; defaults to disabled in production)
+
 First, run the development server:
 
 ```bash

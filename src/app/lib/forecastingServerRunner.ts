@@ -10,6 +10,17 @@ import type {
   SalesSeriesResponse,
 } from "@/app/lib/forecastingShared";
 
+const FASTAPI_TIMEOUT_MS = 120000;
+
+function shouldUseLocalFallback() {
+  const flag = (process.env.FORECASTING_ALLOW_LOCAL_FALLBACK || "").trim().toLowerCase();
+  if (flag === "true" || flag === "1" || flag === "yes") return true;
+  if (flag === "false" || flag === "0" || flag === "no") return false;
+
+  // Safe default for Vercel/serverless deployments: do not run local training workloads.
+  return process.env.NODE_ENV !== "production";
+}
+
 function computeRegressionMetrics(actual: number[], predicted: number[]) {
   const n = Math.min(actual.length, predicted.length);
   if (!n) {
@@ -105,15 +116,27 @@ function augmentForecast(seriesForecast: any): RandomForestSeriesForecast {
 
 async function callFastApi<T>(path: string, payload: Record<string, unknown>): Promise<T | null> {
   const baseUrl = process.env.FORECASTING_FASTAPI_URL?.trim();
-  if (!baseUrl) return null;
+  if (!baseUrl) {
+    if (shouldUseLocalFallback()) return null;
+    throw new Error("FORECASTING_FASTAPI_URL is not configured");
+  }
 
   try {
-    const response = await fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      cache: "no-store",
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FASTAPI_TIMEOUT_MS);
+    const response = await (async () => {
+      try {
+        return await fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          cache: "no-store",
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+    })();
 
     if (!response.ok) {
       const errorBody = await response.text().catch(() => "");
@@ -122,6 +145,12 @@ async function callFastApi<T>(path: string, payload: Record<string, unknown>): P
 
     return (await response.json()) as T;
   } catch (error) {
+    if (!shouldUseLocalFallback()) {
+      throw new Error(
+        `FastAPI ${path} failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+
     console.error(`FastAPI ${path} failed, falling back to local forecasting`, error);
     return null;
   }

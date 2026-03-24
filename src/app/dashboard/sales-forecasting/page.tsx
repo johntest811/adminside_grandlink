@@ -304,13 +304,11 @@ export default function SalesForecastingPage() {
     void (async () => {
       try {
         await loadForecastingState();
-        await Promise.allSettled([run("manual"), runLstm("manual")]);
       } catch (stateError) {
         console.error("Failed to load forecasting state", stateError);
-        await Promise.allSettled([run("manual"), runLstm("manual")]);
       }
     })();
-  }, [autoRunDone, loadForecastingState, run, runLstm]);
+  }, [autoRunDone, loadForecastingState]);
 
   useEffect(() => {
     if (!series?.endDate) return;

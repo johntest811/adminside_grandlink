@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 
 type DownloadsContent = {
   heroTitle?: string;
@@ -10,6 +9,7 @@ type DownloadsContent = {
   cardDescription?: string;
   buttonLabel?: string;
   releaseNotes?: string;
+  downloadUrl?: string;
   apkUrl?: string;
   apkVersion?: string;
   apkSize?: string;
@@ -23,9 +23,10 @@ const defaultContent: DownloadsContent = {
   heroTitle: "Download GrandLink Mobile",
   heroDescription: "Install the mobile APK to manage reservations and updates faster from your Android device.",
   cardTitle: "GrandLink Android App",
-  cardDescription: "Direct APK installer from our secure storage.",
-  buttonLabel: "Download APK",
+  cardDescription: "Use our official Google Drive link for the latest Android installer.",
+  buttonLabel: "Open Google Drive",
   releaseNotes: "First mobile release",
+  downloadUrl: "",
   apkUrl: "",
   apkVersion: "",
   apkSize: "",
@@ -35,27 +36,19 @@ const defaultContent: DownloadsContent = {
   enabled: true,
 };
 
-function formatBytes(bytes: number) {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-function sanitizeFilename(name: string) {
-  return name.replace(/[^a-zA-Z0-9._-]/g, "_");
-}
-
 export default function DownloadsEditorPage() {
   const [content, setContent] = useState<DownloadsContent>(defaultContent);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<string>("");
   const [error, setError] = useState<string>("");
 
-  const previewEnabled = useMemo(() => !!content.enabled && !!content.apkUrl, [content.enabled, content.apkUrl]);
+  const resolvedDownloadUrl = useMemo(
+    () => (content.downloadUrl || content.apkUrl || "").trim(),
+    [content.downloadUrl, content.apkUrl]
+  );
+
+  const previewEnabled = useMemo(() => !!content.enabled && !!resolvedDownloadUrl, [content.enabled, resolvedDownloadUrl]);
 
   const loadContent = async () => {
     setLoading(true);
@@ -98,59 +91,6 @@ export default function DownloadsEditorPage() {
     }
   };
 
-  const onUploadApk = async (file: File | null) => {
-    if (!file) return;
-    setUploading(true);
-    setError("");
-    setMessage("");
-    try {
-      const requestPayload = {
-        fileName: sanitizeFilename(file.name || "app-release.apk"),
-        fileSize: file.size,
-      };
-
-      const signedRes = await fetch("/api/downloads/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestPayload),
-      });
-
-      const signedPayload = await signedRes.json().catch(() => ({}));
-      if (!signedRes.ok) throw new Error(signedPayload?.error || "Failed to prepare upload");
-
-      if (!signedPayload?.signedPath || !signedPayload?.signedToken) {
-        throw new Error("Signed upload data is incomplete");
-      }
-
-      const uploadResult = await supabase.storage
-        .from("Downloads")
-        .uploadToSignedUrl(signedPayload.signedPath, signedPayload.signedToken, file, {
-          upsert: true,
-          contentType: "application/vnd.android.package-archive",
-          cacheControl: "31536000",
-        });
-
-      if (uploadResult.error) {
-        throw new Error(uploadResult.error.message || "Upload to Supabase failed");
-      }
-
-      setContent((prev) => ({
-        ...prev,
-        apkUrl: String(signedPayload?.originalUrl || prev.apkUrl || ""),
-        apkFileName: String(signedPayload?.fileName || prev.apkFileName || ""),
-        apkSize: formatBytes(file.size),
-        compressedUrl: "",
-        compressionRatio: null,
-      }));
-
-      setMessage("APK uploaded successfully to Supabase Downloads bucket.");
-    } catch (e: any) {
-      setError(e?.message || String(e));
-    } finally {
-      setUploading(false);
-    }
-  };
-
   if (loading) {
     return (
       <div className="min-h-[60vh] grid place-items-center text-black">
@@ -164,7 +104,7 @@ export default function DownloadsEditorPage() {
       <div className="rounded-2xl border bg-white p-6 shadow-sm">
         <h1 className="text-2xl font-bold">Downloads Page Editor</h1>
         <p className="text-sm text-gray-600 mt-1">
-          Manage the website download page and upload Android APK files to the Downloads bucket.
+          Manage the website download page and publish a Google Drive link for Android downloads.
         </p>
       </div>
 
@@ -251,49 +191,47 @@ export default function DownloadsEditorPage() {
         </div>
 
         <div className="rounded-2xl border bg-white p-6 shadow-sm space-y-4">
-          <h2 className="text-lg font-semibold">APK Upload</h2>
+          <h2 className="text-lg font-semibold">Google Drive Download Link</h2>
           <p className="text-sm text-gray-600">
-            Upload .apk files to Supabase bucket <span className="font-semibold">Downloads</span>. The installer file remains unchanged for Android install safety.
+            Paste the public Google Drive share link for your latest APK. This replaces Supabase APK uploads.
           </p>
 
+          <label className="block text-sm font-medium">Google Drive URL</label>
           <input
-            type="file"
-            accept=".apk,application/vnd.android.package-archive"
-            onChange={(e) => onUploadApk(e.target.files?.[0] || null)}
-            disabled={uploading}
-            className="block w-full rounded-lg border px-3 py-2 text-sm"
+            className="w-full rounded-lg border px-3 py-2"
+            value={content.downloadUrl || content.apkUrl || ""}
+            onChange={(e) =>
+              setContent((p) => ({
+                ...p,
+                downloadUrl: e.target.value,
+                apkUrl: e.target.value,
+                compressedUrl: "",
+                compressionRatio: null,
+              }))
+            }
+            placeholder="https://drive.google.com/file/d/.../view?usp=sharing"
           />
 
           <div className="rounded-lg border bg-gray-50 p-4 text-sm space-y-1">
             <div><span className="font-medium">Current APK:</span> {content.apkFileName || "None"}</div>
             <div><span className="font-medium">APK Size:</span> {content.apkSize || "Unknown"}</div>
             <div>
-              <span className="font-medium">APK URL:</span>{" "}
-              {content.apkUrl ? (
-                <a href={content.apkUrl} target="_blank" rel="noreferrer" className="text-blue-700 underline break-all">
-                  {content.apkUrl}
+              <span className="font-medium">Download URL:</span>{" "}
+              {resolvedDownloadUrl ? (
+                <a href={resolvedDownloadUrl} target="_blank" rel="noreferrer" className="text-blue-700 underline break-all">
+                  {resolvedDownloadUrl}
                 </a>
               ) : (
-                "Not uploaded"
-              )}
-            </div>
-            <div>
-              <span className="font-medium">Compression companion:</span>{" "}
-              {content.compressedUrl ? (
-                <a href={content.compressedUrl} target="_blank" rel="noreferrer" className="text-blue-700 underline break-all">
-                  Available ({content.compressionRatio ? `${(content.compressionRatio * 100).toFixed(1)}% of original` : "optimized"})
-                </a>
-              ) : (
-                "Not generated"
+                "Not configured"
               )}
             </div>
           </div>
 
           <div className="rounded-lg border bg-amber-50 border-amber-200 p-3 text-xs text-amber-900">
-            Large APK uploads use direct signed upload to Supabase Storage so they bypass Vercel request-size limits. APK stays intact for install safety.
+            Use a public "Anyone with the link" Google Drive URL so customers can download without authentication.
           </div>
 
-          <div className="rounded-lg border p-4">
+          {/* <div className="rounded-lg border p-4">
             <h3 className="font-semibold mb-2">Website Preview</h3>
             <div className="space-y-2">
               <div className="text-xl font-bold">{content.heroTitle}</div>
@@ -302,10 +240,10 @@ export default function DownloadsEditorPage() {
                 disabled={!previewEnabled}
                 className="rounded-lg bg-black px-4 py-2 text-white disabled:opacity-50"
               >
-                {content.buttonLabel || "Download APK"}
+                {content.buttonLabel || "Open Google Drive"}
               </button>
             </div>
-          </div>
+          </div> */}
         </div>
       </div>
     </section>
