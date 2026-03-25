@@ -389,9 +389,9 @@ export default function ReportsPage() {
       const currentDate = new Date().toLocaleDateString();
       const reportPeriod = `${dateRange.startDate} to ${dateRange.endDate}`;
       const generatedAt = new Date().toLocaleString();
-      const brandPrimary: [number, number, number] = [15, 23, 42];
-      const brandAccent: [number, number, number] = [14, 116, 144];
-      const brandMuted: [number, number, number] = [100, 116, 139];
+      const brandPrimary: [number, number, number] = [127, 29, 29];
+      const brandAccent: [number, number, number] = [153, 27, 27];
+      const brandMuted: [number, number, number] = [120, 53, 15];
       const marginX = 14;
 
       // Helper: load public logo (AVIF) and convert to PNG data URL for jsPDF
@@ -413,25 +413,8 @@ export default function ReportsPage() {
           img.src = "/ge-logo.avif"; // from public/
         });
 
-      // Try to place the logo on the right side of the header
-      let headerBottomY = 0;
-      try {
-        const logo = await loadImageAsPngDataUrl();
-        const pageWidth = (pdf as any).internal.pageSize.getWidth();
-        const imgW = 26;
-        const imgH = imgW * (logo.height / Math.max(1, logo.width));
-        const imgX = pageWidth - marginX - imgW;
-        const imgY = 10;
-        pdf.addImage(logo.dataUrl, "PNG", imgX, imgY, imgW, imgH);
-        headerBottomY = imgY + imgH;
-      } catch {
-        // If logo fails to load, continue without blocking PDF generation
-        headerBottomY = 18;
-      }
-
+      // Keep header background white for print clarity.
       const pageWidth = (pdf as any).internal.pageSize.getWidth();
-      pdf.setFillColor(248, 250, 252);
-      pdf.roundedRect(marginX, 8, pageWidth - marginX * 2, 24, 3, 3, "F");
 
       pdf.setFontSize(18);
       pdf.setTextColor(...brandPrimary);
@@ -441,6 +424,20 @@ export default function ReportsPage() {
       pdf.setTextColor(...brandMuted);
       pdf.text(`Prepared for: ${currentAdmin.username}`, marginX + 2, 24);
       pdf.text(`Generated: ${generatedAt}`, marginX + 2, 29);
+
+      // Place logo on the right side of page 1 header.
+      let headerBottomY = 32;
+      try {
+        const logo = await loadImageAsPngDataUrl();
+        const imgW = 42;
+        const imgH = imgW * (logo.height / Math.max(1, logo.width));
+        const imgX = pageWidth - marginX - imgW;
+        const imgY = 8;
+        pdf.addImage(logo.dataUrl, "PNG", imgX, imgY, imgW, imgH);
+        headerBottomY = Math.max(headerBottomY, imgY + imgH);
+      } catch {
+        // If logo fails to load, continue without blocking PDF generation.
+      }
 
       const selectedBlocksLabel = selectedReportBlocks.length
         ? REPORT_BLOCK_OPTIONS.filter((block) => selectedReportBlocks.includes(block.id))
@@ -741,9 +738,9 @@ export default function ReportsPage() {
         ? (pdf as any).lastAutoTable.finalY + 20
         : 90;
 
-      const addChartToPdf = (chartRef: any, title: string) => {
+      const getChartImage = (chartRef: any) => {
         const chart = chartRef?.current;
-        if (!chart) return;
+        if (!chart) return null;
 
         // Try both Chart.js APIs to get a base64 image
         const canvas: HTMLCanvasElement | undefined =
@@ -753,30 +750,13 @@ export default function ReportsPage() {
             ? chart.toBase64Image()
             : canvas?.toDataURL?.("image/png");
 
-        if (!imgData) return;
+        if (!imgData) return null;
 
-        const canvasWidth = canvas?.width || 800;
-        const canvasHeight = canvas?.height || 400;
-        const maxWidth = pdfPageWidth - margin * 2;
-        const ratio = canvasHeight / canvasWidth;
-        const imgWidth = maxWidth;
-        const imgHeight = imgWidth * ratio;
-
-        // New page if not enough space
-        if (y + imgHeight + 16 > pageHeight - margin) {
-          pdf.addPage();
-          y = margin;
-        }
-
-        // Title
-        pdf.setFontSize(14);
-        pdf.setTextColor(139, 28, 28);
-        pdf.text(title, margin, y);
-
-        // Image
-        y += 6;
-        pdf.addImage(imgData, "PNG", margin, y, imgWidth, imgHeight);
-        y += imgHeight + 16;
+        return {
+          imgData,
+          width: canvas?.width || 800,
+          height: canvas?.height || 400,
+        };
       };
 
       // Charts section
@@ -796,10 +776,55 @@ export default function ReportsPage() {
         pdf.text("Charts and Visual Trends", margin, y);
         y += 8;
 
-        if (hasReportBlock("revenue_over_time")) addChartToPdf(revenueLineRef, "Revenue Over Time");
-        if (hasReportBlock("kpis_overview")) addChartToPdf(kpiDoughnutRef, "KPIs Overview");
-        if (hasReportBlock("orders_status_breakdown")) addChartToPdf(ordersStatusRef, "Orders Status Breakdown");
-        if (hasReportBlock("revenue_by_category")) addChartToPdf(categoryRevenueRef, "Revenue by Category");
+        const selectedCharts: Array<{ title: string; image: { imgData: string; width: number; height: number } }> = [];
+        if (hasReportBlock("revenue_over_time")) {
+          const image = getChartImage(revenueLineRef);
+          if (image) selectedCharts.push({ title: "Revenue Over Time", image });
+        }
+        if (hasReportBlock("kpis_overview")) {
+          const image = getChartImage(kpiDoughnutRef);
+          if (image) selectedCharts.push({ title: "KPIs Overview", image });
+        }
+        if (hasReportBlock("orders_status_breakdown")) {
+          const image = getChartImage(ordersStatusRef);
+          if (image) selectedCharts.push({ title: "Orders Status Breakdown", image });
+        }
+        if (hasReportBlock("revenue_by_category")) {
+          const image = getChartImage(categoryRevenueRef);
+          if (image) selectedCharts.push({ title: "Revenue by Category", image });
+        }
+
+        const chartGap = 6;
+        const chartBoxW = (pdfPageWidth - margin * 2 - chartGap) / 2;
+        const chartTitleH = 5;
+        const chartImageH = 56;
+        const chartRowH = chartTitleH + chartImageH + 8;
+
+        for (let i = 0; i < selectedCharts.length; i += 2) {
+          if (y + chartRowH > pageHeight - margin - 10) {
+            pdf.addPage();
+            y = margin;
+          }
+
+          const rowItems = selectedCharts.slice(i, i + 2);
+          rowItems.forEach((item, colIndex) => {
+            const x = margin + colIndex * (chartBoxW + chartGap);
+            pdf.setFontSize(11);
+            pdf.setTextColor(...brandPrimary);
+            pdf.text(item.title, x, y);
+
+            const ratio = item.image.width > 0 ? item.image.height / item.image.width : 0.5;
+            const fitByWidthH = chartBoxW * ratio;
+            const imgW = fitByWidthH <= chartImageH ? chartBoxW : chartImageH / Math.max(ratio, 0.01);
+            const imgH = Math.min(chartImageH, fitByWidthH);
+            const offsetX = x + (chartBoxW - imgW) / 2;
+            const imageY = y + chartTitleH;
+
+            pdf.addImage(item.image.imgData, "PNG", offsetX, imageY, imgW, imgH);
+          });
+
+          y += chartRowH;
+        }
       }
 
       // Footer page numbers
@@ -1115,10 +1140,10 @@ export default function ReportsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-[1400px] space-y-7 rounded-3xl bg-slate-50/70 p-4 md:p-6">
+    <div className="mx-auto max-w-[1400px] space-y-7 rounded-3xl bg-rose-50/50 p-4 md:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Sales Reports</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-rose-900">Sales Reports</h1>
           <p className="mt-1 text-sm text-slate-600">
             Build custom analytics views by combining filters, section selection, and export tools.
           </p>
@@ -1131,9 +1156,9 @@ export default function ReportsPage() {
       </div>
 
       {/* Date Range Filter */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5">
+      <div className="rounded-2xl border border-rose-200 bg-white p-4 shadow-sm md:p-5">
         <div className="mb-4 border-b border-slate-200 pb-3">
-          <h2 className="text-lg font-semibold text-slate-900">Report Builder</h2>
+          <h2 className="text-lg font-semibold text-rose-900">Report Builder</h2>
           <p className="mt-1 text-sm text-slate-600">Set filters, choose report sections, then generate PDF or export CSV.</p>
         </div>
         {/* Inputs row */}
@@ -1517,26 +1542,29 @@ export default function ReportsPage() {
       {/* Charts */}
       {(hasReportBlock("revenue_over_time") || hasReportBlock("kpis_overview")) && (
       <section className="space-y-3">
-      <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Trend Visualizations</h2>
+      <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-rose-700">Trend Visualizations</h2>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {hasReportBlock("revenue_over_time") && (
         <div className="bg-white p-4 rounded-lg shadow-sm border">
           <h3 className="text-sm font-semibold text-gray-700 mb-2">
             Revenue over time
           </h3>
-          <Line
-            ref={revenueLineRef}
-            data={revenueLineData}
-            options={{
-              responsive: true,
-              plugins: { legend: { display: true } },
-              scales: {
-                y: {
-                  ticks: { callback: (v) => `₱${Number(v).toLocaleString()}` },
+          <div className="h-[240px]">
+            <Line
+              ref={revenueLineRef}
+              data={revenueLineData}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: true } },
+                scales: {
+                  y: {
+                    ticks: { callback: (v) => `₱${Number(v).toLocaleString()}` },
+                  },
                 },
-              },
-            }}
-          />
+              }}
+            />
+          </div>
         </div>
         )}
 
@@ -1546,7 +1574,7 @@ export default function ReportsPage() {
           <h3 className="text-sm font-semibold text-gray-700 mb-2">
             KPIs overview
           </h3>
-          <div className="mx-auto">
+          <div className="mx-auto h-[240px]">
             <Bar
               ref={kpiDoughnutRef}
               data={kpiDoughnutData as any}
@@ -1581,7 +1609,7 @@ export default function ReportsPage() {
                   },
                 },
               }}
-              height={280}
+              height={240}
             />
           </div>
         </div>
@@ -1593,7 +1621,7 @@ export default function ReportsPage() {
       {/* NEW extra charts row */}
       {(hasReportBlock("orders_status_breakdown") || hasReportBlock("revenue_by_category")) && (
       <section className="space-y-3">
-      <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Breakdowns</h2>
+      <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-rose-700">Breakdowns</h2>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {hasReportBlock("orders_status_breakdown") && (
         <div className="bg-white p-4 rounded-lg shadow-sm border">
@@ -1601,7 +1629,7 @@ export default function ReportsPage() {
             Orders status breakdown
           </h3>
           <div className="mx-auto flex justify-center">
-            <div className="w-[280px] h-[280px]">
+            <div className="w-[220px] h-[220px]">
               <Doughnut
                 ref={ordersStatusRef}
                 data={ordersStatusData}
@@ -1622,23 +1650,26 @@ export default function ReportsPage() {
           <h3 className="text-sm font-semibold text-gray-700 mb-2">
             Revenue by category
           </h3>
-          <Bar
-            ref={categoryRevenueRef}
-            data={categoryRevenueData}
-            options={{
-              responsive: true,
-              plugins: { legend: { display: false } },
-              scales: {
-                y: {
-                  beginAtZero: true,
-                  ticks: {
-                    callback: (v) => `₱${Number(v).toLocaleString()}`,
+          <div className="h-[240px]">
+            <Bar
+              ref={categoryRevenueRef}
+              data={categoryRevenueData}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                  y: {
+                    beginAtZero: true,
+                    ticks: {
+                      callback: (v) => `₱${Number(v).toLocaleString()}`,
+                    },
                   },
+                  x: { ticks: { maxRotation: 45, minRotation: 0 } },
                 },
-                x: { ticks: { maxRotation: 45, minRotation: 0 } },
-              },
-            }}
-          />
+              }}
+            />
+          </div>
         </div>
         )}
       </div>

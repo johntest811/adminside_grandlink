@@ -130,9 +130,9 @@ export default function SalesForecastingPage() {
   const [historyProduct, setHistoryProduct] = useState("");
 
   const [lstmLimit, setLstmLimit] = useState(10);
-  const [lstmLookback, setLstmLookback] = useState(60);
-  const [lstmHorizon, setLstmHorizon] = useState(30);
-  const [lstmEpochs, setLstmEpochs] = useState(10);
+  const lstmLookback = 60;
+  const lstmHorizon = 30;
+  const lstmEpochs = 10;
   const [lstmLoading, setLstmLoading] = useState(false);
   const [lstmError, setLstmError] = useState<string | null>(null);
   const [lstmResults, setLstmResults] = useState<LstmDemandResult[] | null>(null);
@@ -266,7 +266,7 @@ export default function SalesForecastingPage() {
     } finally {
       setLstmLoading(false);
     }
-  }, [lstmEpochs, lstmHorizon, lstmLimit, lstmLookback, trainingDays]);
+  }, [lstmLimit, trainingDays]);
 
   const saveSchedule = useCallback(async () => {
     try {
@@ -775,7 +775,7 @@ export default function SalesForecastingPage() {
               ))}
             </select>
           </label>
-          <label className="block">
+          {/* <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">From date</span>
             <input
               className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none"
@@ -792,7 +792,7 @@ export default function SalesForecastingPage() {
               value={toDate}
               onChange={(event) => setToDate(event.target.value)}
             />
-          </label>
+          </label> */}
           <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
             <p className="font-semibold text-slate-900">Training dataset source</p>
             <p className="mt-2">{series?.source || "SalesForecast"}</p>
@@ -928,43 +928,7 @@ export default function SalesForecastingPage() {
           }
         />
 
-        <div className="mt-5 grid gap-4 xl:grid-cols-[1.15fr,0.85fr]">
-          <div className="grid gap-3 md:grid-cols-3">
-            <label className="block rounded-3xl border border-slate-200 bg-slate-50 p-4">
-              <span className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Lookback</span>
-              <input
-                className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none"
-                type="number"
-                min={14}
-                max={120}
-                value={lstmLookback}
-                onChange={(event) => setLstmLookback(Number(event.target.value || 60))}
-              />
-            </label>
-            <label className="block rounded-3xl border border-slate-200 bg-slate-50 p-4">
-              <span className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Horizon</span>
-              <input
-                className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none"
-                type="number"
-                min={7}
-                max={90}
-                value={lstmHorizon}
-                onChange={(event) => setLstmHorizon(Number(event.target.value || 30))}
-              />
-            </label>
-            <label className="block rounded-3xl border border-slate-200 bg-slate-50 p-4">
-              <span className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Epochs</span>
-              <input
-                className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none"
-                type="number"
-                min={4}
-                max={30}
-                value={lstmEpochs}
-                onChange={(event) => setLstmEpochs(Number(event.target.value || 10))}
-              />
-            </label>
-          </div>
-
+        <div className="mt-5 grid gap-4">
           <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
             <div className="grid gap-3 md:grid-cols-[1fr,auto] md:items-end">
               <div className="space-y-3">
@@ -1000,6 +964,9 @@ export default function SalesForecastingPage() {
               >
                 {scheduleSaving ? "Saving..." : "Save schedule"}
               </button>
+            </div>
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3 text-xs leading-5 text-slate-600">
+              Model parameters are standardized for easier use: Lookback {lstmLookback} days, Horizon {lstmHorizon} days, Epochs {lstmEpochs}.
             </div>
             <div className="mt-4 text-xs leading-5 text-slate-500">
               Last run: {lstmLastRunAt ? new Date(lstmLastRunAt).toLocaleString() : "Not yet"}<br />
