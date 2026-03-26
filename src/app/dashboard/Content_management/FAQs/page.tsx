@@ -28,6 +28,7 @@ export default function AdminFAQsPage() {
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [activeCategoryId, setActiveCategoryId] = useState<number | null>(null);
 
   useEffect(() => {
     // Load current admin and log page access
@@ -68,8 +69,19 @@ export default function AdminFAQsPage() {
       fetchCategories();
       fetchQuestions();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
   }, [currentAdmin]);
+
+  useEffect(() => {
+    if (categories.length === 0) {
+      setActiveCategoryId(null);
+      return;
+    }
+
+    if (!activeCategoryId || !categories.some((cat) => cat.id === activeCategoryId)) {
+      setActiveCategoryId(categories[0].id);
+    }
+  }, [categories, activeCategoryId]);
 
   const fetchCategories = async () => {
     try {
@@ -242,7 +254,7 @@ export default function AdminFAQsPage() {
         .eq("id", id);
       
       if (!error) {
-        // Enhanced activity logging for category deletion
+        
         await logActivity({
           admin_id: currentAdmin.id,
           admin_name: currentAdmin.username,
@@ -300,7 +312,7 @@ export default function AdminFAQsPage() {
       ]).select();
       
       if (!error && data) {
-        // Enhanced activity logging for question creation
+        
         await logActivity({
           admin_id: currentAdmin.id,
           admin_name: currentAdmin.username,
@@ -339,7 +351,7 @@ export default function AdminFAQsPage() {
     setEditingQuestion(question);
     setOriginalEditingQuestion(JSON.parse(JSON.stringify(question))); // Deep copy
     
-    // Log edit initiation
+    
     if (currentAdmin) {
       const categoryName = categories.find(c => c.id === question.category_id)?.name;
       await logActivity({
@@ -366,7 +378,7 @@ export default function AdminFAQsPage() {
     if (!editingQuestion || !originalEditingQuestion || !currentAdmin) return;
 
     try {
-      // Calculate changes for detailed logging
+      
       const changes: Array<{field: string, oldValue: any, newValue: any}> = [];
       if (originalEditingQuestion.question !== editingQuestion.question) {
         changes.push({ field: 'question', oldValue: originalEditingQuestion.question, newValue: editingQuestion.question });
@@ -386,7 +398,7 @@ export default function AdminFAQsPage() {
       if (!error) {
         const categoryName = categories.find(c => c.id === editingQuestion.category_id)?.name;
         
-        // Enhanced activity logging for question update
+        
         if (changes.length > 0) {
           const changesSummary = changes.map(c => `${c.field}: "${c.oldValue}" → "${c.newValue}"`);
           
@@ -483,7 +495,7 @@ export default function AdminFAQsPage() {
         .eq("id", id);
       
       if (!error) {
-        // Enhanced activity logging for question deletion
+        
         await logActivity({
           admin_id: currentAdmin.id,
           admin_name: currentAdmin.username,
@@ -527,6 +539,13 @@ export default function AdminFAQsPage() {
     alert("Changes saved to Supabase ✅");
   };
 
+  const activeCategory = activeCategoryId
+    ? categories.find((cat) => cat.id === activeCategoryId) || null
+    : null;
+  const activeCategoryQuestions = activeCategory
+    ? questions.filter((q) => q.category_id === activeCategory.id)
+    : [];
+
   return (
     <div className="p-8 max-w-5xl mx-auto bg-gray-50 min-h-screen">
       <div className="flex justify-between items-center mb-6">
@@ -559,151 +578,179 @@ export default function AdminFAQsPage() {
       </div>
 
       {/* Categories */}
-      <div className="space-y-6">
-        {categories.map((cat) => (
-          <div
-            key={cat.id}
-            className="bg-white border border-gray-200 rounded-xl shadow-sm p-6"
-          >
-            {/* Category header */}
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
-                <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
-                  {questions.filter(q => q.category_id === cat.id).length} questions
-                </span>
-                {cat.name}
-              </h2>
-              <button
-                onClick={() => deleteCategory(cat.id)}
-                className="text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-lg transition-colors"
-                title="Delete Category"
-              >
-                <Trash2 size={20} />
-              </button>
+      {categories.length > 0 && (
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap justify-between items-center gap-3">
+              <h2 className="text-xl font-semibold text-gray-800">FAQ Categories</h2>
+              <span className="text-sm px-3 py-1 rounded-full bg-gray-100 text-gray-600 border border-gray-200">
+                {categories.length} total categories
+              </span>
             </div>
-
-            {/* Add Question Form */}
-            <div className="bg-gray-50 rounded-lg p-4 mb-4">
-              <h3 className="font-medium text-gray-900 mb-3">Add New Question</h3>
-              <div className="space-y-3">
-                <input
-                  type="text"
-                  placeholder="Enter question..."
-                  value={newQuestions[cat.id]?.question || ""}
-                  onChange={(e) =>
-                    handleNewQuestionChange(cat.id, "question", e.target.value)
-                  }
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-800"
-                />
-                <textarea
-                  placeholder="Enter answer..."
-                  rows={3}
-                  value={newQuestions[cat.id]?.answer || ""}
-                  onChange={(e) =>
-                    handleNewQuestionChange(cat.id, "answer", e.target.value)
-                  }
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-800"
-                />
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {categories.map((cat) => (
                 <button
-                  onClick={() => addQuestion(cat.id)}
-                  disabled={!newQuestions[cat.id]?.question || !newQuestions[cat.id]?.answer}
-                  className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg shadow transition-colors disabled:cursor-not-allowed"
+                  key={cat.id}
+                  onClick={() => setActiveCategoryId(cat.id)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
+                    activeCategoryId === cat.id
+                      ? "bg-blue-600 border-blue-600 text-white shadow"
+                      : "bg-white border-gray-200 text-gray-600 hover:border-gray-400"
+                  }`}
                 >
-                  + Add Question
+                  <span>{cat.name}</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-md border ${
+                    activeCategoryId === cat.id ? "border-white/40 bg-blue-500/30 text-white" : "border-gray-200 bg-gray-50 text-gray-500"
+                  }`}>
+                    {questions.filter((q) => q.category_id === cat.id).length} Qs
+                  </span>
                 </button>
-              </div>
+              ))}
             </div>
 
-            {/* Questions */}
-            <div className="space-y-3">
-              {questions
-                .filter((q) => q.category_id === cat.id)
-                .map((q) => (
-                  <div
-                    key={q.id}
-                    className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm"
-                  >
-                    {editingQuestion?.id === q.id ? (
-                      // Edit Mode
-                      <div className="space-y-3">
-                        <input
-                          type="text"
-                          value={editingQuestion.question}
-                          onChange={(e) =>
-                            setEditingQuestion({
-                              ...editingQuestion,
-                              question: e.target.value,
-                            })
-                          }
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 font-medium text-gray-800 focus:ring-2 focus:ring-blue-500"
-                        />
-                        <textarea
-                          value={editingQuestion.answer}
-                          onChange={(e) =>
-                            setEditingQuestion({
-                              ...editingQuestion,
-                              answer: e.target.value,
-                            })
-                          }
-                          rows={3}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-600 focus:ring-2 focus:ring-blue-500"
-                        />
-                        <div className="flex justify-end gap-2">
-                          <button
-                            onClick={cancelEditQuestion}
-                            className="flex items-center gap-1 text-gray-600 hover:text-gray-800 hover:bg-gray-100 px-3 py-1 rounded"
-                          >
-                            <X size={16} />
-                            Cancel
-                          </button>
-                          <button
-                            onClick={saveEditQuestion}
-                            className="flex items-center gap-1 bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded"
-                          >
-                            <Save size={16} />
-                            Save
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      // View Mode
-                      <div className="flex justify-between items-start">
-                        <div className="flex-1">
-                          <p className="font-medium text-gray-900 mb-2">{q.question}</p>
-                          <p className="text-gray-600 text-sm leading-relaxed">{q.answer}</p>
-                        </div>
-                        <div className="flex gap-2 ml-4">
-                          <button
-                            onClick={() => startEditQuestion(q)}
-                            className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 p-1 rounded"
-                            title="Edit Question"
-                          >
-                            <Edit3 size={16} />
-                          </button>
-                          <button
-                            onClick={() => deleteQuestion(q.id)}
-                            className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded"
-                            title="Delete Question"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </div>
-                    )}
+            {activeCategory ? (
+              <div className="mt-2">
+                <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900">{activeCategory.name}</h3>
+                    <p className="text-sm text-gray-500">
+                      {activeCategoryQuestions.length} question{activeCategoryQuestions.length === 1 ? "" : "s"} in this category
+                    </p>
                   </div>
-                ))}
-              
-              {questions.filter((q) => q.category_id === cat.id).length === 0 && (
-                <div className="text-center py-8 text-gray-500">
-                  <div className="text-4xl mb-2">❓</div>
-                  <p>No questions in this category yet</p>
-                  <p className="text-sm">Add your first question above</p>
+                  <button
+                    onClick={() => deleteCategory(activeCategory.id)}
+                    className="text-red-500 hover:text-red-700 hover:bg-red-50 px-3 py-2 rounded-lg border border-red-200 text-sm font-medium transition-colors"
+                  >
+                    Delete Category
+                  </button>
                 </div>
-              )}
-            </div>
+
+                {/* Add Question Form */}
+                <div className="bg-gray-50 rounded-lg p-4 mb-4">
+                  <h3 className="font-medium text-gray-900 mb-3">Add New Question</h3>
+                  <div className="space-y-3">
+                    <input
+                      type="text"
+                      placeholder="Enter question..."
+                      value={newQuestions[activeCategory.id]?.question || ""}
+                      onChange={(e) =>
+                        handleNewQuestionChange(activeCategory.id, "question", e.target.value)
+                      }
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-800"
+                    />
+                    <textarea
+                      placeholder="Enter answer..."
+                      rows={3}
+                      value={newQuestions[activeCategory.id]?.answer || ""}
+                      onChange={(e) =>
+                        handleNewQuestionChange(activeCategory.id, "answer", e.target.value)
+                      }
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-800"
+                    />
+                    <button
+                      onClick={() => addQuestion(activeCategory.id)}
+                      disabled={!newQuestions[activeCategory.id]?.question || !newQuestions[activeCategory.id]?.answer}
+                      className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg shadow transition-colors disabled:cursor-not-allowed"
+                    >
+                      + Add Question
+                    </button>
+                  </div>
+                </div>
+
+                {/* Questions */}
+                <div className="space-y-3">
+                  {activeCategoryQuestions.map((q) => (
+                    <div
+                      key={q.id}
+                      className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm"
+                    >
+                      {editingQuestion?.id === q.id ? (
+                        // Edit Mode
+                        <div className="space-y-3">
+                          <input
+                            type="text"
+                            value={editingQuestion.question}
+                            onChange={(e) =>
+                              setEditingQuestion({
+                                ...editingQuestion,
+                                question: e.target.value,
+                              })
+                            }
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 font-medium text-gray-800 focus:ring-2 focus:ring-blue-500"
+                          />
+                          <textarea
+                            value={editingQuestion.answer}
+                            onChange={(e) =>
+                              setEditingQuestion({
+                                ...editingQuestion,
+                                answer: e.target.value,
+                              })
+                            }
+                            rows={3}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-600 focus:ring-2 focus:ring-blue-500"
+                          />
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={cancelEditQuestion}
+                              className="flex items-center gap-1 text-gray-600 hover:text-gray-800 hover:bg-gray-100 px-3 py-1 rounded"
+                            >
+                              <X size={16} />
+                              Cancel
+                            </button>
+                            <button
+                              onClick={saveEditQuestion}
+                              className="flex items-center gap-1 bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded"
+                            >
+                              <Save size={16} />
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        // View Mode
+                        <div className="flex justify-between items-start">
+                          <div className="flex-1">
+                            <p className="font-medium text-gray-900 mb-2">{q.question}</p>
+                            <p className="text-gray-600 text-sm leading-relaxed">{q.answer}</p>
+                          </div>
+                          <div className="flex gap-2 ml-4">
+                            <button
+                              onClick={() => startEditQuestion(q)}
+                              className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 p-1 rounded"
+                              title="Edit Question"
+                            >
+                              <Edit3 size={16} />
+                            </button>
+                            <button
+                              onClick={() => deleteQuestion(q.id)}
+                              className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded"
+                              title="Delete Question"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  {activeCategoryQuestions.length === 0 && (
+                    <div className="text-center py-8 text-gray-500">
+                      <div className="text-4xl mb-2">❓</div>
+                      <p>No questions in this category yet</p>
+                      <p className="text-sm">Add your first question above</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-500 border border-dashed border-gray-300 rounded-xl">
+                Select a category to manage its questions
+              </div>
+            )}
           </div>
-        ))}
-      </div>
+        </div>
+      )}
 
       {categories.length === 0 && (
         <div className="text-center py-12 bg-white rounded-lg border border-gray-200">

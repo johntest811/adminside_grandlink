@@ -41,6 +41,7 @@ export default function AdminServicesPage() {
   const [originalEditingService, setOriginalEditingService] = useState<Service | null>(null);
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [activeServiceId, setActiveServiceId] = useState<number | null>(null);
 
   useEffect(() => {
     // Load current admin and log page access
@@ -91,6 +92,12 @@ export default function AdminServicesPage() {
       });
     }
   }, [currentAdmin]);
+
+  useEffect(() => {
+    if (!activeServiceId && services.length > 0) {
+      setActiveServiceId(services[0].id);
+    }
+  }, [services, activeServiceId]);
 
   const fetchServices = async () => {
     try {
@@ -412,6 +419,13 @@ export default function AdminServicesPage() {
     setOriginalEditingService(null);
   };
 
+  const activeService = activeServiceId
+    ? services.find((svc) => svc.id === activeServiceId) || null
+    : null;
+  const ActiveIconComponent = activeService?.icon && (FaIcons as any)[activeService.icon]
+    ? (FaIcons as any)[activeService.icon]
+    : FaIcons.FaCog;
+
   return (
     <div className="p-8 max-w-6xl mx-auto bg-gray-50 min-h-screen">
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-6">
@@ -424,7 +438,7 @@ export default function AdminServicesPage() {
         </div>
       </div>
 
-      {/* Add New Service Form */}
+      
       <div className="mb-8 bg-white border border-gray-200 rounded-xl shadow-sm p-6">
         <h2 className="text-xl font-semibold mb-4 text-gray-900">
           ➕ Add New Service
@@ -488,63 +502,100 @@ export default function AdminServicesPage() {
         </button>
       </div>
 
-      {/* Services List */}
-      <div className="space-y-4">
-        {services.map((s) => {
-          const IconComponent =
-            s.icon && (FaIcons as any)[s.icon]
-              ? (FaIcons as any)[s.icon]
-              : FaIcons.FaCog;
+      {/* Services Library */}
+      {services.length > 0 ? (
+        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6">
+          <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">Services Library</h2>
+              <p className="text-sm text-gray-500">Select a service card to preview or edit its details.</p>
+            </div>
+            <span className="text-xs uppercase tracking-wide px-3 py-1 rounded-full bg-gray-100 text-gray-600 border border-gray-200">
+              {services.length} services
+            </span>
+          </div>
 
-          return (
-            <div
-              key={s.id}
-              className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 hover:shadow-md transition-shadow"
-            >
-              <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-                <div className="flex items-start gap-4 flex-1 min-w-0">
-                  <div className="h-14 w-14 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 border border-blue-100">
-                    <IconComponent size={28} />
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            {services.map((s) => {
+              const IconComponent =
+                s.icon && (FaIcons as any)[s.icon]
+                  ? (FaIcons as any)[s.icon]
+                  : FaIcons.FaCog;
+
+              const isActive = activeServiceId === s.id;
+
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => setActiveServiceId(s.id)}
+                  className={`flex flex-col items-center gap-1.5 rounded-xl border px-3 py-4 text-center text-xs font-semibold tracking-wide transition-all ${
+                    isActive
+                      ? "border-blue-600 bg-blue-50 text-blue-700 shadow"
+                      : "border-gray-200 bg-gray-50 text-gray-600 hover:border-blue-300 hover:bg-white"
+                  }`}
+                >
+                  <span className={`h-10 w-10 rounded-lg flex items-center justify-center border ${
+                    isActive ? "bg-white border-blue-200 text-blue-600" : "bg-white border-gray-200 text-gray-500"
+                  }`}>
+                    <IconComponent size={18} />
+                  </span>
+                  <span className="font-semibold leading-tight line-clamp-2">{s.name}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {activeService && (
+            <div className="mt-6 border border-gray-200 rounded-2xl p-6 bg-gray-50">
+              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-4">
+                <div className="flex items-center gap-4">
+                  <div className="h-14 w-14 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-inner">
+                    <ActiveIconComponent size={30} />
                   </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <h3 className="text-lg font-semibold text-gray-900">{s.name}</h3>
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200">
-                        ID: {s.id}
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-700 mb-2">{s.short_description || "No short description"}</p>
-                    <p className="text-sm text-gray-600 leading-relaxed">{s.long_description || "No long description"}</p>
+                  <div>
+                    <h3 className="text-2xl font-semibold text-gray-900">{activeService.name}</h3>
+                    <p className="text-sm text-gray-500">Service ID: {activeService.id}</p>
                   </div>
                 </div>
-
-                <div className="flex gap-2 md:ml-4">
+                <div className="flex flex-wrap gap-2">
                   <button
-                    onClick={() => startEdit(s)}
-                    className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-blue-700 transition-colors"
+                    onClick={() => startEdit(activeService)}
+                    className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
                   >
-                    ✏️ Edit
+                    ✏️ Edit Details
                   </button>
                   <button
-                    onClick={() => deleteService(s.id)}
-                    className="bg-red-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-red-700 transition-colors"
+                    onClick={() => deleteService(activeService.id)}
+                    className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
                   >
-                    🗑️ Delete
+                    🗑️ Delete Service
                   </button>
                 </div>
               </div>
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="bg-white rounded-xl p-4 border border-gray-200">
+                  <h4 className="text-sm font-semibold text-gray-700 mb-2">Short Description</h4>
+                  <p className="text-gray-700 text-sm leading-relaxed">
+                    {activeService.short_description || "No short description added yet."}
+                  </p>
+                </div>
+                <div className="bg-white rounded-xl p-4 border border-gray-200">
+                  <h4 className="text-sm font-semibold text-gray-700 mb-2">Long Description</h4>
+                  <p className="text-gray-700 text-sm leading-relaxed whitespace-pre-line">
+                    {activeService.long_description || "No long description added yet."}
+                  </p>
+                </div>
+              </div>
             </div>
-          );
-        })}
-
-        {services.length === 0 && (
-          <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
-            <div className="text-6xl mb-4">⚙️</div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No services yet</h3>
-            <p className="text-gray-500">Create your first service to get started!</p>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      ) : (
+        <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
+          <div className="text-6xl mb-4">⚙️</div>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No services yet</h3>
+          <p className="text-gray-500">Create your first service to get started!</p>
+        </div>
+      )}
 
       {/* Edit Modal */}
       {editingService && (

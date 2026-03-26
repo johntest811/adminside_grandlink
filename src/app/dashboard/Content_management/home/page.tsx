@@ -28,6 +28,7 @@ export default function HomeEditor() {
   // image picker state & loaded images
   const [images, setImages] = useState<Array<{ name: string; url: string }>>([]);
   const [picker, setPicker] = useState<{ open: boolean; key: string; index?: number | null } | null>(null);
+  const [activeTab, setActiveTab] = useState<string>("carousel");
 
   // upload state
   const [uploading, setUploading] = useState(false);
@@ -686,6 +687,16 @@ export default function HomeEditor() {
   const formControl = "w-full border border-gray-300 rounded-lg px-3 py-2 shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-800";
   const formControlSmall = "border border-gray-300 rounded-lg px-3 py-2 shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-800";
 
+  const tabConfig = [
+    { id: "carousel", label: "Carousel", metric: `${(content.carousel || []).length} slides` },
+    { id: "explore", label: "Explore", metric: `${(content.explore || []).length} items` },
+    { id: "featured_projects", label: "Featured Projects", metric: `${(content.featured_projects || []).length} entries` },
+    { id: "featured_long_images", label: "Featured Long Images", metric: `${(content.featured_long_images || []).length} images` },
+    { id: "payment", label: "Payment", metric: content.payment?.payrex_phone ? "Configured" : "Not set" },
+    { id: "services", label: "Services", metric: content.services?.title ? "Configured" : "Draft" },
+    { id: "about", label: "About", metric: content.about?.title ? "Configured" : "Draft" },
+  ];
+
   return (
     <div className="p-8 max-w-5xl mx-auto bg-gray-50 min-h-screen">
       <div className="flex justify-between items-center mb-6">
@@ -698,8 +709,32 @@ export default function HomeEditor() {
         </div>
       </div>
 
+      {/* Section Tabs */}
+      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 mb-6">
+        <div className="flex flex-wrap gap-2">
+          {tabConfig.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium tracking-wide transition-colors ${
+                activeTab === tab.id
+                  ? 'bg-red-600 border-red-600 text-white shadow'
+                  : 'bg-white border-gray-200 text-gray-600 hover:border-gray-400'
+              }`}
+            >
+              <span>{tab.label}</span>
+              <span className={`text-[10px] px-2 py-0.5 rounded-md border ${
+                activeTab === tab.id ? 'border-white/40 bg-red-500/40 text-white' : 'border-gray-200 bg-gray-50 text-gray-500'
+              }`}>
+                {tab.metric}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Carousel */}
-      <section className="mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+      <section className={`${activeTab === 'carousel' ? 'block' : 'hidden'} mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-6`}>
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
             <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
@@ -807,7 +842,7 @@ export default function HomeEditor() {
       </section>
 
       {/* Explore */}
-      <section className="mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+      <section className={`${activeTab === 'explore' ? 'block' : 'hidden'} mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-6`}>
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
             <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
@@ -880,7 +915,7 @@ export default function HomeEditor() {
       </section>
 
       {/* Featured Projects */}
-      <section className="mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+      <section className={`${activeTab === 'featured_projects' ? 'block' : 'hidden'} mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-6`}>
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
             <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
@@ -970,7 +1005,7 @@ export default function HomeEditor() {
       </section>
 
       {/* Featured Long Images */}
-      <section className="mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+      <section className={`${activeTab === 'featured_long_images' ? 'block' : 'hidden'} mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-6`}>
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
             <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
@@ -1036,7 +1071,7 @@ export default function HomeEditor() {
       </section>
 
       {/* Payment Settings */}
-      <section className="mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+      <section className={`${activeTab === 'payment' ? 'block' : 'hidden'} mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-6`}>
         <h2 className="text-xl font-semibold text-gray-800 mb-4">Payment Settings</h2>
         <div className="bg-gray-50 rounded-lg p-4">
           <label className="block text-sm font-medium text-gray-700 mb-2">PayRex Phone Number</label>
@@ -1050,7 +1085,7 @@ export default function HomeEditor() {
       </section>
 
       {/* Services */}
-      <section className="mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+      <section className={`${activeTab === 'services' ? 'block' : 'hidden'} mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-6`}>
         <h2 className="text-xl font-semibold text-gray-800 mb-4">Service We Offer</h2>
         <div className="bg-gray-50 rounded-lg p-4 space-y-4">
           <div>
@@ -1137,7 +1172,7 @@ export default function HomeEditor() {
       </section>
 
       {/* About */}
-      <section className="mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+      <section className={`${activeTab === 'about' ? 'block' : 'hidden'} mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-6`}>
         <h2 className="text-xl font-semibold text-gray-800 mb-4">ABOUT GRAND EAST</h2>
         <div className="bg-gray-50 rounded-lg p-4 space-y-4">
           <div>

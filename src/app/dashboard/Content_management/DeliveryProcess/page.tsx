@@ -338,12 +338,12 @@ export default function AdminDeliveryProcess() {
 
   const startEdit = async (step: Warranty) => {
     setEditingStep(step);
-    setOriginalEditingStep(JSON.parse(JSON.stringify(step))); // Deep copy for comparison
+    setOriginalEditingStep(JSON.parse(JSON.stringify(step))); 
     setTitle(step.title);
     setDescription(step.description);
     setShowEditModal(true);
     
-    // Log edit modal opening
+    
     if (currentAdmin) {
       await logActivity({
         admin_id: currentAdmin.id,
@@ -437,7 +437,7 @@ export default function AdminDeliveryProcess() {
             }
           });
 
-          // Log specific field changes
+          // specific field changes
           for (const change of changes) {
             await logActivity({
               admin_id: currentAdmin.id,
@@ -530,35 +530,32 @@ export default function AdminDeliveryProcess() {
       </div>
 
       {/* Step List */}
-      <div className="grid gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
         {steps.map((step, index) => (
           <div
             key={step.id}
-            className="bg-white p-4 rounded shadow flex justify-between items-center"
+            className="relative bg-white p-5 rounded-2xl shadow border border-gray-100 flex flex-col gap-3 hover:shadow-lg transition-shadow"
           >
-            <div>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="bg-red-100 text-red-800 px-2 py-1 rounded-full text-xs font-medium">
-                  Step {index + 1}
-                </span>
-                <h3 className="font-bold text-black">{step.title}</h3>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wide text-red-600">Step {index + 1}</span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => startEdit(step)}
+                  className="text-blue-600 text-sm font-medium hover:underline"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => deleteStep(step.id)}
+                  className="text-red-600 text-sm font-medium hover:underline"
+                >
+                  Delete
+                </button>
               </div>
-              <p className="text-gray-700">{step.description}</p>
             </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => startEdit(step)}
-                className="text-blue-600 hover:underline"
-              >
-                Edit
-              </button>
-              <button
-                onClick={() => deleteStep(step.id)}
-                className="text-red-600 hover:underline"
-              >
-                Delete
-              </button>
-            </div>
+            <h3 className="text-lg font-semibold text-gray-900">{step.title}</h3>
+            <p className="text-sm text-gray-600 leading-relaxed flex-1">{step.description}</p>
+            <div className="absolute inset-0 border border-transparent rounded-2xl pointer-events-none"></div>
           </div>
         ))}
       </div>
@@ -573,8 +570,8 @@ export default function AdminDeliveryProcess() {
 
       {/* Add Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-lg">
+        <div className="fixed inset-0 flex items-center justify-center bg-white/70 backdrop-blur-sm z-50">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl border border-gray-100">
             <h2 className="text-xl font-bold mb-4 text-black">Add New Delivery Step</h2>
             <div className="space-y-4">
               <div>
@@ -619,8 +616,8 @@ export default function AdminDeliveryProcess() {
 
       {/* Edit Modal */}
       {showEditModal && editingStep && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-lg">
+        <div className="fixed inset-0 flex items-center justify-center bg-white/70 backdrop-blur-sm z-50">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl border border-gray-100">
             <h2 className="text-xl font-bold mb-4 text-black">Edit Delivery Step</h2>
             <div className="space-y-4">
               <div>
