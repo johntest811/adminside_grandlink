@@ -96,6 +96,36 @@ function extractRequestDetails(item: UserItem | null) {
   return { specialInstructions, colorCustomization };
 }
 
+function formatLocalDateTime(value: unknown) {
+  const text = typeof value === "string" ? value : "";
+  if (!text) return "";
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toLocaleString();
+}
+
+function getPaymentSummary(item: UserItem) {
+  const meta = (item.meta || {}) as Record<string, any>;
+  const paymentStatus = String(item.payment_status || meta.payment_status || "").toLowerCase();
+  const paymongoChannel = String(meta.paymongo_channel || "").toLowerCase();
+  const confirmedAt = meta.payment_confirmed_at || meta.paid_at || meta.payment_paid_at || null;
+  const reference = item.payment_id || meta.payment_session_id || meta.payment_reference || null;
+
+  const isPaid = paymentStatus === "completed" || paymentStatus === "paid";
+  const provider = String(item.payment_method || meta.payment_method || "").toLowerCase();
+  const providerLabel = provider ? provider.toUpperCase() : "";
+  const channelLabel = paymongoChannel ? paymongoChannel.toUpperCase() : "";
+
+  return {
+    isPaid,
+    paymentStatus: paymentStatus || "unknown",
+    providerLabel,
+    channelLabel,
+    confirmedAtText: formatLocalDateTime(confirmedAt),
+    reference: reference ? String(reference) : "",
+  };
+}
+
 export default function OrdersPage() {
   const [reservations, setReservations] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -530,6 +560,7 @@ export default function OrdersPage() {
               const branch = addr.branch || '';
               
               const stage = getStage(r);
+              const payment = getPaymentSummary(r);
               // inline payment editing removed; we now use a modal
 
               return (
@@ -577,6 +608,21 @@ export default function OrdersPage() {
                         return <div>Total Amount: ₱{Number(total || 0).toLocaleString()}</div>;
                       })()}
                     </div>
+
+                    <div className="mt-2 space-y-1 text-xs">
+                      <div className={payment.isPaid ? "text-emerald-700 font-semibold" : "text-amber-700 font-semibold"}>
+                        {payment.isPaid ? "PAID" : "NOT PAID"}
+                        {payment.providerLabel ? ` · ${payment.providerLabel}` : ""}
+                        {payment.channelLabel ? ` · ${payment.channelLabel}` : ""}
+                      </div>
+                      {payment.confirmedAtText ? (
+                        <div className="text-slate-700">Confirmed: {payment.confirmedAtText}</div>
+                      ) : null}
+                      {payment.reference ? (
+                        <div className="text-slate-700 break-all">Ref: {payment.reference}</div>
+                      ) : null}
+                    </div>
+
                     <button
                       className="mt-2 text-xs bg-gray-600 text-white px-3 py-1 rounded hover:bg-gray-700"
                       onClick={() => {

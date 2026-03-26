@@ -38,7 +38,7 @@ export default function Login() {
     }
 
     try {
-      console.log('🔐 Attempting to authenticate with username:', username);
+      console.log('Attempting to authenticate with username:', username);
       
       // Find admin by username
       const { data: adminData, error: adminError } = await supabase
@@ -48,7 +48,7 @@ export default function Login() {
         .single();
 
       if (adminError || !adminData) {
-        console.error('❌ Admin not found:', adminError);
+        console.error('Admin not found:', adminError);
         showToast({
           type: 'error',
           title: 'Account not found',
@@ -58,7 +58,7 @@ export default function Login() {
         return;
       }
 
-      console.log('✅ Admin found:', adminData.username, 'ID:', adminData.id);
+      console.log('Admin found:', adminData.username, 'ID:', adminData.id);
 
       // Check if account is active
       if (!adminData.is_active) {
