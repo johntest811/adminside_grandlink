@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { supabase } from "../../Clients/Supabase/SupabaseClients"; // <-- Use shared client
+import { supabase } from "../../Clients/Supabase/SupabaseClients"; 
 
 type Inquiry = {
   id: string;
@@ -89,16 +89,10 @@ export default function AdminInquiriesPage() {
   }, [inquiries]);
 
   useEffect(() => {
-    if (filtered.length === 0) {
-      if (selected) setSelected(null);
-      return;
+    if (!selected) return;
+    if (!filtered.some((item) => item.id === selected.id)) {
+      setSelected(null);
     }
-
-    if (selected && filtered.some((item) => item.id === selected.id)) {
-      return;
-    }
-
-    setSelected(filtered[0]);
   }, [filtered, selected]);
 
   const handleDelete = async (id: string) => {
@@ -184,7 +178,7 @@ export default function AdminInquiriesPage() {
         </div>
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.9fr)]">
+      <section>
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 text-sm font-semibold text-slate-700">Inquiry List</div>
 
@@ -244,15 +238,34 @@ export default function AdminInquiriesPage() {
             </div>
           )}
         </div>
+      </section>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="mb-3 text-sm font-semibold text-slate-700">Selected Inquiry</div>
-
-          {!selected ? (
-            <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-              Select an inquiry to view complete details.
+    
+      {selected ? (
+        //
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+          onClick={() => setSelected(null)}
+          role="presentation"
+        >
+          <div
+            className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="selected-inquiry-title"
+          >
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h2 id="selected-inquiry-title" className="text-base font-semibold text-slate-900">Selected Inquiry</h2>
+              <button
+                type="button"
+                onClick={() => setSelected(null)}
+                className="rounded border border-slate-300 px-3 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Close
+              </button>
             </div>
-          ) : (
+
             <div className="space-y-4">
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Customer</div>
@@ -283,7 +296,7 @@ export default function AdminInquiriesPage() {
                   onClick={() => setSelected(null)}
                   className="rounded border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 >
-                  Clear Selection
+                  Close
                 </button>
                 <button
                   type="button"
@@ -294,9 +307,9 @@ export default function AdminInquiriesPage() {
                 </button>
               </div>
             </div>
-          )}
+          </div>
         </div>
-      </section>
+      ) : null}
     </div>
   );
 }

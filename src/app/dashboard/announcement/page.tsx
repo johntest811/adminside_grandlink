@@ -18,10 +18,12 @@ type Announcement = {
 
 export default function AnnouncementPage() {
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
   const [priority, setPriority] = useState<"low" | "medium" | "high">("medium");
   const [expiresAt, setExpiresAt] = useState<string>("");
+  const [publishAt, setPublishAt] = useState<string>(new Date().toISOString().slice(0, 16));
   const [saving, setSaving] = useState(false);
 
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -75,6 +77,7 @@ export default function AnnouncementPage() {
     }
     setSaving(true);
     try {
+      const createdAtIso = publishAt ? new Date(publishAt).toISOString() : new Date().toISOString();
       const payload = {
         title: title.trim(),
         message: message.trim(),
@@ -82,19 +85,40 @@ export default function AnnouncementPage() {
         recipient_role: "admin",
         priority,
         is_read: false,
+        created_at: createdAtIso,
         expires_at: expiresAt ? new Date(expiresAt).toISOString() : null,
         metadata: {
           kind: "announcement",
           created_by: currentAdmin?.username || "admin",
           created_by_id: currentAdmin?.id || null,
+          publish_at: createdAtIso,
         },
       };
-      const { error } = await supabase.from("notifications").insert(payload);
+
+      let { error } = await supabase.from("notifications").insert(payload);
+
+      if (error) {
+        // Fallback when created_at is restricted by DB policy/default behavior.
+        const fallbackPayload = {
+          ...payload,
+          metadata: {
+            ...payload.metadata,
+            requested_publish_at: createdAtIso,
+          },
+        } as any;
+        delete fallbackPayload.created_at;
+        const retry = await supabase.from("notifications").insert(fallbackPayload);
+        error = retry.error;
+      }
+
       if (error) throw error;
+
       setTitle("");
       setMessage("");
       setPriority("medium");
       setExpiresAt("");
+      setPublishAt(new Date().toISOString().slice(0, 16));
+      setShowCreateModal(false);
       await fetchAnnouncements();
       alert("Announcement published.");
     } catch (e: any) {
@@ -138,71 +162,28 @@ export default function AnnouncementPage() {
     <div className="space-y-8">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-black">Announcements</h1>
-        <div className="text-sm text-black">
-          Signed in as: <span className="font-medium">{currentAdmin?.username || "Admin"}</span>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setShowCreateModal(true)}
+            className="rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white transition hover:bg-black/90"
+          >
+            Add Announcement
+          </button>
+          <div className="text-sm text-black">
+            Signed in as: <span className="font-medium">{currentAdmin?.username || "Admin"}</span>
+          </div>
         </div>
       </div>
 
-      {/* Create form */}
-      <form onSubmit={createAnnouncement} className="bg-white p-6 rounded-lg shadow space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="md:col-span-2">
-            <label className="block text-sm font-medium text-black mb-1">Title</label>
-            <input
-              className="w-full p-2 border rounded text-black"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Announcement title"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-black mb-1">Priority</label>
-            <select
-              className="w-full p-2 border rounded text-black"
-              value={priority}
-              onChange={(e) => setPriority(e.target.value as any)}
-            >
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-black mb-1">Expires at (optional)</label>
-            <input
-              type="datetime-local"
-              className="w-full p-2 border rounded text-black"
-              value={expiresAt}
-              onChange={(e) => setExpiresAt(e.target.value)}
-            />
-          </div>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-black mb-1">Message</label>
-          <textarea
-            className="w-full p-3 border rounded text-black"
-            rows={4}
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            placeholder="Write the announcement details..."
-          />
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            type="submit"
-            disabled={saving}
-            className="px-4 py-2 bg-black text-white rounded disabled:opacity-60"
-          >
-            {saving ? "Publishing..." : "Publish Announcement"}
-          </button>
-          <input
-            placeholder="Search announcements"
-            className="flex-1 p-2 border rounded text-black"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
-        </div>
-      </form>
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <input
+          placeholder="Search announcements"
+          className="w-full rounded-lg border border-slate-300 p-2 text-black"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+      </section>
 
       {/* List */}
       <div className="bg-white rounded-lg shadow">
@@ -251,6 +232,106 @@ export default function AnnouncementPage() {
           </ul>
         )}
       </div>
+
+      {showCreateModal ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => !saving && setShowCreateModal(false)}
+          role="presentation"
+        >
+          <form
+            onSubmit={createAnnouncement}
+            className="w-full max-w-3xl rounded-2xl bg-white p-6 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-xl font-bold text-black">Add Announcement</h2>
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(false)}
+                className="rounded border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+                disabled={saving}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-sm font-medium text-black">Title</label>
+                <input
+                  className="w-full rounded border p-2 text-black"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Announcement title"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-black">Priority</label>
+                <select
+                  className="w-full rounded border p-2 text-black"
+                  value={priority}
+                  onChange={(e) => setPriority(e.target.value as any)}
+                >
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-black">Publish date & time</label>
+                <input
+                  type="datetime-local"
+                  className="w-full rounded border p-2 text-black"
+                  value={publishAt}
+                  onChange={(e) => setPublishAt(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <label className="mb-1 block text-sm font-medium text-black">Message</label>
+              <textarea
+                className="w-full rounded border p-3 text-black"
+                rows={5}
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Write the announcement details..."
+              />
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-black">Expires at (optional)</label>
+                <input
+                  type="datetime-local"
+                  className="w-full rounded border p-2 text-black"
+                  value={expiresAt}
+                  onChange={(e) => setExpiresAt(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center gap-3">
+              <button
+                type="submit"
+                disabled={saving}
+                className="rounded bg-black px-4 py-2 text-white disabled:opacity-60"
+              >
+                {saving ? "Publishing..." : "Publish Announcement"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(false)}
+                className="rounded border border-slate-300 px-4 py-2 text-slate-700 hover:bg-slate-50"
+                disabled={saving}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </div>
   );
 }
