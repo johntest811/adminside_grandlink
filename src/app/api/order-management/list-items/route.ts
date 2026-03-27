@@ -35,6 +35,7 @@ export async function GET(req: NextRequest) {
 
   const productsMap: Record<string, any> = {};
   const addressesMap: Record<string, any> = {};
+  const invoicesMap: Record<string, any> = {};
 
   if (productIds.length) {
     const { data: products } = await supabase
@@ -52,10 +53,22 @@ export async function GET(req: NextRequest) {
     (addresses || []).forEach((a: any) => { addressesMap[a.id] = a; });
   }
 
+  const userItemIds = Array.from(new Set((items || []).map((i: any) => i.id).filter(Boolean)));
+  if (userItemIds.length) {
+    const { data: invoices } = await supabase
+      .from("invoices")
+      .select("id,user_item_id,invoice_number,invoice_html,issued_at,email_sent_at,updated_at")
+      .in("user_item_id", userItemIds);
+    (invoices || []).forEach((invoice: any) => {
+      invoicesMap[String(invoice.user_item_id)] = invoice;
+    });
+  }
+
   const enriched = (items || []).map((i: any) => ({
     ...i,
     product_details: productsMap[i.product_id] || null,
     address_details: addressesMap[i.delivery_address_id] || null,
+    invoice_details: invoicesMap[String(i.id)] || null,
     customer: {
       name: i.customer_name || i.meta?.customer_name || null,
       email: i.customer_email || i.meta?.customer_email || null,

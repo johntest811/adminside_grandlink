@@ -30,6 +30,36 @@ const mapStatusForDB = (s: string) => {
   }
 };
 
+async function triggerApprovedInvoiceEmail(userItemId: string) {
+  const syncSecret = String(process.env.ADMIN_INVOICE_SYNC_SECRET || "").trim();
+  if (!syncSecret) {
+    console.warn("Invoice sync skipped: ADMIN_INVOICE_SYNC_SECRET is not configured");
+    return;
+  }
+
+  const configuredBase =
+    process.env.WEBSITE_BASE_URL ||
+    process.env.NEXT_PUBLIC_WEBSITE_BASE_URL ||
+    process.env.NEXT_PUBLIC_BASE_URL ||
+    "https://grandlnik-website.vercel.app";
+  const baseUrl = String(configuredBase).replace(/\/$/, "");
+
+  const response = await fetch(`${baseUrl}/api/invoices/resend`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-admin-invoice-secret": syncSecret,
+    },
+    body: JSON.stringify({ userItemIds: [userItemId] }),
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const payload = await response.text().catch(() => "");
+    throw new Error(`Invoice resend API failed (${response.status}): ${payload}`);
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -139,6 +169,19 @@ export async function POST(req: NextRequest) {
     if (itemErr) {
       console.error("❌ Supabase error:", itemErr);
       return NextResponse.json({ error: itemErr.message }, { status: 400 });
+    }
+
+    const isApprovedNow = normalizedOrderStatus === "approved";
+    const isPaid = String((item as any)?.payment_status || "").toLowerCase() === "completed";
+    const paymentProvider = String((item as any)?.payment_method || (item as any)?.meta?.payment_method || "").toLowerCase();
+    const isPayMongo = paymentProvider.includes("paymongo");
+
+    if (isApprovedNow && isPaid && isPayMongo) {
+      try {
+        await triggerApprovedInvoiceEmail(itemId);
+      } catch (invoiceErr: any) {
+        console.warn("⚠️ Failed to trigger approved invoice email:", invoiceErr?.message || invoiceErr);
+      }
     }
 
     // Optionally restore inventory (server-side only)

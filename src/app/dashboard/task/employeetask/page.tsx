@@ -202,6 +202,13 @@ function extractRequestDetails(group: Pick<OrderGroup, "special_instructions" | 
   return { specialInstructions, colorCustomization };
 }
 
+function formatOrderStatusLabel(value: string | null | undefined): string {
+  const key = String(value || "").toLowerCase();
+  if (!key) return "—";
+  if (key === "quality_check") return "Final Quality Check";
+  return key.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 export default function EmployeeTasksPage() {
   const searchParams = useSearchParams();
   const [adminSession, setAdminSession] = useState<AdminSession | null>(null);
@@ -226,12 +233,21 @@ export default function EmployeeTasksPage() {
   const [highlightOrderId, setHighlightOrderId] = useState("");
   const [workflowPopupOrderId, setWorkflowPopupOrderId] = useState<string | null>(null);
   const [requestDetailsGroup, setRequestDetailsGroup] = useState<OrderGroup | null>(null);
+  const [finalizeGroup, setFinalizeGroup] = useState<OrderGroup | null>(null);
+  const [finalizeNote, setFinalizeNote] = useState("");
+  const [finalizeFiles, setFinalizeFiles] = useState<File[]>([]);
+  const [finalizingOrderId, setFinalizingOrderId] = useState<string | null>(null);
 
   const canReviewProgress = useMemo(() => {
     return canManageProductionWorkflow(adminSession);
   }, [adminSession]);
 
   const currentProductionRole = useMemo(() => getProductionRoleForAdmin(adminSession || {}), [adminSession]);
+  const isSuperadmin = useMemo(() => {
+    const role = String(adminSession?.role || "").toLowerCase();
+    const position = String(adminSession?.position || "").toLowerCase();
+    return role === "superadmin" || position === "superadmin";
+  }, [adminSession]);
 
   useEffect(() => {
     try {
@@ -335,9 +351,15 @@ export default function EmployeeTasksPage() {
         ? enriched.filter((task) => !task.roleKey || task.roleKey === currentProductionRole)
         : enriched;
 
-      setTasks(sortTasks(visibleTasks));
+      const tasksBeforeFinalQc = visibleTasks.filter((task) => {
+        const order = orderMap.get(String(task.user_item_id || ""));
+        const orderStatus = String(order?.order_status || order?.status || "").toLowerCase();
+        return orderStatus !== "quality_check";
+      });
 
-      const taskIds = visibleTasks.map((task) => task.id).filter(Boolean);
+      setTasks(sortTasks(tasksBeforeFinalQc));
+
+      const taskIds = tasksBeforeFinalQc.map((task) => task.id).filter(Boolean);
       if (taskIds.length === 0) {
         setMyRecentUpdates({});
         return;
@@ -437,16 +459,21 @@ export default function EmployeeTasksPage() {
         };
       });
 
-      groups.sort((a, b) => a.product_name.localeCompare(b.product_name));
-      setOrderGroups(groups);
+      const activeGroups = groups.filter((group) => {
+        const status = String(group.order_status || "").toLowerCase();
+        return status !== "quality_check" && status !== "completed" && status !== "cancelled";
+      });
+
+      activeGroups.sort((a, b) => a.product_name.localeCompare(b.product_name));
+      setOrderGroups(activeGroups);
       setGroupProgressDraft((prev) => {
         const next = { ...prev };
-        for (const group of groups) {
+        for (const group of activeGroups) {
           if (typeof next[group.user_item_id] !== "number") next[group.user_item_id] = group.production_percent;
         }
         return next;
       });
-      return groups;
+      return activeGroups;
     } catch (error) {
       console.error("Failed to fetch order groups", error);
       setOrderGroups([]);
@@ -561,6 +588,102 @@ export default function EmployeeTasksPage() {
     return urls;
   };
 
+  const uploadFinalProductImages = async (orderId: string, files: File[]) => {
+    const urls: string[] = [];
+    if (!files.length) return urls;
+
+    for (const file of files) {
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const path = `orders/${orderId}/final-product/${Date.now()}-${safeName}`;
+      const { error } = await supabase.storage.from("uploads").upload(path, file, { upsert: false });
+      if (error) throw error;
+      const { data } = supabase.storage.from("uploads").getPublicUrl(path);
+      if (data?.publicUrl) urls.push(data.publicUrl);
+    }
+
+    return urls;
+  };
+
+  const submitSuperadminFinalization = async () => {
+    if (!isSuperadmin || !finalizeGroup) {
+      alert("Only Superadmin can use quick finish.");
+      return;
+    }
+    if (finalizeFiles.length === 0) {
+      alert("Please upload at least one finish image.");
+      return;
+    }
+
+    setFinalizingOrderId(finalizeGroup.user_item_id);
+    try {
+      const nowIso = new Date().toISOString();
+      const imageUrls = await uploadFinalProductImages(finalizeGroup.user_item_id, finalizeFiles);
+
+      const { data: uiData, error: uiErr } = await supabase
+        .from("user_items")
+        .select("id, meta, progress_history")
+        .eq("id", finalizeGroup.user_item_id)
+        .single();
+      if (uiErr || !uiData) throw uiErr;
+
+      const currentMeta = ((uiData as any).meta || {}) as Record<string, any>;
+      const currentHistory = Array.isArray((uiData as any).progress_history) ? (uiData as any).progress_history : [];
+      const workflow = ensureProductionWorkflow(currentMeta.production_workflow);
+
+      const nextWorkflow = ensureProductionWorkflow({
+        ...workflow,
+        stage_plans: workflow.stage_plans.map((stage) => ({
+          ...stage,
+          status: "approved",
+          approved_at: stage.approved_at || nowIso,
+          approved_task_ids: stage.task_ids,
+        })),
+        final_product_images: imageUrls,
+        final_product_note: finalizeNote.trim() || null,
+        last_updated_at: nowIso,
+      });
+
+      const nextMeta = {
+        ...currentMeta,
+        production_percent: 100,
+        production_final_images: imageUrls,
+        production_final_note: finalizeNote.trim() || null,
+        production_finished_by: adminSession?.username || "Superadmin",
+        production_finished_at: nowIso,
+        production_workflow: nextWorkflow,
+      };
+
+      const { error: updateErr } = await supabase
+        .from("user_items")
+        .update({
+          status: "quality_check",
+          order_status: "quality_check",
+          meta: nextMeta,
+          progress_history: [{ status: "quality_check", updated_at: nowIso, admin: adminSession?.username || null }, ...currentHistory],
+          updated_at: nowIso,
+        })
+        .eq("id", finalizeGroup.user_item_id);
+      if (updateErr) throw updateErr;
+
+      await supabase
+        .from("tasks")
+        .update({ status: "Completed" })
+        .eq("user_item_id", finalizeGroup.user_item_id);
+
+      setFinalizeGroup(null);
+      setFinalizeNote("");
+      setFinalizeFiles([]);
+      setSelectedGroup(null);
+      await refreshAfterChange();
+      alert("✅ Product marked finished and moved to Final Quality Check.");
+    } catch (error: any) {
+      console.error("submitSuperadminFinalization error", error);
+      alert(`❌ Failed to finalize product: ${error?.message || "Unknown error"}`);
+    } finally {
+      setFinalizingOrderId(null);
+    }
+  };
+
   const submitProgress = async () => {
     if (!progressModal) return;
     if (!progressText.trim() && progressFiles.length === 0) {
@@ -654,7 +777,7 @@ export default function EmployeeTasksPage() {
       const groups = await fetchOrderGroups();
       const updatedGroup = groups.find((entry) => entry.user_item_id === selectedGroup?.user_item_id) || selectedGroup;
       if (updatedGroup) setSelectedGroup(updatedGroup);
-      alert(nextPct >= 100 ? "✅ Progress saved. Order moved to Quality Check." : "✅ Progress saved.");
+      alert(nextPct >= 100 ? "✅ Progress saved. Order moved to Final Quality Check." : "✅ Progress saved.");
     } catch (error: any) {
       console.error("saveGroupProductionPercent error", error);
       alert(`❌ Failed to save progress: ${error?.message || "Unknown error"}`);
@@ -888,7 +1011,7 @@ export default function EmployeeTasksPage() {
                   <div>
                     <div className="text-lg font-semibold text-slate-900">{group.product_name}</div>
                     <div className="mt-1 text-sm text-slate-500">Customer: {group.customer_name || "—"}</div>
-                    <div className="text-sm text-slate-500">Stage: {String(group.order_status || "—").replace(/_/g, " ")}</div>
+                    <div className="text-sm text-slate-500">Stage: {formatOrderStatusLabel(group.order_status)}</div>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <button
@@ -916,6 +1039,19 @@ export default function EmployeeTasksPage() {
                       <PackageSearch size={14} />
                       Review Workflow
                     </button>
+                    {isSuperadmin ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFinalizeGroup(group);
+                          setFinalizeNote("");
+                          setFinalizeFiles([]);
+                        }}
+                        className="rounded-2xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
+                      >
+                        Superadmin Quick Finish
+                      </button>
+                    ) : null}
                   </div>
                 </div>
 
@@ -1094,7 +1230,7 @@ export default function EmployeeTasksPage() {
             <div className="mt-6 grid gap-4 lg:grid-cols-4">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current stage</div>
-                <div className="mt-2 text-sm font-semibold text-slate-900">{String(selectedGroup.order_status || "—").replace(/_/g, " ")}</div>
+                <div className="mt-2 text-sm font-semibold text-slate-900">{formatOrderStatusLabel(selectedGroup.order_status)}</div>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Estimated completion</div>
@@ -1166,6 +1302,19 @@ export default function EmployeeTasksPage() {
                   >
                     Order management
                   </Link>
+                  {isSuperadmin ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFinalizeGroup(selectedGroup);
+                        setFinalizeNote("");
+                        setFinalizeFiles([]);
+                      }}
+                      className="rounded-2xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
+                    >
+                      Superadmin Quick Finish
+                    </button>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -1409,6 +1558,66 @@ export default function EmployeeTasksPage() {
         </div>
       ) : null}
 
+      {finalizeGroup ? (
+        <div className="fixed inset-0 z-[78] flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-2xl rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-lg font-semibold text-slate-900">Superadmin Quick Finish</div>
+                <div className="mt-1 text-sm text-slate-500">
+                  {finalizeGroup.product_name} • Order {finalizeGroup.user_item_id}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFinalizeGroup(null)}
+                className="rounded-full border border-slate-200 px-3 py-1 text-sm text-slate-600 transition hover:bg-slate-50"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-semibold text-slate-900">Final product images</div>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={(event) => setFinalizeFiles(Array.from(event.target.files || []))}
+                className="mt-3 block text-sm"
+              />
+              <div className="mt-2 text-xs text-slate-500">Selected files: {finalizeFiles.length}</div>
+            </div>
+
+            <textarea
+              value={finalizeNote}
+              onChange={(event) => setFinalizeNote(event.target.value)}
+              rows={4}
+              className="mt-4 w-full rounded-2xl border border-slate-300 p-3 text-sm"
+              placeholder="Optional final completion note for this product."
+            />
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setFinalizeGroup(null)}
+                className="rounded-2xl border border-slate-300 px-4 py-2 text-sm text-slate-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitSuperadminFinalization}
+                disabled={finalizingOrderId === finalizeGroup.user_item_id}
+                className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {finalizingOrderId === finalizeGroup.user_item_id ? "Submitting…" : "Submit Finished Product"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <ImageLightbox
         open={!!lightbox}
         urls={lightbox?.urls || []}
@@ -1420,14 +1629,14 @@ export default function EmployeeTasksPage() {
 
       {workflowPopupOrderId ? (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 p-4">
-          <button
-            type="button"
-            onClick={closeWorkflowEditor}
-            className="fixed right-6 top-6 z-[85] rounded-full border border-slate-200 bg-white px-3 py-1 text-sm text-slate-600 shadow-md transition hover:bg-slate-50"
-          >
-            ✕
-          </button>
           <div className="relative h-[92vh] w-full max-w-7xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+            <button
+              type="button"
+              onClick={closeWorkflowEditor}
+              className="absolute right-4 top-4 z-[85] rounded-full border border-slate-200 bg-white px-3 py-1 text-sm text-slate-600 shadow-md transition hover:bg-slate-50"
+            >
+              ✕
+            </button>
             <iframe
               title="Workflow editor"
               src={`/dashboard/task/setup-workflow?orderId=${encodeURIComponent(workflowPopupOrderId)}&popup=1`}

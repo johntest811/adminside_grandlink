@@ -560,9 +560,6 @@ export default function EditProductPage() {
     if (product.price === undefined || product.price === null || Number.isNaN(Number(product.price))) {
       return { tab: "details", message: "Price (PHP) is required before saving the product." };
     }
-    if (product.inventory === undefined || product.inventory === null || Number.isNaN(Number(product.inventory))) {
-      return { tab: "details", message: "Inventory is required before saving the product." };
-    }
     return null;
   };
 
@@ -1546,15 +1543,6 @@ export default function EditProductPage() {
                   step="0.01"
                   value={product.price}
                   onChange={(e) => handleChange("price", Number(e.target.value))}
-                  className="w-full rounded border px-3 py-2 text-black bg-white focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-              <div className="xl:col-span-2">
-                <label className="mb-1 block font-medium text-black">Inventory *</label>
-                <input
-                  type="number"
-                  value={product.inventory ?? ""}
-                  onChange={(e) => handleChange("inventory", Number(e.target.value))}
                   className="w-full rounded border px-3 py-2 text-black bg-white focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
