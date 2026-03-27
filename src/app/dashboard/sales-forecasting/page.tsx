@@ -403,7 +403,6 @@ export default function SalesForecastingPage() {
     const avgDeltaPct = effectiveResults.reduce((sum, result) => sum + result.delta_pct, 0) / count;
     const avgMae = effectiveResults.reduce((sum, result) => sum + result.mae_backtest, 0) / count;
     const avgRmse = effectiveResults.reduce((sum, result) => sum + result.rmse_backtest, 0) / count;
-    const avgMape = effectiveResults.reduce((sum, result) => sum + result.mape_backtest, 0) / count;
     const avgConfidence = effectiveResults.reduce((sum, result) => sum + result.confidence_score, 0) / count;
 
     const strongestGrowth = [...effectiveResults].sort((a, b) => b.delta_pct - a.delta_pct)[0];
@@ -415,7 +414,7 @@ export default function SalesForecastingPage() {
       avgDeltaPct,
       avgMae,
       avgRmse,
-      avgMape,
+      
       avgConfidence,
       strongestGrowth,
       weakestGrowth,
@@ -492,7 +491,7 @@ export default function SalesForecastingPage() {
         key: "lstm-metrics",
         title: "LSTM Demand Model",
         value: `${lstmAnalytics.avgConfidence.toFixed(1)}% Confidence`,
-        helper: `${lstmQuality} reliability · RMSE ${formatNumber(lstmAnalytics.avgRmse, 2)} · MAE ${lstmAnalytics.avgMae.toFixed(2)} · MAPE ${lstmAnalytics.avgMape.toFixed(1)}%`,
+        helper: `${lstmQuality} reliability · RMSE ${formatNumber(lstmAnalytics.avgRmse, 2)} · MAE ${lstmAnalytics.avgMae.toFixed(2)}%`,
         tone: lstmAnalytics.avgConfidence >= 95 ? "bg-emerald-50 border-emerald-100" : "bg-violet-50 border-violet-100",
       });
     }
