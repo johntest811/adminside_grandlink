@@ -212,6 +212,73 @@ function getPaymentSummary(item: UserItem) {
   };
 }
 
+function normalizeText(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.trim();
+}
+
+function buildAddressText(source: any): string {
+  if (!source) return "";
+  if (typeof source === "string") return source.trim();
+  if (typeof source !== "object") return "";
+
+  const directAddress = normalizeText(source.address);
+  if (directAddress) return directAddress;
+
+  const parts = [
+    normalizeText(source.line1 || source.street),
+    normalizeText(source.line2),
+    normalizeText(source.barangay),
+    normalizeText(source.city),
+    normalizeText(source.province || source.state || source.region),
+    normalizeText(source.postal_code || source.zip_code),
+    normalizeText(source.country),
+  ].filter(Boolean);
+
+  return parts.join(", ");
+}
+
+function getCustomerDeliveryAddress(item: UserItem): string {
+  const addr = item.address_details;
+  const meta = (item.meta || {}) as Record<string, any>;
+
+  const candidates = [
+    buildAddressText(addr),
+    normalizeText(item.delivery_address),
+    buildAddressText(meta.delivery_address),
+    normalizeText(meta.delivery_address_text),
+    normalizeText(meta.deliveryAddress),
+    normalizeText(meta.billing_address),
+    normalizeText(meta.address),
+    normalizeText(meta.pickup_address),
+  ].filter(Boolean);
+
+  return candidates[0] || "-";
+}
+
+function getCustomerDisplayEmail(item: UserItem): string {
+  const addr = item.address_details;
+  const meta = (item.meta || {}) as Record<string, any>;
+  const deliveryMeta = meta.delivery_address && typeof meta.delivery_address === "object" ? meta.delivery_address : null;
+  const raw =
+    normalizeText(addr?.email) ||
+    normalizeText(item.customer?.email) ||
+    normalizeText(item.customer_email) ||
+    normalizeText(meta.customer_email) ||
+    normalizeText(meta.billing_email) ||
+    normalizeText(deliveryMeta?.email);
+  return raw;
+}
+
+function InlineSpinner() {
+  return (
+    <span
+      className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"
+      aria-hidden="true"
+    />
+  );
+}
+
 export default function OrdersPage() {
   const [reservations, setReservations] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -354,9 +421,25 @@ export default function OrdersPage() {
             : newStatus === 'reject_cancellation'
             ? 'cancellation_denied'
             : newStatus;
-        await adminNotificationService.notifyOrderStatusUpdate(itemId, item.user_id, notifStatus, by, item.meta?.product_name || '');
+        const preferredRecipientEmail = getCustomerDisplayEmail(item);
+        const notifyResult = await adminNotificationService.notifyOrderStatusUpdate(
+          itemId,
+          item.user_id,
+          notifStatus,
+          by,
+          item.meta?.product_name || '',
+          undefined,
+          preferredRecipientEmail || undefined
+        );
+
+        if (newStatus === 'approved' && notifyResult?.success === false) {
+          alert(`Order was approved, but invoice email failed: ${notifyResult?.error || 'Unknown error'}.`);
+        }
       } catch (notifError: any) {
         console.warn('Failed to send notification:', notifError);
+        if (newStatus === 'approved') {
+          alert('Order was approved, but invoice email request failed. Please verify mail settings and resend the invoice.');
+        }
       }
 
       setReservations(prev => prev.map(r => (r.id === itemId ? { ...r, ...updatedItem } : r)));
@@ -620,22 +703,8 @@ export default function OrdersPage() {
             {filteredReservations.map((r) => {
               const actions = getNextActions(r);
               const addr = r.address_details || {} as any;
-              
-              // Build comprehensive address string from address_details
-              const addressParts = [];
-              if (addr.address) {
-                addressParts.push(addr.address);
-              } else {
-                if (addr.line1 || addr.street) addressParts.push(addr.line1 || addr.street);
-                if (addr.barangay) addressParts.push(addr.barangay);
-                if (addr.city) addressParts.push(addr.city);
-                if (addr.province || addr.region) addressParts.push(addr.province || addr.region);
-                if (addr.postal_code) addressParts.push(addr.postal_code);
-              }
-              
-              const fullAddress = addressParts.length > 0 
-                ? addressParts.join(', ') 
-                : r.delivery_address || '—';
+
+              const fullAddress = getCustomerDeliveryAddress(r);
               
               const customerName = addr.full_name || 
                 (addr.first_name && addr.last_name ? `${addr.first_name} ${addr.last_name}` : '') ||
@@ -644,7 +713,7 @@ export default function OrdersPage() {
                 '';
               
               const phone = addr.phone || r.customer?.phone || r.customer_phone || '';
-              const email = addr.email || r.customer?.email || r.customer_email || '';
+              const email = getCustomerDisplayEmail(r);
               const branch = addr.branch || '';
               
               const stage = getStage(r);
@@ -774,7 +843,14 @@ export default function OrdersPage() {
                               className={btnClass}
                               title={`Set status: ${a}`}
                             >
-                              {formatActionLabel(a)}
+                              {updatingStatus === r.id ? (
+                                <span className="inline-flex items-center gap-2">
+                                  <InlineSpinner />
+                                  Processing...
+                                </span>
+                              ) : (
+                                formatActionLabel(a)
+                              )}
                             </button>
                           );
                         })
@@ -923,7 +999,14 @@ export default function OrdersPage() {
                   }
                 }}
               >
-                Save Changes
+                {updatingStatus === editPaymentItem.id ? (
+                  <span className="inline-flex items-center gap-2">
+                    <InlineSpinner />
+                    Saving...
+                  </span>
+                ) : (
+                  'Save Changes'
+                )}
               </button>
             </div>
           </div>

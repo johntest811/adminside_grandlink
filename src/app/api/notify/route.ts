@@ -237,6 +237,7 @@ function normalizeBaseUrl(value: string | null | undefined) {
 }
 
 function getWebsiteBaseCandidates() {
+  const isDevelopment = process.env.NODE_ENV !== "production";
   const candidates = [
     process.env.NEXT_PUBLIC_USER_WEBSITE_URL,
     process.env.NEXT_PUBLIC_WEBSITE_URL,
@@ -246,14 +247,18 @@ function getWebsiteBaseCandidates() {
     process.env.SITE_URL,
     process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : null,
     process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null,
-    "http://localhost:3000",
+    isDevelopment ? "http://localhost:3000" : null,
     "https://grandlink-website.vercel.app",
-    "https://grandlnik-website.vercel.app",
   ]
     .map((value) => normalizeBaseUrl(value))
     .filter((value): value is string => Boolean(value));
 
   return Array.from(new Set(candidates));
+}
+
+function isProbablyWrongBase(status: number) {
+  // 404/405 implies we hit the wrong host or route isn't deployed there.
+  return status === 404 || status === 405;
 }
 
 export async function POST(request: NextRequest) {
@@ -273,6 +278,9 @@ export async function POST(request: NextRequest) {
       // even if the website project env isn't configured.
       if (String(newStatus) === "approved") {
         const websiteBases = getWebsiteBaseCandidates();
+        const recipientEmail = typeof payload?.recipientEmail === "string" ? payload.recipientEmail.trim() : "";
+
+        let lastFailure: { websiteBase: string; status?: number; error?: string } | null = null;
 
         for (const websiteBase of websiteBases) {
           try {
@@ -285,6 +293,7 @@ export async function POST(request: NextRequest) {
                 adminName: payload?.adminName || null,
                 adminNotes: payload?.adminNotes || null,
                 estimatedDeliveryDate: payload?.estimatedDeliveryDate || null,
+                recipientEmail: recipientEmail || null,
                 skipUpdate: true,
               }),
               cache: "no-store",
@@ -298,17 +307,64 @@ export async function POST(request: NextRequest) {
                 websiteBase,
                 message: websiteJson?.message || "Notification processed",
                 invoiceEmailSent: websiteJson?.invoiceEmailSent || false,
+                invoiceRecipientEmail: websiteJson?.invoiceRecipientEmail || null,
+                invoiceSendReason: websiteJson?.invoiceSendReason || null,
+                resolvedRecipient: websiteJson?.resolvedRecipient || null,
               });
+            }
+
+            lastFailure = {
+              websiteBase,
+              status: websiteResponse.status,
+              error: websiteJson?.error || websiteJson?.message || websiteResponse.statusText,
+            };
+
+            // If it's a clear route-not-found, keep trying other bases.
+            if (isProbablyWrongBase(websiteResponse.status)) {
+              console.warn(
+                `Website order-status proxy got ${websiteResponse.status} for ${websiteBase}, trying next candidate:`,
+                lastFailure.error
+              );
+              continue;
             }
 
             console.warn(
               `Website order-status proxy failed for ${websiteBase}, trying next candidate:`,
-              websiteJson?.error || websiteResponse.statusText
+              lastFailure.error
             );
+
+            // If website explicitly handled the request but failed to send email,
+            // stop retrying other bases and surface the error immediately.
+            if (websiteJson && websiteJson.success === false) {
+              return NextResponse.json(
+                {
+                  success: false,
+                  proxied: true,
+                  websiteBase,
+                  error: websiteJson?.message || websiteJson?.error || "Invoice email failed to send",
+                  invoiceEmailSent: websiteJson?.invoiceEmailSent || false,
+                  invoiceRecipientEmail: websiteJson?.invoiceRecipientEmail || null,
+                  invoiceSendReason: websiteJson?.invoiceSendReason || null,
+                  resolvedRecipient: websiteJson?.resolvedRecipient || null,
+                },
+                { status: websiteResponse.status || 502 }
+              );
+            }
           } catch (proxyError) {
             console.warn(`Website order-status proxy error for ${websiteBase}, trying next candidate:`, proxyError);
           }
         }
+
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              lastFailure
+                ? `Order was approved but invoice email could not be sent via ${lastFailure.websiteBase} (${lastFailure.status || "error"}): ${lastFailure.error || "Unknown error"}. Configure WEBSITE_URL/NEXT_PUBLIC_USER_WEBSITE_URL on the admin deployment.`
+                : "Order was approved but invoice email service could not be reached. Configure WEBSITE_URL/NEXT_PUBLIC_USER_WEBSITE_URL and retry invoice sending.",
+          },
+          { status: 502 }
+        );
       }
 
       const { data: orderData, error: orderErr } = await supabaseAdmin

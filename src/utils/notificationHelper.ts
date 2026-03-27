@@ -74,7 +74,15 @@ export const adminNotificationService = {
   },
 
   // Notify user about order status update (called from admin side)
-  async notifyOrderStatusUpdate(orderId: string, userId: string, newStatus: string, adminName: string, productName: string, requestUrl?: string) {
+  async notifyOrderStatusUpdate(
+    orderId: string,
+    userId: string,
+    newStatus: string,
+    adminName: string,
+    productName: string,
+    requestUrl?: string,
+    recipientEmail?: string
+  ) {
     try {
       // FIX: call local admin API (server → server) to avoid browser CORS/network issues
       const response = await fetch(buildNotifyUrl(requestUrl), {
@@ -86,6 +94,7 @@ export const adminNotificationService = {
           newStatus,
           adminName,
           productName,
+          recipientEmail,
           // The admin app updates the DB already; website should only notify
           skipUpdate: true
         }),

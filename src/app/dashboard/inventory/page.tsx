@@ -214,11 +214,21 @@ export default function InventoryAdminPage() {
     setSavingId(id);
     const productBefore = items.find(p => p.id === id);
     const oldInventory = productBefore?.inventory ?? 0;
-    
-    const { error } = await supabase.from("products").update({ inventory: value }).eq("id", id);
-    
-    if (error) {
-      console.error("update inventory error", error);
+
+    const res = await fetch(`/api/products/${encodeURIComponent(id)}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          authorization: JSON.stringify(currentAdmin || null),
+        },
+        body: JSON.stringify({ inventory: value }),
+      }
+    );
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error("update inventory error", json?.error || res.statusText);
       
       // Log error
       if (currentAdmin) {
@@ -228,7 +238,7 @@ export default function InventoryAdminPage() {
           action: 'update',
           entity_type: 'inventory_error',
           entity_id: id,
-          details: `Failed to update inventory for "${productBefore?.name || id}": ${error.message}`,
+          details: `Failed to update inventory for "${productBefore?.name || id}": ${json?.error || res.statusText}`,
           page: 'inventory',
           metadata: {
             productName: productBefore?.name || id,
@@ -329,12 +339,23 @@ export default function InventoryAdminPage() {
     setSavingAll(true);
     try {
       const results = await Promise.all(
-        changed.map((it) =>
-          supabase.from("products").update({ inventory: it.inventory ?? 0 }).eq("id", it.id)
-        )
+        changed.map(async (it) => {
+          const res = await fetch(`/api/products/${encodeURIComponent(it.id)}`,
+            {
+              method: "PUT",
+              headers: {
+                "Content-Type": "application/json",
+                authorization: JSON.stringify(currentAdmin || null),
+              },
+              body: JSON.stringify({ inventory: it.inventory ?? 0 }),
+            }
+          );
+          const json = await res.json().catch(() => ({}));
+          return { ok: res.ok, status: res.status, error: json?.error || null };
+        })
       );
-      
-      const errors = results.map((r) => (r as any).error).filter(Boolean);
+
+      const errors = results.filter((r) => !r.ok);
       if (errors.length) {
         console.error("saveAll errors", errors);
         alert("Some updates failed. Check console.");

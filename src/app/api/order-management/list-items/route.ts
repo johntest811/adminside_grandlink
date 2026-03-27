@@ -6,6 +6,23 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+function normalizeInvoiceHtmlLogo(html: unknown) {
+  if (typeof html !== "string" || !html.trim()) return html;
+
+  const websiteBase = (
+    process.env.WEBSITE_URL ||
+    process.env.NEXT_PUBLIC_USER_WEBSITE_URL ||
+    process.env.NEXT_PUBLIC_WEBSITE_URL ||
+    process.env.WEBSITE_PUBLIC_URL ||
+    "https://grandlink-website.vercel.app"
+  ).replace(/\/$/, "");
+
+  const logoUrl = `${websiteBase}/api/assets/logo`;
+  return html
+    .replace(/(["'])\/ge-logo\.avif\1/gi, `$1${logoUrl}$1`)
+    .replace(/(["'])https?:\/\/[^"']*\/ge-logo\.avif\1/gi, `$1${logoUrl}$1`);
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const statusFilter = searchParams.get("status");
@@ -32,9 +49,11 @@ export async function GET(req: NextRequest) {
   // Enrich with product and address details (best-effort)
   const productIds = Array.from(new Set((items || []).map((i: any) => i.product_id).filter(Boolean)));
   const addressIds = Array.from(new Set((items || []).map((i: any) => i.delivery_address_id).filter(Boolean)));
+  const userIds = Array.from(new Set((items || []).map((i: any) => i.user_id).filter(Boolean)));
 
   const productsMap: Record<string, any> = {};
   const addressesMap: Record<string, any> = {};
+  const defaultAddressByUserId: Record<string, any> = {};
   const invoicesMap: Record<string, any> = {};
 
   if (productIds.length) {
@@ -53,6 +72,21 @@ export async function GET(req: NextRequest) {
     (addresses || []).forEach((a: any) => { addressesMap[a.id] = a; });
   }
 
+  if (userIds.length) {
+    const { data: userAddresses } = await supabase
+      .from("addresses")
+      .select("*")
+      .in("user_id", userIds)
+      .order("is_default", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    for (const addr of userAddresses || []) {
+      const uid = String(addr.user_id || "");
+      if (!uid || defaultAddressByUserId[uid]) continue;
+      defaultAddressByUserId[uid] = addr;
+    }
+  }
+
   const userItemIds = Array.from(new Set((items || []).map((i: any) => i.id).filter(Boolean)));
   if (userItemIds.length) {
     const { data: invoices } = await supabase
@@ -60,14 +94,17 @@ export async function GET(req: NextRequest) {
       .select("id,user_item_id,invoice_number,invoice_html,issued_at,email_sent_at,updated_at")
       .in("user_item_id", userItemIds);
     (invoices || []).forEach((invoice: any) => {
-      invoicesMap[String(invoice.user_item_id)] = invoice;
+      invoicesMap[String(invoice.user_item_id)] = {
+        ...invoice,
+        invoice_html: normalizeInvoiceHtmlLogo(invoice?.invoice_html),
+      };
     });
   }
 
   const enriched = (items || []).map((i: any) => ({
     ...i,
     product_details: productsMap[i.product_id] || null,
-    address_details: addressesMap[i.delivery_address_id] || null,
+    address_details: addressesMap[i.delivery_address_id] || defaultAddressByUserId[i.user_id] || null,
     invoice_details: invoicesMap[String(i.id)] || null,
     customer: {
       name: i.customer_name || i.meta?.customer_name || null,
