@@ -41,6 +41,7 @@ type EnrichedTask = Task & {
   stageLabel: string;
   roleKey: ProductionRoleKey | null;
   roleLabel: string | null;
+  customerName?: string | null;
 };
 
 type AdminSession = {
@@ -344,7 +345,10 @@ export default function EmployeeTasksPage() {
       const enriched = rawTasks.map((task) => {
         const order = orderMap.get(String(task.user_item_id || ""));
         const workflow = ensureProductionWorkflow(order?.meta?.production_workflow);
-        return enrichTask(task, workflow);
+        return {
+          ...enrichTask(task, workflow),
+          customerName: order?.customer_name || null,
+        };
       });
 
       const visibleTasks = currentProductionRole
@@ -1148,6 +1152,7 @@ export default function EmployeeTasksPage() {
                 <div>
                   <div className="text-lg font-semibold text-slate-900">{group.product_name}</div>
                   <div className="text-sm text-slate-500">Order: {group.key}</div>
+                  <div className="text-sm text-slate-500">Customer: {group.tasks[0]?.customerName || "—"}</div>
                 </div>
               </div>
 
@@ -1212,14 +1217,14 @@ export default function EmployeeTasksPage() {
 
       {selectedGroup ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <button
-            type="button"
-            onClick={() => setSelectedGroup(null)}
-            className="fixed right-6 top-6 z-[55] rounded-full border border-slate-200 bg-white px-3 py-1 text-sm text-slate-600 shadow-md transition hover:bg-slate-50"
-          >
-            ✕
-          </button>
           <div className="relative max-h-[92vh] w-full max-w-6xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+            <button
+              type="button"
+              onClick={() => setSelectedGroup(null)}
+              className="absolute right-4 top-4 z-10 rounded-full border border-slate-200 bg-white px-3 py-1 text-sm text-slate-600 shadow-md transition hover:bg-slate-50"
+            >
+              ✕
+            </button>
             <div className="pr-12">
               <div className="text-2xl font-bold text-slate-900">{selectedGroup.product_name}</div>
               <div className="mt-1 text-sm text-slate-500">

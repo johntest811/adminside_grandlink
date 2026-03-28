@@ -6,23 +6,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-function normalizeInvoiceHtmlLogo(html: unknown) {
-  if (typeof html !== "string" || !html.trim()) return html;
-
-  const websiteBase = (
-    process.env.WEBSITE_URL ||
-    process.env.NEXT_PUBLIC_USER_WEBSITE_URL ||
-    process.env.NEXT_PUBLIC_WEBSITE_URL ||
-    process.env.WEBSITE_PUBLIC_URL ||
-    "https://grandlink-website.vercel.app"
-  ).replace(/\/$/, "");
-
-  const logoUrl = `${websiteBase}/api/assets/logo`;
-  return html
-    .replace(/(["'])\/ge-logo\.avif\1/gi, `$1${logoUrl}$1`)
-    .replace(/(["'])https?:\/\/[^"']*\/ge-logo\.avif\1/gi, `$1${logoUrl}$1`);
-}
-
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const statusFilter = searchParams.get("status");
@@ -94,10 +77,7 @@ export async function GET(req: NextRequest) {
       .select("id,user_item_id,invoice_number,invoice_html,issued_at,email_sent_at,updated_at")
       .in("user_item_id", userItemIds);
     (invoices || []).forEach((invoice: any) => {
-      invoicesMap[String(invoice.user_item_id)] = {
-        ...invoice,
-        invoice_html: normalizeInvoiceHtmlLogo(invoice?.invoice_html),
-      };
+      invoicesMap[String(invoice.user_item_id)] = invoice;
     });
   }
 
