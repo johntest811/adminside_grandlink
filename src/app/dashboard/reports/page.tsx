@@ -1701,9 +1701,9 @@ export default function ReportsPage() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Full Address
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                {/* <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Branch
-                </th>
+                </th> */}
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Product
                 </th>
@@ -1765,9 +1765,9 @@ export default function ReportsPage() {
                     <td className="px-4 py-3 text-sm text-gray-900 max-w-xs break-words">
                       {fullAddress}
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                    {/* <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                       {branch}
-                    </td>
+                    </td> */}
                     <td className="px-4 py-3 text-sm text-gray-900">
                       {order.product_details?.name || order.meta?.product_name || order.product_id}
                     </td>
