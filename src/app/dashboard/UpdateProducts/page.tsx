@@ -829,7 +829,7 @@ export default function UpdateProductsPage() {
                             : 'bg-red-600 text-white hover:bg-red-700'
                         }`}
                       >
-                        {deleteLoading === product.id ? 'Deleting...' : 'Delete'}
+                        {deleteLoading === product.id ? 'Deleting...' : 'Archive'}
                       </button>
                     </div>
                   </div>

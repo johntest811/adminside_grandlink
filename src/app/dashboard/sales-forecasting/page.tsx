@@ -373,10 +373,22 @@ export default function SalesForecastingPage() {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: "index" as const, intersect: false },
-      elements: { point: { radius: 0 } },
+      elements: { point: { radius: 0, hitRadius: 14, hoverRadius: 5 } },
       plugins: {
         legend: { position: "top" as const },
         title: { display: false },
+        tooltip: {
+          mode: "index" as const,
+          intersect: false,
+          callbacks: {
+            label: (context: any) => {
+              const label = String(context?.dataset?.label || "Value");
+              const value = Number(context?.parsed?.y || 0);
+              const isRevenue = /revenue/i.test(label);
+              return `${label}: ${isRevenue ? formatCurrency(value) : formatNumber(value)}`;
+            },
+          },
+        },
       },
       scales: {
         x: {
