@@ -538,37 +538,37 @@ export default function OrdersPage() {
   }, [reservations]);
 
   // NEW: query filter
-  const filteredReservations = reservations.filter((r) => {
-    if (statusFilter && getStage(r) !== statusFilter) return false;
-    // Date range filter (created_at)
-    if (startDateTime) {
-      const from = new Date(startDateTime).getTime();
-      const created = new Date(r.created_at).getTime();
-      if (!Number.isNaN(from) && !Number.isNaN(created) && created < from) return false;
-    }
-    if (endDateTime) {
-      const to = new Date(endDateTime).getTime();
-      const created = new Date(r.created_at).getTime();
-      if (!Number.isNaN(to) && !Number.isNaN(created) && created > to) return false;
-    }
+  const filteredReservations = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return true;
-    const fields = [
-      r.id,
-      r.user_id,
-      r.product_id,
-      r.customer_name,
-      r.customer_email,
-      r.customer_phone,
-      r.meta?.product_name,
-      r.meta?.customer_name,
-      r.meta?.customer_email,
-      r.meta?.customer_phone,
-    ]
-      .filter(Boolean)
-      .map((x: any) => String(x).toLowerCase());
-    return fields.some((f) => f.includes(q));
-  });
+    const from = startDateTime ? new Date(startDateTime).getTime() : null;
+    const to = endDateTime ? new Date(endDateTime).getTime() : null;
+
+    return reservations.filter((r) => {
+      if (statusFilter && getStage(r) !== statusFilter) return false;
+
+      // Date range filter (created_at)
+      const created = new Date(r.created_at).getTime();
+      if (from && !Number.isNaN(from) && !Number.isNaN(created) && created < from) return false;
+      if (to && !Number.isNaN(to) && !Number.isNaN(created) && created > to) return false;
+
+      if (!q) return true;
+      const fields = [
+        r.id,
+        r.user_id,
+        r.product_id,
+        r.customer_name,
+        r.customer_email,
+        r.customer_phone,
+        r.meta?.product_name,
+        r.meta?.customer_name,
+        r.meta?.customer_email,
+        r.meta?.customer_phone,
+      ]
+        .filter(Boolean)
+        .map((x: any) => String(x).toLowerCase());
+      return fields.some((f) => f.includes(q));
+    });
+  }, [reservations, statusFilter, searchQuery, startDateTime, endDateTime]);
 
   const filteredStageCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -594,9 +594,14 @@ export default function OrdersPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold text-black">Reservations & Orders Management</h1>
+    <div className="space-y-6 max-w-7xl mx-auto">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-black">Reservations & Orders Management</h1>
+          <p className="mt-1 text-sm text-slate-600">
+            Review order details, customer delivery info, payment, status, then apply next-stage actions.
+          </p>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -622,7 +627,20 @@ export default function OrdersPage() {
 
       {/* Filters / Controls */}
       <div className="bg-white p-4 rounded-lg shadow-sm border">
-        <div className="flex flex-wrap items-end gap-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="text-sm font-semibold text-slate-800">Filters</div>
+          {(statusFilter || searchQuery || startDateTime || endDateTime) && (
+            <button
+              onClick={() => { setStatusFilter(''); setSearchQuery(''); setStartDateTime(''); setEndDateTime(''); }}
+              className="px-3 py-2 border rounded-md bg-white hover:bg-gray-50 text-black text-sm"
+              title="Clear filters"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-end gap-4">
           {/* Left group: search + date range */}
           <div className="flex-1 min-w-[260px] grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
@@ -671,26 +689,15 @@ export default function OrdersPage() {
                 ))}
               </select>
             </div>
-            {(statusFilter || searchQuery || startDateTime || endDateTime) && (
-              <button
-                onClick={() => { setStatusFilter(''); setSearchQuery(''); setStartDateTime(''); setEndDateTime(''); }}
-                className="px-3 py-2 border rounded-md bg-white hover:bg-gray-50 text-black"
-                title="Clear filters"
-              >
-                Clear
-              </button>
-            )}
           </div>
         </div>
       </div>
 
       {/* Table */}
       <div className="bg-white shadow rounded-lg overflow-hidden">
-        <div className="border-b bg-slate-50 px-4 py-3 text-sm text-slate-600">
-          Review each order from left to right: order details, customer delivery info, payment details, then apply next-stage actions.
-        </div>
+        <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+          <thead className="bg-gray-50 sticky top-0 z-10">
             <tr>
               <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wide text-black">Order Details</th>
               <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wide text-black">Customer and Delivery</th>
@@ -723,10 +730,18 @@ export default function OrdersPage() {
               return (
                 <tr key={r.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 align-top">
-                    <div className="text-sm text-black font-medium break-all">{r.id}</div>
-                    <div className="text-xs text-black mt-1">{new Date(r.created_at).toLocaleString()}</div>
-                    <div className="text-xs text-black font-semibold mt-2">{r.meta?.product_name || r.product_details?.name || r.product_id}</div>
-                    <div className="text-xs text-black">Qty: {r.quantity}</div>
+                    <div className="space-y-1">
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Order ID</div>
+                        <div className="text-sm text-black font-medium break-all">{r.id}</div>
+                      </div>
+                      <div className="text-xs text-slate-600">Created: {new Date(r.created_at).toLocaleString()}</div>
+                      <div className="pt-1">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Product</div>
+                        <div className="text-xs text-black font-semibold">{r.meta?.product_name || r.product_details?.name || r.product_id}</div>
+                        <div className="text-xs text-black">Qty: {r.quantity}</div>
+                      </div>
+                    </div>
                   </td>
                   <td className="px-4 py-3 align-top max-w-[320px]">
                     {customerName && (
@@ -885,6 +900,7 @@ export default function OrdersPage() {
             })}
           </tbody>
         </table>
+        </div>
       </div>
 
       {filteredReservations.length === 0 && (

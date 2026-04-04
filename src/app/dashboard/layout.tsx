@@ -27,6 +27,7 @@ import {
   ChevronRight,
   LogOut,
   CheckCircle,
+  Star,
 } from "lucide-react";
 
 function DashboardLayoutInner({
@@ -120,6 +121,7 @@ function DashboardLayoutInner({
     },
     // { name: 'Orders', path: '/dashboard/orders', icon: '🛒' },
     { name: 'Order Management', path: '/dashboard/order_management', icon: <ClipboardList className="h-4 w-4" /> },
+    { name: 'Product Reviews', path: '/dashboard/product-reviews', icon: <Star className="h-4 w-4" /> },
     { name: 'Calendar', path: '/dashboard/calendar', icon: <CalendarDays className="h-4 w-4" /> },
     { name: 'User Inquiries', path: '/dashboard/inquiries', icon: <Mail className="h-4 w-4" /> },
     { name: 'Chat Inbox', path: '/dashboard/chat', icon: <MessageSquare className="h-4 w-4" /> },

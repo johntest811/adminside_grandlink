@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  getCachedOrderManagementList,
+  setCachedOrderManagementList,
+} from "@/app/lib/orderManagementListCache";
 
 const supabase = createClient(
   process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -9,6 +13,17 @@ const supabase = createClient(
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const statusFilter = searchParams.get("status");
+
+  const cacheKey = `status=${statusFilter || ""}`;
+  const cached = getCachedOrderManagementList(cacheKey);
+  if (cached) {
+    return NextResponse.json(cached, {
+      headers: {
+        // Keep this admin data out of shared caches/CDNs.
+        "Cache-Control": "no-store",
+      },
+    });
+  }
 
   let query = supabase
     .from("user_items")
@@ -93,5 +108,12 @@ export async function GET(req: NextRequest) {
     },
   }));
 
-  return NextResponse.json({ items: enriched });
+  const payload = { items: enriched };
+  setCachedOrderManagementList(cacheKey, payload);
+
+  return NextResponse.json(payload, {
+    headers: {
+      "Cache-Control": "no-store",
+    },
+  });
 }

@@ -16,6 +16,7 @@ import {
 import ThreeDModelViewer from "@/components/ThreeDModelViewer";
 import RichTextEditor from "@/components/RichTextEditor";
 import ToastPopup, { type ToastPopupState } from "@/components/ToastPopup";
+import { POSITION_PERMISSIONS, type Position } from "@/app/lib/permissions";
 import {
   buildAdditionalFeaturesHtml,
   createFeatureOptionsByCategory,
@@ -83,6 +84,21 @@ type Product = {
   inventory?: number;
 };
 
+type ProductReviewRow = {
+  id: string;
+  product_id: string;
+  user_id: string;
+  rating: number;
+  comment: string;
+  created_at: string;
+};
+
+function shortUserLabel(userId: string): string {
+  const raw = String(userId || "");
+  if (raw.length <= 10) return raw;
+  return `${raw.slice(0, 6)}…${raw.slice(-4)}`;
+}
+
 export default function EditProductPage() {
   const router = useRouter();
   const params = useParams();
@@ -111,6 +127,85 @@ export default function EditProductPage() {
   const [newCategoryOption, setNewCategoryOption] = useState("");
   const [savingCategories, setSavingCategories] = useState(false);
   const [newFeatureOption, setNewFeatureOption] = useState("");
+
+  const [reviews, setReviews] = useState<ProductReviewRow[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [reviewsError, setReviewsError] = useState<string | null>(null);
+  const [deletingReviewId, setDeletingReviewId] = useState<string | null>(null);
+
+  const canDeleteReviews = (() => {
+    const roleNorm = String(currentAdmin?.role || "").toLowerCase();
+    const posNorm = String(currentAdmin?.position || "").toLowerCase();
+    if (roleNorm === "superadmin" || posNorm === "superadmin") return true;
+    const position = currentAdmin?.position as Position | undefined;
+    const perms = position ? POSITION_PERMISSIONS[position] : undefined;
+    return Boolean(perms?.actions?.includes("delete"));
+  })();
+
+  const canReadReviews = (() => {
+    const roleNorm = String(currentAdmin?.role || "").toLowerCase();
+    const posNorm = String(currentAdmin?.position || "").toLowerCase();
+    if (roleNorm === "superadmin" || posNorm === "superadmin") return true;
+    const position = currentAdmin?.position as Position | undefined;
+    const perms = position ? POSITION_PERMISSIONS[position] : undefined;
+    return Boolean(perms?.actions?.includes("read"));
+  })();
+
+  const loadReviews = async () => {
+    if (!productId) return;
+    if (!currentAdmin) return;
+    if (!canReadReviews) return;
+
+    setReviewsLoading(true);
+    setReviewsError(null);
+    try {
+      const res = await fetch(`/api/product-reviews?productId=${encodeURIComponent(productId)}`, {
+        headers: {
+          Authorization: JSON.stringify(currentAdmin || {}),
+        },
+        cache: "no-store",
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || `Failed to load reviews (${res.status})`);
+      setReviews((json?.reviews || []) as ProductReviewRow[]);
+    } catch (err: any) {
+      console.error("Failed to load product reviews", err);
+      setReviews([]);
+      setReviewsError(err?.message || "Failed to load reviews");
+    } finally {
+      setReviewsLoading(false);
+    }
+  };
+
+  const deleteReview = async (reviewId: string) => {
+    if (!canDeleteReviews) {
+      setMessage("Error: You do not have permission to delete reviews.");
+      return;
+    }
+    if (!window.confirm("Delete this review?")) return;
+
+    setDeletingReviewId(reviewId);
+    try {
+      const res = await fetch(`/api/product-reviews`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: JSON.stringify(currentAdmin || {}),
+        },
+        body: JSON.stringify({ reviewId }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || `Failed to delete review (${res.status})`);
+      setReviews((prev) => prev.filter((r) => r.id !== reviewId));
+      setMessage("Review deleted successfully");
+    } catch (err: any) {
+      console.error("Failed to delete review", err);
+      setMessage(`Error: ${err?.message || "Failed to delete review"}`);
+    } finally {
+      setDeletingReviewId(null);
+    }
+  };
 
   useEffect(() => {
     if (!message) return;
@@ -230,6 +325,13 @@ export default function EditProductPage() {
     };
     loadAdmin();
   }, []);
+
+  useEffect(() => {
+    if (!productId) return;
+    if (!currentAdmin?.id) return;
+    void loadReviews();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productId, currentAdmin?.id]);
 
   useEffect(() => {
     const loadGlobalSkyboxDefaults = async () => {
@@ -1869,6 +1971,60 @@ export default function EditProductPage() {
             </div>
           </div>
         )}
+
+        {/* Reviews Moderation */}
+        <div className="rounded-2xl border border-gray-200 bg-gray-50 p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">Product Reviews</h2>
+              <p className="mt-1 text-xs text-gray-500">View and delete reviews left by completed buyers for this product.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void loadReviews()}
+              disabled={reviewsLoading || !canReadReviews}
+              className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {reviewsLoading ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
+
+          {!canReadReviews ? (
+            <div className="mt-4 text-sm text-gray-600">You do not have permission to view reviews.</div>
+          ) : reviewsError ? (
+            <div className="mt-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{reviewsError}</div>
+          ) : reviewsLoading ? (
+            <div className="mt-4 text-sm text-gray-500">Loading reviews…</div>
+          ) : reviews.length === 0 ? (
+            <div className="mt-4 text-sm text-gray-500">No reviews for this product yet.</div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {reviews.map((r) => (
+                <div key={r.id} className="rounded-lg border border-gray-200 bg-white p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-sm font-semibold text-gray-900">{Number(r.rating || 0)} / 5</div>
+                        <div className="text-xs text-gray-500">by {shortUserLabel(r.user_id)}</div>
+                      </div>
+                      <div className="mt-2 whitespace-pre-wrap text-sm text-gray-800">{r.comment}</div>
+                      <div className="mt-2 text-xs text-gray-500">{new Date(r.created_at).toLocaleString()}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void deleteReview(r.id)}
+                      disabled={!canDeleteReviews || deletingReviewId === r.id}
+                      className="rounded bg-red-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      title={!canDeleteReviews ? "No delete permission" : "Delete review"}
+                    >
+                      {deletingReviewId === r.id ? "Deleting…" : "Delete"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div className="flex gap-4 pt-4">
           <button

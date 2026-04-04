@@ -29,6 +29,16 @@ export async function GET(req: Request) {
       { onConflict: "key" }
     );
 
+    await supabase.from("rbac_pages").upsert(
+      {
+        key: "product_reviews",
+        name: "Product Reviews",
+        path: "/dashboard/product-reviews",
+        group_name: "Orders",
+      },
+      { onConflict: "key" }
+    );
+
     const { data: adminRow, error: adminErr } = await supabase
       .from("admins")
       .select("id,role,position")
@@ -79,6 +89,11 @@ export async function GET(req: Request) {
         const path = nested?.path;
         if (typeof path === "string" && path.length) allowedPaths.add(path);
       }
+    }
+
+    // Admins should be able to access reviews moderation by default.
+    if (role === "admin" || pos === "admin") {
+      allowedPaths.add("/dashboard/product-reviews");
     }
 
     // Per-admin override permissions (additional grants)
