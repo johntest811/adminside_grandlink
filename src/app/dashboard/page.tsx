@@ -12,7 +12,7 @@ import {
   Tooltip,
   Legend,
 } from "chart.js";
-import { Bar } from "react-chartjs-2";
+import { Bar, Line } from "react-chartjs-2";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import {
@@ -548,6 +548,78 @@ export default function DashboardPage() {
     [ordersStatusBuckets]
   );
 
+  const salesThisMonthTrendData = useMemo(() => {
+    const todayDate = new Date();
+    const monthStart = new Date(todayDate.getFullYear(), todayDate.getMonth(), 1);
+    const monthBuckets = buildBuckets(startOfDay(monthStart), endOfDay(todayDate), "day");
+
+    const salesCounts = monthBuckets.map((bucket) => {
+      let successfulCount = 0;
+      orderEvents.forEach((event) => {
+        const createdAt = new Date(event.created_at).getTime();
+        if (createdAt < bucket.start.getTime() || createdAt > bucket.end.getTime()) return;
+        if (SUCCESS_STATUSES.has(normalizeOrderStatus(event.status, event.order_status))) {
+          successfulCount += 1;
+        }
+      });
+      return successfulCount;
+    });
+
+    return {
+      labels: monthBuckets.map((bucket) => bucket.label),
+      datasets: [
+        {
+          label: "Successful Sales",
+          data: salesCounts,
+          fill: true,
+          backgroundColor: "rgba(5, 150, 105, 0.14)",
+          borderColor: "#059669",
+          tension: 0.3,
+          pointRadius: 3,
+          pointHoverRadius: 5,
+        },
+      ],
+    };
+  }, [orderEvents]);
+
+  const productsHealthVisualizerData = useMemo(
+    () => ({
+      labels: ["Healthy Stock", "Low Stock"],
+      datasets: [
+        {
+          label: "Product Count",
+          data: [Math.max(metrics.totalProducts - metrics.lowStockCount, 0), metrics.lowStockCount],
+          backgroundColor: ["#0284C7", "#F97316"],
+          borderRadius: 10,
+          maxBarThickness: 56,
+        },
+      ],
+    }),
+    [metrics.lowStockCount, metrics.totalProducts]
+  );
+
+  const operationsSnapshotData = useMemo(
+    () => ({
+      labels: ["Sales This Month", "Pending", "Cancelled", "Active Users", "Total Products"],
+      datasets: [
+        {
+          label: "Operational Count",
+          data: [
+            metrics.successfulSales,
+            metrics.pendingOrders,
+            metrics.cancelledOrders,
+            activeUsersInRange,
+            metrics.totalProducts,
+          ],
+          backgroundColor: ["#059669", "#F59E0B", "#DC2626", "#0F766E", "#334155"],
+          borderRadius: 10,
+          maxBarThickness: 46,
+        },
+      ],
+    }),
+    [activeUsersInRange, metrics.cancelledOrders, metrics.pendingOrders, metrics.successfulSales, metrics.totalProducts]
+  );
+
   const metricCards = useMemo<MetricCard[]>(
     () => [
       {
@@ -571,22 +643,8 @@ export default function DashboardPage() {
         accentClass: "from-amber-500/15 to-amber-50 text-amber-700",
         icon: Clock3,
       },
-      {
-        title: "Sales This Month",
-        value: metrics.successfulSales,
-        subtitle: "Successful deliveries and approvals",
-        accentClass: "from-emerald-500/15 to-emerald-50 text-emerald-700",
-        icon: BarChart3,
-      },
-      {
-        title: "Total Products",
-        value: metrics.totalProducts,
-        subtitle: `${metrics.totalUsers.toLocaleString()} user accounts tracked`,
-        accentClass: "from-sky-500/15 to-sky-50 text-sky-700",
-        icon: Boxes,
-      },
     ],
-    [metrics.cancelledOrders, metrics.lowStockCount, metrics.pendingOrders, metrics.successfulSales, metrics.totalProducts, metrics.totalUsers]
+    [metrics.cancelledOrders, metrics.lowStockCount, metrics.pendingOrders]
   );
 
   if (!currentAdmin && loading) {
@@ -628,7 +686,7 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {metricCards.map((card) => {
           const Icon = card.icon;
           return (
@@ -646,6 +704,98 @@ export default function DashboardPage() {
             </article>
           );
         })}
+      </section>
+
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+        <article className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Sales This Month Visualizer</h2>
+              <p className="mt-1 text-sm text-slate-500">Daily successful sales trend for the current month.</p>
+            </div>
+            <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700">
+              <BarChart3 className="h-5 w-5" />
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+            <Line
+              data={salesThisMonthTrendData}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: { display: false },
+                },
+                scales: {
+                  x: { ticks: { color: "#475569" }, grid: { display: false } },
+                  y: { beginAtZero: true, ticks: { color: "#475569" }, grid: { color: "rgba(148,163,184,0.2)" } },
+                },
+              }}
+              height={240}
+            />
+          </div>
+        </article>
+
+        <article className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Total Products Visualizer</h2>
+              <p className="mt-1 text-sm text-slate-500">Healthy vs low-stock product distribution.</p>
+            </div>
+            <div className="rounded-2xl bg-sky-50 p-3 text-sky-700">
+              <Boxes className="h-5 w-5" />
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+            <Bar
+              data={productsHealthVisualizerData}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: { display: false },
+                },
+                scales: {
+                  x: { ticks: { color: "#475569" }, grid: { display: false } },
+                  y: { beginAtZero: true, ticks: { color: "#475569" }, grid: { color: "rgba(148,163,184,0.2)" } },
+                },
+              }}
+              height={240}
+            />
+          </div>
+        </article>
+
+        <article className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Operations Snapshot</h2>
+              <p className="mt-1 text-sm text-slate-500">Cross-metric comparison for key operational counts.</p>
+            </div>
+            <div className="rounded-2xl bg-slate-100 p-3 text-slate-700">
+              <Activity className="h-5 w-5" />
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+            <Bar
+              data={operationsSnapshotData}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: { display: false },
+                },
+                scales: {
+                  x: { ticks: { color: "#475569" }, grid: { display: false } },
+                  y: { beginAtZero: true, ticks: { color: "#475569" }, grid: { color: "rgba(148,163,184,0.2)" } },
+                },
+              }}
+              height={240}
+            />
+          </div>
+        </article>
       </section>
 
       <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">

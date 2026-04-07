@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { adminNotificationService } from "@/utils/notificationHelper";
 
 type UserItem = {
@@ -280,6 +281,7 @@ function InlineSpinner() {
 }
 
 export default function OrdersPage() {
+  const searchParams = useSearchParams();
   const [reservations, setReservations] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
@@ -302,6 +304,13 @@ export default function OrdersPage() {
   // New: date/time filter
   const [startDateTime, setStartDateTime] = useState<string>('');
   const [endDateTime, setEndDateTime] = useState<string>('');
+  const [focusOrderId, setFocusOrderId] = useState<string>('');
+  const [flashOrderId, setFlashOrderId] = useState<string>('');
+  const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
+
+  const requestedOrderId = useMemo(() => {
+    return String(searchParams.get("orderId") || "").trim();
+  }, [searchParams]);
 
   // Minimal API to update only user_items
   const updateOrderViaApi = async (payload: any) => {
@@ -581,6 +590,28 @@ export default function OrdersPage() {
 
   const requestDetails = useMemo(() => extractRequestDetails(requestDetailsItem), [requestDetailsItem]);
 
+  useEffect(() => {
+    if (!requestedOrderId) return;
+    setSearchQuery(requestedOrderId);
+    setFocusOrderId(requestedOrderId);
+  }, [requestedOrderId]);
+
+  useEffect(() => {
+    if (!focusOrderId || loading) return;
+
+    const targetRow = rowRefs.current[focusOrderId];
+    if (!targetRow) return;
+
+    targetRow.scrollIntoView({ behavior: "smooth", block: "center" });
+    setFlashOrderId(focusOrderId);
+
+    const timeout = window.setTimeout(() => {
+      setFlashOrderId("");
+    }, 3500);
+
+    return () => window.clearTimeout(timeout);
+  }, [filteredReservations, focusOrderId, loading]);
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -728,7 +759,15 @@ export default function OrdersPage() {
               // inline payment editing removed; we now use a modal
 
               return (
-                <tr key={r.id} className="hover:bg-gray-50">
+                <tr
+                  key={r.id}
+                  ref={(element) => {
+                    rowRefs.current[r.id] = element;
+                  }}
+                  className={`hover:bg-gray-50 ${
+                    flashOrderId === r.id ? "bg-indigo-50 ring-2 ring-inset ring-indigo-300" : ""
+                  }`}
+                >
                   <td className="px-4 py-3 align-top">
                     <div className="space-y-1">
                       <div>

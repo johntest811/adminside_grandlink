@@ -66,7 +66,8 @@ export async function GET(request: NextRequest) {
       const productName = r.meta?.product_name || productMap[r.product_id]?.name || r.product_id;
       const userName = usersById[r.user_id]?.name || "User";
       return {
-        id: r.id,
+        id: `recent-order-${r.id}`,
+        orderItemId: r.id,
         title: "New Order",
         message: `User ${userName} has made an order\n${productName} • Qty: ${Number(r.quantity || 1)}`,
         type: "order",

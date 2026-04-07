@@ -32,6 +32,7 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, T
 
 const DEFAULT_TRAINING_DAYS = 1095;
 const DEFAULT_HISTORY_WINDOW_DAYS = 120;
+const FORECAST_MONTH_OPTIONS = [1, 3, 6, 12] as const;
 
 function clampInteger(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, Math.round(value)));
@@ -41,6 +42,17 @@ function addDaysISO(dateISO: string, days: number) {
   const date = new Date(`${dateISO}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function getStartDateFromMonths(endISO: string, months: number) {
+  const endDate = new Date(`${endISO}T00:00:00.000Z`);
+  if (Number.isNaN(endDate.getTime())) return endISO;
+
+  const safeMonths = Math.max(1, Math.round(months));
+  const startDate = new Date(
+    Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth() - (safeMonths - 1), 1)
+  );
+  return startDate.toISOString().slice(0, 10);
 }
 
 function getDaysBetweenInclusive(startISO?: string | null, endISO?: string | null) {
@@ -116,6 +128,7 @@ function SectionHeader(props: { index: number; title: string; description: strin
 export default function SalesForecastingPage() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [selectedMonths, setSelectedMonths] = useState<number>(6);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [series, setSeries] = useState<SalesSeriesResponse | null>(null);
@@ -312,9 +325,11 @@ export default function SalesForecastingPage() {
 
   useEffect(() => {
     if (!series?.endDate) return;
-    if (!toDate) setToDate(series.endDate);
-    if (!fromDate) setFromDate(addDaysISO(series.endDate, -(DEFAULT_HISTORY_WINDOW_DAYS - 1)));
-  }, [fromDate, series, toDate]);
+    const end = series.endDate;
+    const start = getStartDateFromMonths(end, selectedMonths);
+    setToDate(end);
+    setFromDate(start);
+  }, [selectedMonths, series?.endDate]);
 
   const revenueChartData = useMemo(() => {
     if (!revForecast) return null;
@@ -627,6 +642,10 @@ export default function SalesForecastingPage() {
     return `Up to ${toDate}`;
   }, [fromDate, toDate]);
 
+  const selectedMonthsLabel = useMemo(() => {
+    return `${selectedMonths} month${selectedMonths === 1 ? "" : "s"}`;
+  }, [selectedMonths]);
+
   return (
     <div className="space-y-6 pb-8 text-slate-900">
       <section className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-sm md:p-8">
@@ -664,22 +683,24 @@ export default function SalesForecastingPage() {
         <div className="mt-6 grid gap-3 lg:grid-cols-[1.4fr,1fr]">
           <div className="grid gap-3 md:grid-cols-3">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <label className="text-xs uppercase tracking-[0.24em] text-slate-500">From date</label>
-              <input
+              <label className="text-xs uppercase tracking-[0.24em] text-slate-500">Forecast range</label>
+              <select
                 className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
-                type="date"
-                value={fromDate}
-                onChange={(event) => setFromDate(event.target.value)}
-              />
+                value={selectedMonths}
+                onChange={(event) => setSelectedMonths(Number(event.target.value || 6))}
+              >
+                {FORECAST_MONTH_OPTIONS.map((months) => (
+                  <option key={months} value={months}>
+                    Last {months} month{months === 1 ? "" : "s"}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <label className="text-xs uppercase tracking-[0.24em] text-slate-500">To date</label>
-              <input
-                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
-                type="date"
-                value={toDate}
-                onChange={(event) => setToDate(event.target.value)}
-              />
+              <label className="text-xs uppercase tracking-[0.24em] text-slate-500">Selected window</label>
+              <div className="mt-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900">
+                {selectedMonthsLabel}
+              </div>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <label className="text-xs uppercase tracking-[0.24em] text-slate-500">Products</label>
@@ -767,7 +788,7 @@ export default function SalesForecastingPage() {
         />
 
         <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-          Showing records in range: <span className="font-semibold text-slate-900">{selectedRangeLabel}</span>
+          Showing records in range: <span className="font-semibold text-slate-900">{selectedRangeLabel}</span> ({selectedMonthsLabel})
         </div>
 
         <div className="mt-5 grid gap-3 md:grid-cols-4">
@@ -786,24 +807,6 @@ export default function SalesForecastingPage() {
               ))}
             </select>
           </label>
-          {/* <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">From date</span>
-            <input
-              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none"
-              type="date"
-              value={fromDate}
-              onChange={(event) => setFromDate(event.target.value)}
-            />
-          </label>
-          <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">To date</span>
-            <input
-              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none"
-              type="date"
-              value={toDate}
-              onChange={(event) => setToDate(event.target.value)}
-            />
-          </label> */}
           <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
             <p className="font-semibold text-slate-900">Training dataset source</p>
             <p className="mt-2">{series?.source || "SalesForecast"}</p>

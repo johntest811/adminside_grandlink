@@ -45,6 +45,14 @@ function isAllowed3DFile(file: File): boolean {
   return (ALLOWED_3D_EXTENSIONS as readonly string[]).includes(ext);
 }
 
+function generateProductCode(): string {
+  const digitsLength = Math.random() < 0.5 ? 2 : 3;
+  const min = digitsLength === 2 ? 10 : 100;
+  const max = digitsLength === 2 ? 99 : 999;
+  const randomPart = Math.floor(Math.random() * (max - min + 1)) + min;
+  return `GE${randomPart}`;
+}
+
 const uploadFile = async (file: File, folder: string) => {
   const fileExt = file.name.split('.').pop();
   const fileName = `${uuidv4()}.${fileExt}`;
@@ -696,6 +704,31 @@ export default function ProductsAdminPage() {
     syncAdditionalFeatures(selectedFeatureOptions.filter((item) => item !== feature));
   };
 
+  const handleAutoGenerateProductCode = async () => {
+    const nextCode = generateProductCode();
+    setName(nextCode);
+    setMessage(`Generated product code: ${nextCode}`);
+
+    if (currentAdmin) {
+      try {
+        await logActivity({
+          admin_id: currentAdmin.id,
+          admin_name: currentAdmin.username,
+          action: 'update',
+          entity_type: 'product_code',
+          details: `Auto-generated product code: ${nextCode}`,
+          page: 'products',
+          metadata: {
+            generatedCode: nextCode,
+            adminAccount: currentAdmin.username,
+          }
+        });
+      } catch (error) {
+        console.error("Failed to log product code generation:", error);
+      }
+    }
+  };
+
   const getCreateStepValidationMessage = (tab: ProductFormTabKey): string | null => {
     if (tab === "identity") {
       if (!name.trim()) return "Product code is required before moving to the next tab.";
@@ -713,6 +746,12 @@ export default function ProductsAdminPage() {
       }
       if (inventory === "" || Number.isNaN(Number(inventory))) {
         return "Inventory is required before moving to the next tab.";
+      }
+    }
+
+    if (tab === "files") {
+      if (images.length === 0) {
+        return "At least one product image is required before creating the product.";
       }
     }
 
@@ -786,7 +825,7 @@ export default function ProductsAdminPage() {
         console.error("Failed to log form submission:", error);
       }
 
-      for (const tab of ["identity", "classification", "details"] as ProductFormTabKey[]) {
+      for (const tab of ["identity", "classification", "details", "files"] as ProductFormTabKey[]) {
         const validationMessage = getCreateStepValidationMessage(tab);
         if (validationMessage) {
           setActiveTab(tab);
@@ -807,6 +846,10 @@ export default function ProductsAdminPage() {
 
       const imageUrls = imagesUpload.urls;
       const fbxUploadedUrls = modelsUpload.urls;
+
+      if (imageUrls.length === 0) {
+        throw new Error("At least one product image upload is required before creating the product.");
+      }
 
       const skyboxes: Partial<Record<WeatherKey, string>> = {};
       WEATHER_KEYS.forEach((k, index) => {
@@ -1074,12 +1117,21 @@ export default function ProductsAdminPage() {
 
               <div className="grid gap-5 md:grid-cols-2">
                 <div>
-                  <label className="mb-1 block font-semibold text-[#233a5e]">Product Code <span className="text-red-500">*</span></label>
+                  <div className="mb-1 flex items-center justify-between gap-3">
+                    <label className="block font-semibold text-[#233a5e]">Product Code <span className="text-red-500">*</span></label>
+                    <button
+                      type="button"
+                      onClick={() => void handleAutoGenerateProductCode()}
+                      className="rounded-lg border border-[#233a5e]/30 bg-[#233a5e]/10 px-3 py-1 text-xs font-semibold text-[#233a5e] transition hover:bg-[#233a5e]/20"
+                    >
+                      Auto Generate (GE)
+                    </button>
+                  </div>
                   <input
                     type="text"
-                    placeholder="Enter product code"
+                    placeholder="Enter product code (e.g., GE45)"
                     value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    onChange={(e) => setName(e.target.value.toUpperCase())}
                     className="w-full rounded-lg border border-gray-300 bg-white p-3 text-black outline-none transition focus:border-[#233a5e] focus:ring-2 focus:ring-[#233a5e]/20"
                   />
                 </div>
@@ -1370,7 +1422,7 @@ export default function ProductsAdminPage() {
               <div className="mb-6">
                 <h2 className="text-2xl font-bold text-[#233a5e]">Product Files</h2>
                 <p className="mt-2 text-sm text-gray-600">
-                  Upload optional product images, 3D models, and default or custom skyboxes. You can submit without these files.
+                  Upload at least one product image, then add optional 3D models and skyboxes.
                 </p>
               </div>
 
@@ -1380,7 +1432,8 @@ export default function ProductsAdminPage() {
                     <h3 className="text-md font-semibold text-[#233a5e] mb-2">
                       Product Images ({images.length})
                     </h3>
-                    <p className="mb-3 text-xs text-gray-500">Maximum image size: 6MB per file.</p>
+                    <p className="mb-1 text-xs text-gray-500">Maximum image size: 6MB per file.</p>
+                    <p className="mb-3 text-xs font-semibold text-red-600">At least 1 image is required to submit this product.</p>
 
                     <div className="flex items-center space-x-2 mb-4">
                       <label
@@ -1620,7 +1673,7 @@ export default function ProductsAdminPage() {
           <div className="flex flex-col gap-3 border-t border-gray-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm text-gray-500">
               {activeTab === "files"
-                ? "Review the optional uploads, then create the product from the final tab."
+                ? "Add at least one image, review uploads, then create the product from the final tab."
                 : "Use Next to continue through each required step before submitting."}
             </div>
 
@@ -1649,9 +1702,11 @@ export default function ProductsAdminPage() {
                   onClick={() => {
                     explicitSubmitRef.current = true;
                   }}
-                  disabled={loading}
+                  disabled={loading || images.length === 0}
                   className={`flex items-center justify-center gap-2 rounded-lg px-6 py-2 font-semibold text-white transition-colors duration-200 ${
-                    loading ? "cursor-not-allowed bg-blue-600 opacity-70" : "bg-blue-600 hover:bg-blue-800"
+                    loading || images.length === 0
+                      ? "cursor-not-allowed bg-blue-600 opacity-70"
+                      : "bg-blue-600 hover:bg-blue-800"
                   }`}
                 >
                   {loading ? (
@@ -1659,6 +1714,8 @@ export default function ProductsAdminPage() {
                       <div className="h-4 w-4 animate-spin rounded-full border-b-2 border-white"></div>
                       Adding Product...
                     </>
+                  ) : images.length === 0 ? (
+                    "Add at least 1 image first"
                   ) : (
                     "Add Product & Notify Users"
                   )}
