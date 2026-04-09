@@ -38,12 +38,6 @@ function clampInteger(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, Math.round(value)));
 }
 
-function addDaysISO(dateISO: string, days: number) {
-  const date = new Date(`${dateISO}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
 function getStartDateFromMonths(endISO: string, months: number) {
   const endDate = new Date(`${endISO}T00:00:00.000Z`);
   if (Number.isNaN(endDate.getTime())) return endISO;

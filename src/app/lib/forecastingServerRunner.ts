@@ -12,13 +12,32 @@ import type {
 
 const FASTAPI_TIMEOUT_MS = 120000;
 
+function isServerlessRuntime() {
+  return process.env.VERCEL === "1" || process.env.AWS_LAMBDA_FUNCTION_NAME != null;
+}
+
+function getFastApiBaseUrl() {
+  const candidates = [
+    process.env.FORECASTING_FASTAPI_URL,
+    process.env.FASTAPI_URL,
+    process.env.FAST_API_URL,
+  ];
+
+  for (const candidate of candidates) {
+    const value = String(candidate || "").trim();
+    if (value) return value;
+  }
+
+  return "";
+}
+
 function shouldUseLocalFallback() {
   const flag = (process.env.FORECASTING_ALLOW_LOCAL_FALLBACK || "").trim().toLowerCase();
   if (flag === "true" || flag === "1" || flag === "yes") return true;
   if (flag === "false" || flag === "0" || flag === "no") return false;
 
-  // Safe default for Vercel/serverless deployments: do not run local training workloads.
-  return process.env.NODE_ENV !== "production";
+  // Default to enabled so forecasting still runs if FastAPI URL is not configured.
+  return true;
 }
 
 function computeRegressionMetrics(actual: number[], predicted: number[]) {
@@ -115,10 +134,9 @@ function augmentForecast(seriesForecast: any): RandomForestSeriesForecast {
 }
 
 async function callFastApi<T>(path: string, payload: Record<string, unknown>): Promise<T | null> {
-  const baseUrl = process.env.FORECASTING_FASTAPI_URL?.trim();
+  const baseUrl = getFastApiBaseUrl();
   if (!baseUrl) {
-    if (shouldUseLocalFallback()) return null;
-    throw new Error("FORECASTING_FASTAPI_URL is not configured");
+    return null;
   }
 
   try {
@@ -242,7 +260,13 @@ export async function runLstmForecast(params: {
     };
   }
 
-  const selectedProducts = (params.products || []).slice(0, Math.min(12, Math.max(3, params.limit)));
+  const serverless = isServerlessRuntime();
+  const safeLimit = serverless ? Math.min(6, Math.max(3, params.limit)) : Math.min(12, Math.max(3, params.limit));
+  const safeLookback = serverless ? Math.min(45, Math.max(14, params.lookback)) : params.lookback;
+  const safeHorizon = serverless ? Math.min(21, Math.max(7, params.horizon)) : params.horizon;
+  const safeEpochs = serverless ? Math.min(6, Math.max(4, params.epochs)) : params.epochs;
+
+  const selectedProducts = (params.products || []).slice(0, safeLimit);
   const results: LstmDemandResult[] = [];
   const skippedErrors: string[] = [];
 
@@ -251,9 +275,9 @@ export async function runLstmForecast(params: {
       const forecast = await trainAndForecastDemandLSTM({
         labels: product.labels,
         quantities: product.quantities,
-        lookback: params.lookback,
-        horizon: params.horizon,
-        epochs: params.epochs,
+        lookback: safeLookback,
+        horizon: safeHorizon,
+        epochs: safeEpochs,
       });
       const delta = forecast.recent_total > 0
         ? (forecast.predicted_total - forecast.recent_total) / forecast.recent_total
@@ -287,11 +311,11 @@ export async function runLstmForecast(params: {
     results,
     meta: {
       trainingDays: params.trainingDays,
-      limit: params.limit,
+      limit: safeLimit,
       branch: params.branch,
-      lookback: params.lookback,
-      horizon: params.horizon,
-      epochs: params.epochs,
+      lookback: safeLookback,
+      horizon: safeHorizon,
+      epochs: safeEpochs,
     },
   };
 }

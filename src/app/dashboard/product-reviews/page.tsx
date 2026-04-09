@@ -47,11 +47,14 @@ export default function ProductReviewsPage() {
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const [selectedProductId, setSelectedProductId] = useState<string>("all");
-  const [minRating, setMinRating] = useState<string>("all");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [showProductsWithoutReviews, setShowProductsWithoutReviews] = useState(true);
+  const [activeProductId, setActiveProductId] = useState<string>("");
+  const [productSearch, setProductSearch] = useState("");
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
+
+  const [newReviewUserId, setNewReviewUserId] = useState("");
+  const [newReviewRating, setNewReviewRating] = useState<number>(5);
+  const [newReviewComment, setNewReviewComment] = useState("");
+  const [submittingReview, setSubmittingReview] = useState(false);
 
   useEffect(() => {
     try {
@@ -63,6 +66,12 @@ export default function ProductReviewsPage() {
     }
   }, []);
 
+  useEffect(() => {
+    if (currentAdmin?.id && !newReviewUserId) {
+      setNewReviewUserId(String(currentAdmin.id));
+    }
+  }, [currentAdmin?.id, newReviewUserId]);
+
   const loadProducts = async () => {
     try {
       const res = await fetch("/api/products", { cache: "no-store" });
@@ -71,6 +80,7 @@ export default function ProductReviewsPage() {
       setProducts((json?.products || []) as ProductRow[]);
     } catch (loadErr) {
       console.warn("Failed to load products", loadErr);
+      setProducts([]);
     }
   };
 
@@ -162,74 +172,68 @@ export default function ProductReviewsPage() {
     });
   }, [products, reviews]);
 
-  const filteredReviews = useMemo(() => {
-    const query = normalizeText(searchQuery);
-    const minimumRating = minRating === "all" ? null : Number(minRating);
-
-    return reviews.filter((review) => {
-      if (selectedProductId !== "all" && review.product_id !== selectedProductId) {
-        return false;
-      }
-
-      if (minimumRating !== null && Number(review.rating || 0) < minimumRating) {
-        return false;
-      }
-
-      if (!query) return true;
-
-      const product = productMap.get(review.product_id);
-      const searchable = [review.comment, review.user_id, review.product_id, product?.name]
-        .filter(Boolean)
-        .map((value) => normalizeText(value));
-
-      return searchable.some((entry) => entry.includes(query));
-    });
-  }, [minRating, productMap, reviews, searchQuery, selectedProductId]);
-
-  const reviewsByProduct = useMemo(() => {
-    const grouped = new Map<string, ReviewRow[]>();
-
-    filteredReviews.forEach((review) => {
-      if (!grouped.has(review.product_id)) {
-        grouped.set(review.product_id, []);
-      }
-      grouped.get(review.product_id)!.push(review);
-    });
-
-    grouped.forEach((list) => {
-      list.sort((left, right) => {
-        const leftTime = new Date(left.created_at).getTime();
-        const rightTime = new Date(right.created_at).getTime();
-        return sortOrder === "newest" ? rightTime - leftTime : leftTime - rightTime;
-      });
-    });
-
-    return grouped;
-  }, [filteredReviews, sortOrder]);
-
-  const visibleProductIds = useMemo(() => {
-    if (selectedProductId !== "all") return [selectedProductId];
-
-    if (showProductsWithoutReviews) {
-      return productOptions.map((product) => product.id);
+  useEffect(() => {
+    if (!productOptions.length) {
+      setActiveProductId("");
+      return;
     }
 
-    return productOptions
-      .map((product) => product.id)
-      .filter((productId) => (reviewsByProduct.get(productId) || []).length > 0);
-  }, [productOptions, reviewsByProduct, selectedProductId, showProductsWithoutReviews]);
+    if (!activeProductId || !productOptions.some((item) => item.id === activeProductId)) {
+      setActiveProductId(productOptions[0].id);
+    }
+  }, [activeProductId, productOptions]);
 
-  const hasVisibleSections = useMemo(() => {
-    if (!visibleProductIds.length) return false;
-    if (showProductsWithoutReviews) return true;
-    return visibleProductIds.some((productId) => (reviewsByProduct.get(productId) || []).length > 0);
-  }, [reviewsByProduct, showProductsWithoutReviews, visibleProductIds]);
+  const filteredProductOptions = useMemo(() => {
+    const query = normalizeText(productSearch);
+    if (!query) return productOptions;
 
-  const averageRating = useMemo(() => getAverageRating(filteredReviews), [filteredReviews]);
+    return productOptions.filter((product) => {
+      const searchable = [product.name, product.category, product.id]
+        .filter(Boolean)
+        .map((value) => normalizeText(value));
+      return searchable.some((value) => value.includes(query));
+    });
+  }, [productOptions, productSearch]);
+
+  const activeProduct = useMemo(() => {
+    if (!activeProductId) return null;
+    return productMap.get(activeProductId) || { id: activeProductId, name: activeProductId };
+  }, [activeProductId, productMap]);
+
+  const activeProductReviews = useMemo(() => {
+    if (!activeProductId) return [];
+
+    const rows = reviews.filter((review) => review.product_id === activeProductId);
+    rows.sort((left, right) => {
+      const leftTime = new Date(left.created_at).getTime();
+      const rightTime = new Date(right.created_at).getTime();
+      return sortOrder === "newest" ? rightTime - leftTime : leftTime - rightTime;
+    });
+    return rows;
+  }, [activeProductId, reviews, sortOrder]);
+
+  const activeAverageRating = useMemo(() => getAverageRating(activeProductReviews), [activeProductReviews]);
+
+  const productReviewSummary = useMemo(() => {
+    const summary = new Map<string, { count: number; averageRating: number }>();
+    for (const product of productOptions) {
+      const rows = reviews.filter((review) => review.product_id === product.id);
+      summary.set(product.id, {
+        count: rows.length,
+        averageRating: getAverageRating(rows),
+      });
+    }
+    return summary;
+  }, [productOptions, reviews]);
 
   const productsWithReviews = useMemo(() => {
-    return productOptions.filter((product) => (reviewsByProduct.get(product.id) || []).length > 0).length;
-  }, [productOptions, reviewsByProduct]);
+    return productOptions.filter((product) => {
+      const info = productReviewSummary.get(product.id);
+      return Boolean(info && info.count > 0);
+    }).length;
+  }, [productOptions, productReviewSummary]);
+
+  const overallAverageRating = useMemo(() => getAverageRating(reviews), [reviews]);
 
   const getProductLabel = (productId: string) => {
     const product = productMap.get(productId);
@@ -239,18 +243,66 @@ export default function ProductReviewsPage() {
     return category ? `${product.name} (${category})` : product.name;
   };
 
-  const isAnyFilterApplied =
-    selectedProductId !== "all" ||
-    minRating !== "all" ||
-    searchQuery.trim().length > 0 ||
-    !showProductsWithoutReviews;
+  const createReview = async () => {
+    if (!currentAdmin) {
+      alert("Admin session is required.");
+      return;
+    }
 
-  const clearFilters = () => {
-    setSelectedProductId("all");
-    setMinRating("all");
-    setSearchQuery("");
-    setShowProductsWithoutReviews(true);
-    setSortOrder("newest");
+    if (!activeProductId) {
+      alert("Select a product first.");
+      return;
+    }
+
+    const userId = String(newReviewUserId || currentAdmin.id || "").trim();
+    const comment = String(newReviewComment || "").trim();
+
+    if (!userId) {
+      alert("User ID is required to create a review.");
+      return;
+    }
+
+    if (!comment) {
+      alert("Please enter a review comment.");
+      return;
+    }
+
+    setSubmittingReview(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/product-reviews", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: JSON.stringify(currentAdmin || {}),
+        },
+        body: JSON.stringify({
+          productId: activeProductId,
+          userId,
+          rating: newReviewRating,
+          comment,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || `Failed to create review (${res.status})`);
+
+      const created = json?.review as ReviewRow | undefined;
+      if (created) {
+        setReviews((prev) => [created, ...prev]);
+      } else {
+        await loadReviews();
+      }
+
+      setNewReviewComment("");
+      setNewReviewRating(5);
+    } catch (createErr: any) {
+      const message = createErr?.message || "Failed to create review";
+      setError(message);
+      alert(message);
+    } finally {
+      setSubmittingReview(false);
+    }
   };
 
   return (
@@ -259,12 +311,12 @@ export default function ProductReviewsPage() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold text-gray-900">Product Reviews</h1>
-            <p className="mt-1 text-sm text-gray-600">Comments are grouped by product for easier moderation.</p>
+            <p className="mt-1 text-sm text-gray-600">Click a product to view reviews and manage add/delete actions.</p>
             <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-gray-500">
               <span>Products: {productOptions.length}</span>
               <span>With reviews: {productsWithReviews}</span>
-              <span>Visible reviews: {filteredReviews.length}</span>
-              <span>Average rating: {filteredReviews.length ? `${averageRating.toFixed(1)} / 5` : "N/A"}</span>
+              <span>Total reviews: {reviews.length}</span>
+              <span>Average rating: {reviews.length ? `${overallAverageRating.toFixed(1)} / 5` : "N/A"}</span>
             </div>
           </div>
 
@@ -278,120 +330,149 @@ export default function ProductReviewsPage() {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
-          <label className="text-sm text-gray-700">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Product</span>
-            <select
-              value={selectedProductId}
-              onChange={(event) => setSelectedProductId(event.target.value)}
-              className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
-            >
-              <option value="all">All products</option>
-              {productOptions.map((product) => (
-                <option key={product.id} value={product.id}>
-                  {getProductLabel(product.id)}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="text-sm text-gray-700">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Minimum rating</span>
-            <select
-              value={minRating}
-              onChange={(event) => setMinRating(event.target.value)}
-              className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
-            >
-              <option value="all">All ratings</option>
-              <option value="5">5 stars</option>
-              <option value="4">4 stars and up</option>
-              <option value="3">3 stars and up</option>
-              <option value="2">2 stars and up</option>
-              <option value="1">1 star and up</option>
-            </select>
-          </label>
-
-          <label className="text-sm text-gray-700 md:col-span-2 xl:col-span-1">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Search</span>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search comment, product, or user"
-              className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
-            />
-          </label>
-
-          <label className="text-sm text-gray-700">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Sort comments</span>
-            <select
-              value={sortOrder}
-              onChange={(event) => setSortOrder(event.target.value as "newest" | "oldest")}
-              className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
-            >
-              <option value="newest">Newest first</option>
-              <option value="oldest">Oldest first</option>
-            </select>
-          </label>
-
-          <label className="flex items-center gap-2 rounded border border-gray-300 bg-gray-50 px-3 py-2 text-sm text-gray-700">
-            <input
-              type="checkbox"
-              checked={showProductsWithoutReviews}
-              onChange={(event) => setShowProductsWithoutReviews(event.target.checked)}
-            />
-            Show products with no reviews
-          </label>
-        </div>
-
-        {isAnyFilterApplied && (
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-            >
-              Clear filters
-            </button>
-          </div>
-        )}
-
-        {error && (
+        {error ? (
           <div className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>
-        )}
+        ) : null}
       </div>
 
-      {!hasVisibleSections ? (
-        <div className="rounded-2xl border border-gray-200 bg-white p-6 text-center text-sm text-gray-500 shadow-sm">
-          No products or comments match the current filters.
-        </div>
-      ) : (
-        visibleProductIds.map((productId) => {
-          const productReviews = reviewsByProduct.get(productId) || [];
-          const avgRating = getAverageRating(productReviews);
+      <div className="grid gap-6 lg:grid-cols-[320px,1fr]">
+        <aside className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="space-y-3">
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Search products</label>
+              <input
+                type="text"
+                value={productSearch}
+                onChange={(event) => setProductSearch(event.target.value)}
+                placeholder="Search by product name"
+                className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+              />
+            </div>
 
-          if (!showProductsWithoutReviews && productReviews.length === 0) {
-            return null;
-          }
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Sort reviews</label>
+              <select
+                value={sortOrder}
+                onChange={(event) => setSortOrder(event.target.value as "newest" | "oldest")}
+                className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+              >
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
+              </select>
+            </div>
+          </div>
 
-          return (
-            <section key={productId} className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-100 pb-3">
+          <div className="mt-4 max-h-[620px] space-y-2 overflow-y-auto pr-1">
+            {filteredProductOptions.length === 0 ? (
+              <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500">
+                No products match your search.
+              </div>
+            ) : (
+              filteredProductOptions.map((product) => {
+                const summary = productReviewSummary.get(product.id) || { count: 0, averageRating: 0 };
+                const isActive = product.id === activeProductId;
+                return (
+                  <button
+                    key={product.id}
+                    type="button"
+                    onClick={() => setActiveProductId(product.id)}
+                    className={`w-full rounded border px-3 py-3 text-left transition ${
+                      isActive
+                        ? "border-indigo-500 bg-indigo-50"
+                        : "border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/50"
+                    }`}
+                  >
+                    <div className="text-sm font-semibold text-gray-900">{getProductLabel(product.id)}</div>
+                    <div className="mt-1 text-xs text-gray-500">
+                      {summary.count} review{summary.count === 1 ? "" : "s"}
+                      {summary.count > 0 ? ` • ${summary.averageRating.toFixed(1)} / 5` : ""}
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </aside>
+
+        <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+          {!activeProduct ? (
+            <div className="rounded border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-500">
+              Select a product to view and manage reviews.
+            </div>
+          ) : (
+            <div className="space-y-5">
+              <div className="flex flex-wrap items-start justify-between gap-4 border-b border-gray-100 pb-4">
                 <div>
-                  <h2 className="text-lg font-semibold text-gray-900">{getProductLabel(productId)}</h2>
-                  <p className="mt-1 text-xs text-gray-500">Product ID: {productId}</p>
+                  <h2 className="text-xl font-semibold text-gray-900">{getProductLabel(activeProduct.id)}</h2>
+                  <p className="mt-1 text-xs text-gray-500">Product ID: {activeProduct.id}</p>
                 </div>
                 <div className="text-right text-xs text-gray-500">
-                  <div>Comments: {productReviews.length}</div>
-                  <div>Average rating: {productReviews.length ? `${avgRating.toFixed(1)} / 5` : "N/A"}</div>
+                  <div>Reviews: {activeProductReviews.length}</div>
+                  <div>Average rating: {activeProductReviews.length ? `${activeAverageRating.toFixed(1)} / 5` : "N/A"}</div>
                 </div>
               </div>
 
-              {productReviews.length === 0 ? (
-                <div className="pt-4 text-sm text-gray-500">No reviews for this product yet.</div>
-              ) : (
-                <div className="mt-4 space-y-3">
-                  {productReviews.map((review) => (
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-700">Add Review</h3>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <label className="text-sm text-gray-700">
+                    <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">User ID</span>
+                    <input
+                      type="text"
+                      value={newReviewUserId}
+                      onChange={(event) => setNewReviewUserId(event.target.value)}
+                      className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+                    />
+                  </label>
+
+                  <label className="text-sm text-gray-700">
+                    <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Rating</span>
+                    <select
+                      value={newReviewRating}
+                      onChange={(event) => setNewReviewRating(Number(event.target.value || 5))}
+                      className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+                    >
+                      <option value={5}>5 stars</option>
+                      <option value={4}>4 stars</option>
+                      <option value={3}>3 stars</option>
+                      <option value={2}>2 stars</option>
+                      <option value={1}>1 star</option>
+                    </select>
+                  </label>
+                </div>
+
+                <label className="mt-3 block text-sm text-gray-700">
+                  <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Comment</span>
+                  <textarea
+                    rows={4}
+                    value={newReviewComment}
+                    onChange={(event) => setNewReviewComment(event.target.value)}
+                    placeholder="Write review comment..."
+                    className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+                  />
+                </label>
+
+                <div className="mt-3 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => void createReview()}
+                    disabled={submittingReview || !currentAdmin}
+                    className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {submittingReview ? "Adding..." : "Add Review"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-700">Existing Reviews</h3>
+
+                {activeProductReviews.length === 0 ? (
+                  <div className="rounded border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-500">
+                    No reviews for this product yet.
+                  </div>
+                ) : (
+                  activeProductReviews.map((review) => (
                     <article key={review.id} className="rounded-lg border border-gray-200 bg-gray-50 p-4">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="text-sm text-gray-700">
@@ -417,13 +498,13 @@ export default function ProductReviewsPage() {
                         {review.comment || "No comment provided."}
                       </p>
                     </article>
-                  ))}
-                </div>
-              )}
-            </section>
-          );
-        })
-      )}
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   );
 }

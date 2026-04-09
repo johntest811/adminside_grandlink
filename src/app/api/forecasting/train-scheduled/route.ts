@@ -7,6 +7,7 @@ import type { ProductDemandSeriesResponse, SalesSeriesResponse } from "@/app/lib
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+export const maxDuration = 60;
 
 function isAuthorized(request: NextRequest) {
   const cronHeader = request.headers.get("x-vercel-cron");

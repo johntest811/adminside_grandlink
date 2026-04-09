@@ -1,7 +1,7 @@
 "use client";
 // Add this import
 import { adminNotificationService } from "@/utils/notificationHelper";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/app/Clients/Supabase/SupabaseClients";
 import { createNotification, checkLowStockAlerts } from "@/app/lib/notifications";
 import { logActivity } from "@/app/lib/activity";
@@ -16,6 +16,41 @@ type ProductInventory = {
   category?: string;
   description?: string;
 };
+
+const DEFAULT_RESTOCK_THRESHOLD_PERCENT = 30;
+const CRITICAL_RESTOCK_THRESHOLD_PERCENT = 10;
+
+function normalizeCategoryKey(value: string | null | undefined) {
+  const normalized = (value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (normalized.includes("curtain") && normalized.includes("wall")) return "curtainwall";
+  if (normalized.includes("enclosure")) return "enclosure";
+  return normalized;
+}
+
+function buildCategoryCapacityMap(products: ProductInventory[]) {
+  const capacityByCategory: Record<string, number> = {};
+  for (const product of products) {
+    const categoryKey = normalizeCategoryKey(product.category) || "uncategorized";
+    const inventory = Math.max(Number(product.inventory ?? 0), 0);
+    const currentCapacity = capacityByCategory[categoryKey] ?? 0;
+    capacityByCategory[categoryKey] = Math.max(currentCapacity, inventory);
+  }
+  return capacityByCategory;
+}
+
+function getStockLevelPercent(product: ProductInventory, capacityByCategory: Record<string, number>) {
+  const categoryKey = normalizeCategoryKey(product.category) || "uncategorized";
+  const categoryCapacity = Math.max(capacityByCategory[categoryKey] ?? 0, 1);
+  const inventory = Math.max(Number(product.inventory ?? 0), 0);
+  const percent = Math.round((inventory / categoryCapacity) * 100);
+  return Math.max(0, Math.min(100, percent));
+}
+
+function isRestockNeeded(product: ProductInventory, thresholdPercent: number, capacityByCategory: Record<string, number>) {
+  const inventory = Math.max(Number(product.inventory ?? 0), 0);
+  if (inventory === 0) return true;
+  return getStockLevelPercent(product, capacityByCategory) <= thresholdPercent;
+}
 
 export default function InventoryAdminPage() {
   const [items, setItems] = useState<ProductInventory[]>([]);
@@ -35,6 +70,9 @@ export default function InventoryAdminPage() {
   const [savingAll, setSavingAll] = useState(false);
   const [currentAdmin, setCurrentAdmin] = useState<any>(null);
   const [selectedRestockId, setSelectedRestockId] = useState<string | null>(null);
+  const [restockThresholdPercent, setRestockThresholdPercent] = useState(DEFAULT_RESTOCK_THRESHOLD_PERCENT);
+
+  const categoryCapacityMap = useMemo(() => buildCategoryCapacityMap(items), [items]);
 
   // Load current admin and log page access
   useEffect(() => {
@@ -71,14 +109,10 @@ export default function InventoryAdminPage() {
   const fetchItems = async (lowOnly: boolean = showOnlyLow) => {
     setLoading(true);
     try {
-      let query = supabase
+      const query = supabase
         .from("products")
         .select("id, name, price, inventory, image1, type, category")
         .order("created_at", { ascending: false });
-
-      if (lowOnly) {
-        query = query.or("inventory.is.null,inventory.lte.5");
-      }
 
       const { data, error } = await query;
       if (error) {
@@ -87,6 +121,11 @@ export default function InventoryAdminPage() {
         setOriginalInventories({});
       } else {
         const list = (data || []) as ProductInventory[];
+        const fetchedCapacityMap = buildCategoryCapacityMap(list);
+        const lowStockItemsByPercent = list.filter((product) =>
+          isRestockNeeded(product, restockThresholdPercent, fetchedCapacityMap)
+        ).length;
+
         setItems(list);
         const map: Record<string, number> = {};
         list.forEach((p) => (map[p.id] = p.inventory ?? 0));
@@ -104,12 +143,13 @@ export default function InventoryAdminPage() {
             admin_name: currentAdmin.username,
             action: 'view',
             entity_type: 'inventory_data',
-            details: `Loaded inventory data for ${list.length} products (${lowOnly ? 'low stock only' : 'all products'})`,
+            details: `Loaded inventory data for ${list.length} products (${lowOnly ? 'restock threshold filter enabled' : 'all products'})`,
             page: 'inventory',
             metadata: {
               productsLoaded: list.length,
               lowStockOnly: lowOnly,
-              lowStockItems: list.filter(p => (p.inventory ?? 0) <= 5).length,
+              lowStockItems: lowStockItemsByPercent,
+              restockThresholdPercent,
               outOfStockItems: list.filter(p => (p.inventory ?? 0) === 0).length,
               adminAccount: currentAdmin.username
             }
@@ -197,10 +237,11 @@ export default function InventoryAdminPage() {
         admin_name: currentAdmin.username,
         action: 'update',
         entity_type: 'view_filter',
-        details: `${newValue ? 'Enabled' : 'Disabled'} low stock only filter`,
+        details: `${newValue ? 'Enabled' : 'Disabled'} restock-threshold filter (${restockThresholdPercent}%)`,
         page: 'inventory',
         metadata: {
           lowStockOnly: newValue,
+          restockThresholdPercent,
           previousValue: oldValue,
           adminAccount: currentAdmin.username
         }
@@ -214,6 +255,13 @@ export default function InventoryAdminPage() {
     setSavingId(id);
     const productBefore = items.find(p => p.id === id);
     const oldInventory = productBefore?.inventory ?? 0;
+    const nextItemsForPercent = items.map((item) => (item.id === id ? { ...item, inventory: value } : item));
+    const nextCapacityMap = buildCategoryCapacityMap(nextItemsForPercent);
+    const productAfter =
+      nextItemsForPercent.find((item) => item.id === id) ||
+      productBefore ||
+      ({ id, name: id, inventory: value } as ProductInventory);
+    const stockLevelPercent = getStockLevelPercent(productAfter as ProductInventory, nextCapacityMap);
 
     const res = await fetch(`/api/products/${encodeURIComponent(id)}`,
       {
@@ -284,7 +332,7 @@ export default function InventoryAdminPage() {
         });
       }
 
-      // Create notifications for stock levels
+      // Create notifications for stock levels based on percentage thresholds
       if (value <= 0) {
         await createNotification({
           title: "Out of Stock Alert",
@@ -293,18 +341,18 @@ export default function InventoryAdminPage() {
           type: "stock",
           priority: "high",
         });
-      } else if (value <= 2) {
+      } else if (stockLevelPercent <= CRITICAL_RESTOCK_THRESHOLD_PERCENT) {
         await createNotification({
           title: "Critical Stock Alert",
-          message: `Product "${productBefore?.name || id}" is critically low (${value} remaining) - Updated by ${currentAdmin?.username || 'Admin'}`,
+          message: `Product "${productBefore?.name || id}" is critically low at ${stockLevelPercent}% (${value} remaining) - Updated by ${currentAdmin?.username || 'Admin'}`,
           recipient_role: "Admin",
           type: "stock",
           priority: "high",
         });
-      } else if (value <= 5) {
+      } else if (stockLevelPercent <= restockThresholdPercent) {
         await createNotification({
           title: "Low Stock Alert", 
-          message: `Product "${productBefore?.name || id}" is running low (${value} remaining) - Updated by ${currentAdmin?.username || 'Admin'}`,
+          message: `Product "${productBefore?.name || id}" reached ${stockLevelPercent}% stock level (${value} remaining) - Updated by ${currentAdmin?.username || 'Admin'}`,
           recipient_role: "Admin",
           type: "stock",
           priority: "medium",
@@ -441,20 +489,13 @@ export default function InventoryAdminPage() {
   }, []);
 
   const filtered = items.filter((it) => {
-    const normalize = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    const keyFor = (s: string | null | undefined) => {
-      const k = normalize(s);
-      if (k.includes("curtain") && k.includes("wall")) return "curtainwall";
-      if (k.includes("enclosure")) return "enclosure";
-      return k;
-    };
-
-    const inv = it.inventory ?? 0;
+    const inv = Math.max(Number(it.inventory ?? 0), 0);
     const isUnsaved = (originalInventories[it.id] ?? 0) !== inv;
     const keepVisible = selectedRestockId === it.id || isUnsaved;
-    if (showOnlyLow && inv > 5 && !keepVisible) return false;
+    const needsRestock = isRestockNeeded(it, restockThresholdPercent, categoryCapacityMap);
+    if (showOnlyLow && !needsRestock && !keepVisible) return false;
     if (selectedCategory && selectedCategory !== "All Categories") {
-      if (keyFor(it.category) !== keyFor(selectedCategory)) return false;
+      if (normalizeCategoryKey(it.category) !== normalizeCategoryKey(selectedCategory)) return false;
     }
     if (!filter) return true;
     return (it.name || "").toLowerCase().includes(filter.toLowerCase());
@@ -536,7 +577,23 @@ export default function InventoryAdminPage() {
               }}
               className="mr-2"
             />
-            Low Stock Only (≤5)
+            Needs Restock Only (≤{restockThresholdPercent}%)
+          </label>
+
+          <label className="flex items-center gap-2 text-black">
+            <span className="text-sm">Restock Threshold %</span>
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={restockThresholdPercent}
+              onChange={(event) => {
+                const parsed = Number.parseInt(event.target.value, 10);
+                if (!Number.isFinite(parsed)) return;
+                setRestockThresholdPercent(Math.max(1, Math.min(100, parsed)));
+              }}
+              className="w-20 rounded-lg border border-gray-400 px-2 py-1 text-sm"
+            />
           </label>
         </div>
       </div>
@@ -556,7 +613,8 @@ export default function InventoryAdminPage() {
             const isUnsaved = (originalInventories[item.id] ?? 0) !== (item.inventory ?? 0);
             const inventory = item.inventory ?? 0;
             const isOutOfStock = inventory === 0;
-            const isLowStock = inventory > 0 && inventory <= 5;
+            const stockLevelPercent = getStockLevelPercent(item, categoryCapacityMap);
+            const isLowStock = inventory > 0 && stockLevelPercent <= restockThresholdPercent;
             const isSelectedForRestock = selectedRestockId === item.id;
             
             return (
@@ -595,7 +653,7 @@ export default function InventoryAdminPage() {
                     )}
                     {isLowStock && (
                       <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full font-medium">
-                        LOW STOCK
+                        LOW STOCK {stockLevelPercent}%
                       </span>
                     )}
                   </div>
@@ -616,6 +674,10 @@ export default function InventoryAdminPage() {
                   <div className="flex justify-between text-sm text-gray-600">
                     <span>{item.category}</span>
                     <span>{item.type}</span>
+                  </div>
+
+                  <div className="rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+                    Stock level: {stockLevelPercent}% of category capacity
                   </div>
                   
                   {item.price && (
@@ -708,7 +770,7 @@ export default function InventoryAdminPage() {
           <h3 className="text-lg font-medium text-gray-900 mb-2">No products found</h3>
           <p className="text-gray-500">
             {showOnlyLow 
-              ? "No low stock items found. Great job keeping inventory levels up!"
+              ? `No products are currently at or below ${restockThresholdPercent}% stock level.`
               : "No products match your current filters."
             }
           </p>

@@ -32,7 +32,7 @@ function normalize(value?: string | null) {
   return String(value || "").toLowerCase().replace(/[\s_-]/g, "");
 }
 
-function adminHasAction(admin: any | null, action: "read" | "delete") {
+function adminHasAction(admin: any | null, action: "read" | "delete" | "create") {
   if (!admin) return false;
 
   const roleNorm = normalize(admin?.role);
@@ -112,6 +112,59 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (err: any) {
     console.error("DELETE /api/product-reviews exception:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    const admin = parseAdminFromHeader(req);
+    if (!adminHasAction(admin, "create")) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const body = await req.json().catch(() => null);
+    const productId = String(body?.productId || "").trim();
+    const userId = String(body?.userId || admin?.id || "").trim();
+    const comment = String(body?.comment || "").trim();
+    const rating = Number(body?.rating);
+
+    if (!productId) {
+      return NextResponse.json({ error: "productId is required" }, { status: 400 });
+    }
+
+    if (!userId) {
+      return NextResponse.json({ error: "userId is required" }, { status: 400 });
+    }
+
+    if (!comment) {
+      return NextResponse.json({ error: "comment is required" }, { status: 400 });
+    }
+
+    if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+      return NextResponse.json({ error: "rating must be between 1 and 5" }, { status: 400 });
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("product_reviews")
+      .insert({
+        product_id: productId,
+        user_id: userId,
+        rating: Math.round(rating),
+        comment,
+      })
+      .select("id, product_id, user_id, rating, comment, created_at")
+      .single();
+
+    if (error) {
+      console.error("POST /api/product-reviews error:", error);
+      return NextResponse.json({ error: "Failed to create review" }, { status: 500 });
+    }
+
+    REVIEWS_CACHE.clear();
+    return NextResponse.json({ review: data }, { status: 201 });
+  } catch (err: any) {
+    console.error("POST /api/product-reviews exception:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

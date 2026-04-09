@@ -263,9 +263,21 @@ function extractRequestDetails(order: Pick<OrderOption, "special_instructions" |
   };
 }
 
+type SetupTab = "select" | "schedule" | "roles" | "blueprint";
+
+const SETUP_TABS: SetupTab[] = ["select", "schedule", "roles", "blueprint"];
+
+const SETUP_TAB_LABELS: Record<SetupTab, string> = {
+  select: "Select order",
+  schedule: "Schedule target",
+  roles: "Required construction roles",
+  blueprint: "Stage blueprint",
+};
+
 export default function StartProductionPage() {
   const searchParams = useSearchParams();
-  const [activeTab, setActiveTab] = useState<"select" | "schedule" | "roles" | "blueprint">("select");
+  const [activeTab, setActiveTab] = useState<SetupTab>("select");
+  const [furthestTabIndex, setFurthestTabIndex] = useState(0);
   const [adminSession, setAdminSession] = useState<AdminSession | null>(null);
   const [employees, setEmployees] = useState<AdminUser[]>([]);
   const [orders, setOrders] = useState<OrderOption[]>([]);
@@ -360,6 +372,11 @@ export default function StartProductionPage() {
     if (!orderId || selectedOrderId) return;
     setSelectedOrderId(orderId);
   }, [searchParams, selectedOrderId]);
+
+  useEffect(() => {
+    setActiveTab("select");
+    setFurthestTabIndex(0);
+  }, [selectedOrderId]);
 
   useEffect(() => {
     (async () => {
@@ -484,6 +501,79 @@ export default function StartProductionPage() {
   );
 
   const selectedTeamCount = workflowPreview.teamMembers.length;
+  const activeTabIndex = Math.max(SETUP_TABS.indexOf(activeTab), 0);
+
+  const getTabValidationMessage = (tab: SetupTab): string | null => {
+    if (tab === "select") {
+      if (!selectedOrderId) return "Please select an approved order before continuing.";
+      if (loadingOrderContext) return "Please wait for order details to finish loading.";
+      if (!selectedOrderRecord || !selectedOrder) {
+        return "Selected order details are unavailable. Please re-select the order.";
+      }
+    }
+
+    if (tab === "schedule") {
+      const scheduleValidation = validateScheduleTarget(estimatedCompletionDate, scheduleTargetMin, scheduleTargetMax);
+      if (!scheduleValidation.ok) return scheduleValidation.message;
+
+      const startValidation = validateStartOfProduction(startOfProductionDate, startOfProductionMin, startOfProductionMax);
+      if (!startValidation.ok) return startValidation.message;
+
+      if (startValidation.value && startValidation.value > scheduleValidation.value) {
+        return "Start of production must be before the estimated completion date.";
+      }
+    }
+
+    if (tab === "roles") {
+      if (selectedTeamCount === 0) {
+        return "Please assign at least one production employee before proceeding.";
+      }
+      if (stageCoverageIssues.length > 0) {
+        return `Please cover all five stages first. Missing: ${stageCoverageIssues.map((item) => item.label).join(", ")}`;
+      }
+    }
+
+    return null;
+  };
+
+  const handleNextTab = () => {
+    const validationMessage = getTabValidationMessage(activeTab);
+    if (validationMessage) {
+      alert(validationMessage);
+      return;
+    }
+
+    const nextIndex = Math.min(activeTabIndex + 1, SETUP_TABS.length - 1);
+    setFurthestTabIndex((prev) => Math.max(prev, nextIndex));
+    setActiveTab(SETUP_TABS[nextIndex]);
+  };
+
+  const handleBackTab = () => {
+    const nextIndex = Math.max(activeTabIndex - 1, 0);
+    setActiveTab(SETUP_TABS[nextIndex]);
+  };
+
+  const openTab = (tab: SetupTab) => {
+    const targetIndex = SETUP_TABS.indexOf(tab);
+    if (targetIndex < 0) return;
+    if (targetIndex <= furthestTabIndex) {
+      setActiveTab(tab);
+      return;
+    }
+
+    for (let idx = 0; idx < targetIndex; idx += 1) {
+      const gateTab = SETUP_TABS[idx];
+      const validationMessage = getTabValidationMessage(gateTab);
+      if (validationMessage) {
+        setActiveTab(gateTab);
+        alert(validationMessage);
+        return;
+      }
+    }
+
+    setFurthestTabIndex(targetIndex);
+    setActiveTab(tab);
+  };
 
   const setRoleMember = (roleKey: ProductionRoleKey, adminId: string, checked: boolean) => {
     setRoleAssignments((prev) => {
@@ -555,6 +645,15 @@ export default function StartProductionPage() {
   };
 
   const startProduction = async () => {
+    for (const tab of SETUP_TABS.slice(0, SETUP_TABS.length - 1)) {
+      const validationMessage = getTabValidationMessage(tab);
+      if (validationMessage) {
+        setActiveTab(tab);
+        alert(validationMessage);
+        return;
+      }
+    }
+
     if (!selectedOrderRecord || !selectedOrder) {
       alert("Please select an order first.");
       return;
@@ -733,6 +832,7 @@ export default function StartProductionPage() {
 
       setSelectedOrderId("");
       setActiveTab("select");
+      setFurthestTabIndex(0);
 
       alert("✅ Production started. The order is now visible in Employee Task for stage review.");
     } catch (error: any) {
@@ -793,42 +893,27 @@ export default function StartProductionPage() {
 
       <div className="rounded-3xl border border-slate-200 bg-white p-2 shadow-sm">
         <div className="flex flex-col gap-2 sm:flex-row">
-          <button
-            type="button"
-            onClick={() => setActiveTab("select")}
-            className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold transition ${
-              activeTab === "select" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:bg-white/60"
-            }`}
-          >
-            Select order
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("schedule")}
-            className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold transition ${
-              activeTab === "schedule" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:bg-white/60"
-            }`}
-          >
-            Schedule target
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("roles")}
-            className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold transition ${
-              activeTab === "roles" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:bg-white/60"
-            }`}
-          >
-            Required construction roles
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("blueprint")}
-            className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold transition ${
-              activeTab === "blueprint" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:bg-white/60"
-            }`}
-          >
-            Stage blueprint
-          </button>
+          {SETUP_TABS.map((tab, index) => {
+            const isActive = activeTab === tab;
+            const isUnlocked = index <= furthestTabIndex;
+            return (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => openTab(tab)}
+                disabled={!isUnlocked}
+                className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold transition ${
+                  isActive
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : isUnlocked
+                    ? "text-slate-600 hover:bg-white/60"
+                    : "cursor-not-allowed text-slate-400"
+                }`}
+              >
+                {SETUP_TAB_LABELS[tab]}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -1093,17 +1178,6 @@ export default function StartProductionPage() {
             })}
           </div>
 
-          <div className="mt-6 flex flex-wrap gap-2">
-            {selectedOrderId ? (
-              <button
-                type="button"
-                onClick={() => openWorkflowEditor(selectedOrderId)}
-                className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-white"
-              >
-                Edit workflow
-              </button>
-            ) : null}
-          </div>
         </div>
       ) : null}
 
@@ -1113,17 +1187,42 @@ export default function StartProductionPage() {
             ? "Loading order details…"
             : existingTaskCount === 0 && selectedOrderId
               ? "No workflow tasks found yet. Starting production will generate tasks from your selected role assignments."
-              : ""}
+              : activeTab !== "blueprint"
+              ? "Complete this step, then click Next to continue to Stage blueprint."
+              : "Review the stage blueprint, then click Start Production to begin."}
         </div>
-        <button
-          type="button"
-          onClick={startProduction}
-          disabled={!selectedOrderId || !isLeader || startingProduction || loadingOrderContext}
-          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:opacity-50"
-        >
-          <PlayCircle size={18} />
-          {startingProduction ? "Starting…" : "Start Production"}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {activeTabIndex > 0 ? (
+            <button
+              type="button"
+              onClick={handleBackTab}
+              className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              Back
+            </button>
+          ) : null}
+
+          {activeTab !== "blueprint" ? (
+            <button
+              type="button"
+              onClick={handleNextTab}
+              disabled={loadingOrderContext}
+              className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50"
+            >
+              Next
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={startProduction}
+              disabled={!selectedOrderId || !isLeader || startingProduction || loadingOrderContext}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:opacity-50"
+            >
+              <PlayCircle size={18} />
+              {startingProduction ? "Starting…" : "Start Production"}
+            </button>
+          )}
+        </div>
       </div>
 
       {workflowPopupOrderId ? (
