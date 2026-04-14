@@ -193,15 +193,55 @@ function formatLocalDateTime(value: unknown) {
 
 function getPaymentSummary(item: UserItem) {
   const meta = (item.meta || {}) as Record<string, any>;
-  const paymentStatus = String(item.payment_status || meta.payment_status || "").toLowerCase();
-  const paymongoChannel = String(meta.paymongo_channel || "").toLowerCase();
+  const paymentStatus = String(item.payment_status || meta.payment_status || "").trim().toLowerCase();
+  const paymongoChannel = String(meta.paymongo_channel || meta.payrex_channel || "").trim().toLowerCase();
   const confirmedAt = meta.payment_confirmed_at || meta.paid_at || meta.payment_paid_at || null;
   const reference = item.payment_id || meta.payment_session_id || meta.payment_reference || null;
+  const amountPaid = Number(item.total_paid ?? meta.amount_paid ?? meta.final_total_per_item ?? 0);
+  const stage = String(item.order_status || item.order_progress || item.status || "").trim().toLowerCase();
+  const provider = String(
+    item.payment_method || meta.payment_method || meta.payment_provider || meta.payment_type || ""
+  )
+    .trim()
+    .toLowerCase();
 
-  const isPaid = paymentStatus === "completed" || paymentStatus === "paid";
-  const provider = String(item.payment_method || meta.payment_method || "").toLowerCase();
-  const providerLabel = provider ? provider.toUpperCase() : "";
-  const channelLabel = paymongoChannel ? paymongoChannel.toUpperCase() : "";
+  const paidStatuses = new Set(["completed", "paid", "succeeded", "success"]);
+  const paymentConfirmedStages = new Set([
+    "reserved",
+    "approved",
+    "in_production",
+    "quality_check",
+    "start_packaging",
+    "packaging",
+    "ready_for_delivery",
+    "out_for_delivery",
+    "completed",
+  ]);
+  const providerLooksOnline =
+    provider.includes("paymongo") || provider.includes("paypal") || provider.includes("payrex");
+
+  const isPaid =
+    paidStatuses.has(paymentStatus) ||
+    Boolean(confirmedAt) ||
+    amountPaid > 0 ||
+    (providerLooksOnline && Boolean(reference)) ||
+    (providerLooksOnline && paymentConfirmedStages.has(stage));
+
+  const providerLabel = provider.includes("paymongo")
+    ? "PAYMONGO"
+    : provider.includes("paypal")
+    ? "PAYPAL"
+    : provider.includes("payrex")
+    ? "PAYREX"
+    : provider
+    ? provider.toUpperCase()
+    : "";
+
+  const channelLabel = paymongoChannel
+    ? paymongoChannel.toUpperCase()
+    : meta.paid_via_qrph === true && providerLabel === "PAYMONGO"
+    ? "QRPH"
+    : "";
 
   return {
     isPaid,

@@ -101,6 +101,11 @@ type Bucket = {
   end: Date;
 };
 
+type LabeledValue = {
+  label: string;
+  value: number;
+};
+
 const SUCCESS_STATUSES = new Set(["completed", "approved", "ready_for_delivery", "delivered"]);
 const LOW_STOCK_THRESHOLD = 5;
 const LOOKBACK_DAYS = 730;
@@ -265,6 +270,15 @@ function getActivityIcon(action?: string) {
     default:
       return "📝";
   }
+}
+
+function isPositiveNumber(value: unknown) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0;
+}
+
+function filterPositiveSeries(points: LabeledValue[]) {
+  return points.filter((point) => isPositiveNumber(point.value));
 }
 
 export default function DashboardPage() {
@@ -501,13 +515,26 @@ export default function DashboardPage() {
     );
   }, [ordersStatusBuckets]);
 
+  const activeUsersChartPoints = useMemo(
+    () => filterPositiveSeries(activeUserBuckets.map((bucket) => ({ label: bucket.label, value: bucket.count }))),
+    [activeUserBuckets]
+  );
+
+  const ordersStatusChartPoints = useMemo(
+    () =>
+      ordersStatusBuckets.filter((bucket) =>
+        isPositiveNumber(bucket.successful) || isPositiveNumber(bucket.cancelled) || isPositiveNumber(bucket.pending)
+      ),
+    [ordersStatusBuckets]
+  );
+
   const activeUsersChartData = useMemo(
     () => ({
-      labels: activeUserBuckets.map((bucket) => bucket.label),
+      labels: activeUsersChartPoints.map((point) => point.label),
       datasets: [
         {
           label: "Active Users",
-          data: activeUserBuckets.map((bucket) => bucket.count),
+          data: activeUsersChartPoints.map((point) => point.value),
           backgroundColor: "rgba(15, 118, 110, 0.85)",
           borderColor: "rgba(15, 118, 110, 1)",
           borderRadius: 8,
@@ -515,62 +542,67 @@ export default function DashboardPage() {
         },
       ],
     }),
-    [activeUserBuckets]
+    [activeUsersChartPoints]
   );
 
   const ordersByStatusData = useMemo(
     () => ({
-      labels: ordersStatusBuckets.map((bucket) => bucket.label),
+      labels: ordersStatusChartPoints.map((bucket) => bucket.label),
       datasets: [
         {
           label: "Successful",
-          data: ordersStatusBuckets.map((bucket) => bucket.successful),
+          data: ordersStatusChartPoints.map((bucket) => bucket.successful),
           backgroundColor: "#16A34A",
           borderRadius: 6,
           stack: "orders",
         },
         {
           label: "Cancelled",
-          data: ordersStatusBuckets.map((bucket) => bucket.cancelled),
+          data: ordersStatusChartPoints.map((bucket) => bucket.cancelled),
           backgroundColor: "#DC2626",
           borderRadius: 6,
           stack: "orders",
         },
         {
           label: "Pending",
-          data: ordersStatusBuckets.map((bucket) => bucket.pending),
+          data: ordersStatusChartPoints.map((bucket) => bucket.pending),
           backgroundColor: "#F59E0B",
           borderRadius: 6,
           stack: "orders",
         },
       ],
     }),
-    [ordersStatusBuckets]
+    [ordersStatusChartPoints]
   );
 
-  const salesThisMonthTrendData = useMemo(() => {
+  const salesThisMonthChartPoints = useMemo(() => {
     const todayDate = new Date();
     const monthStart = new Date(todayDate.getFullYear(), todayDate.getMonth(), 1);
     const monthBuckets = buildBuckets(startOfDay(monthStart), endOfDay(todayDate), "day");
 
-    const salesCounts = monthBuckets.map((bucket) => {
-      let successfulCount = 0;
-      orderEvents.forEach((event) => {
-        const createdAt = new Date(event.created_at).getTime();
-        if (createdAt < bucket.start.getTime() || createdAt > bucket.end.getTime()) return;
-        if (SUCCESS_STATUSES.has(normalizeOrderStatus(event.status, event.order_status))) {
-          successfulCount += 1;
-        }
-      });
-      return successfulCount;
-    });
+    return filterPositiveSeries(
+      monthBuckets.map((bucket) => {
+        let successfulCount = 0;
+        orderEvents.forEach((event) => {
+          const createdAt = new Date(event.created_at).getTime();
+          if (createdAt < bucket.start.getTime() || createdAt > bucket.end.getTime()) return;
+          if (SUCCESS_STATUSES.has(normalizeOrderStatus(event.status, event.order_status))) {
+            successfulCount += 1;
+          }
+        });
 
+        return { label: bucket.label, value: successfulCount };
+      })
+    );
+  }, [orderEvents]);
+
+  const salesThisMonthTrendData = useMemo(() => {
     return {
-      labels: monthBuckets.map((bucket) => bucket.label),
+      labels: salesThisMonthChartPoints.map((point) => point.label),
       datasets: [
         {
           label: "Successful Sales",
-          data: salesCounts,
+          data: salesThisMonthChartPoints.map((point) => point.value),
           fill: true,
           backgroundColor: "rgba(5, 150, 105, 0.14)",
           borderColor: "#059669",
@@ -580,44 +612,73 @@ export default function DashboardPage() {
         },
       ],
     };
-  }, [orderEvents]);
+  }, [salesThisMonthChartPoints]);
+
+  const productsHealthChartPoints = useMemo(
+    () =>
+      filterPositiveSeries([
+        {
+          label: "Healthy Stock",
+          value: Math.max(metrics.totalProducts - metrics.lowStockCount, 0),
+        },
+        {
+          label: "Low Stock",
+          value: metrics.lowStockCount,
+        },
+      ]),
+    [metrics.lowStockCount, metrics.totalProducts]
+  );
 
   const productsHealthVisualizerData = useMemo(
     () => ({
-      labels: ["Healthy Stock", "Low Stock"],
+      labels: productsHealthChartPoints.map((point) => point.label),
       datasets: [
         {
           label: "Product Count",
-          data: [Math.max(metrics.totalProducts - metrics.lowStockCount, 0), metrics.lowStockCount],
-          backgroundColor: ["#0284C7", "#F97316"],
+          data: productsHealthChartPoints.map((point) => point.value),
+          backgroundColor: productsHealthChartPoints.map((point) =>
+            point.label === "Low Stock" ? "#F97316" : "#0284C7"
+          ),
           borderRadius: 10,
           maxBarThickness: 56,
         },
       ],
     }),
-    [metrics.lowStockCount, metrics.totalProducts]
+    [productsHealthChartPoints]
+  );
+
+  const operationsSnapshotPoints = useMemo(
+    () =>
+      filterPositiveSeries([
+        { label: "Sales This Month", value: metrics.successfulSales },
+        { label: "Pending", value: metrics.pendingOrders },
+        { label: "Cancelled", value: metrics.cancelledOrders },
+        { label: "Active Users", value: activeUsersInRange },
+        { label: "Total Products", value: metrics.totalProducts },
+      ]),
+    [activeUsersInRange, metrics.cancelledOrders, metrics.pendingOrders, metrics.successfulSales, metrics.totalProducts]
   );
 
   const operationsSnapshotData = useMemo(
     () => ({
-      labels: ["Sales This Month", "Pending", "Cancelled", "Active Users", "Total Products"],
+      labels: operationsSnapshotPoints.map((point) => point.label),
       datasets: [
         {
           label: "Operational Count",
-          data: [
-            metrics.successfulSales,
-            metrics.pendingOrders,
-            metrics.cancelledOrders,
-            activeUsersInRange,
-            metrics.totalProducts,
-          ],
-          backgroundColor: ["#059669", "#F59E0B", "#DC2626", "#0F766E", "#334155"],
+          data: operationsSnapshotPoints.map((point) => point.value),
+          backgroundColor: operationsSnapshotPoints.map((point) => {
+            if (point.label === "Sales This Month") return "#059669";
+            if (point.label === "Pending") return "#F59E0B";
+            if (point.label === "Cancelled") return "#DC2626";
+            if (point.label === "Active Users") return "#0F766E";
+            return "#334155";
+          }),
           borderRadius: 10,
           maxBarThickness: 46,
         },
       ],
     }),
-    [activeUsersInRange, metrics.cancelledOrders, metrics.pendingOrders, metrics.successfulSales, metrics.totalProducts]
+    [operationsSnapshotPoints]
   );
 
   const metricCards = useMemo<MetricCard[]>(
@@ -719,21 +780,27 @@ export default function DashboardPage() {
           </div>
 
           <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-            <Line
-              data={salesThisMonthTrendData}
-              options={{
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                  legend: { display: false },
-                },
-                scales: {
-                  x: { ticks: { color: "#475569" }, grid: { display: false } },
-                  y: { beginAtZero: true, ticks: { color: "#475569" }, grid: { color: "rgba(148,163,184,0.2)" } },
-                },
-              }}
-              height={240}
-            />
+            {salesThisMonthTrendData.labels.length > 0 ? (
+              <Line
+                data={salesThisMonthTrendData}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: {
+                    legend: { display: false },
+                  },
+                  scales: {
+                    x: { ticks: { color: "#475569" }, grid: { display: false } },
+                    y: { beginAtZero: true, ticks: { color: "#475569" }, grid: { color: "rgba(148,163,184,0.2)" } },
+                  },
+                }}
+                height={240}
+              />
+            ) : (
+              <div className="flex h-[240px] items-center justify-center text-sm text-slate-500">
+                No non-zero sales values in this view.
+              </div>
+            )}
           </div>
         </article>
 
@@ -749,21 +816,27 @@ export default function DashboardPage() {
           </div>
 
           <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-            <Bar
-              data={productsHealthVisualizerData}
-              options={{
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                  legend: { display: false },
-                },
-                scales: {
-                  x: { ticks: { color: "#475569" }, grid: { display: false } },
-                  y: { beginAtZero: true, ticks: { color: "#475569" }, grid: { color: "rgba(148,163,184,0.2)" } },
-                },
-              }}
-              height={240}
-            />
+            {productsHealthVisualizerData.labels.length > 0 ? (
+              <Bar
+                data={productsHealthVisualizerData}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: {
+                    legend: { display: false },
+                  },
+                  scales: {
+                    x: { ticks: { color: "#475569" }, grid: { display: false } },
+                    y: { beginAtZero: true, ticks: { color: "#475569" }, grid: { color: "rgba(148,163,184,0.2)" } },
+                  },
+                }}
+                height={240}
+              />
+            ) : (
+              <div className="flex h-[240px] items-center justify-center text-sm text-slate-500">
+                No non-zero product counts in this view.
+              </div>
+            )}
           </div>
         </article>
 
@@ -779,21 +852,27 @@ export default function DashboardPage() {
           </div>
 
           <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-            <Bar
-              data={operationsSnapshotData}
-              options={{
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                  legend: { display: false },
-                },
-                scales: {
-                  x: { ticks: { color: "#475569" }, grid: { display: false } },
-                  y: { beginAtZero: true, ticks: { color: "#475569" }, grid: { color: "rgba(148,163,184,0.2)" } },
-                },
-              }}
-              height={240}
-            />
+            {operationsSnapshotData.labels.length > 0 ? (
+              <Bar
+                data={operationsSnapshotData}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: {
+                    legend: { display: false },
+                  },
+                  scales: {
+                    x: { ticks: { color: "#475569" }, grid: { display: false } },
+                    y: { beginAtZero: true, ticks: { color: "#475569" }, grid: { color: "rgba(148,163,184,0.2)" } },
+                  },
+                }}
+                height={240}
+              />
+            ) : (
+              <div className="flex h-[240px] items-center justify-center text-sm text-slate-500">
+                No non-zero operational values in this view.
+              </div>
+            )}
           </div>
         </article>
       </section>
@@ -860,21 +939,27 @@ export default function DashboardPage() {
           </div>
 
           <div className="mt-6 rounded-2xl border border-slate-100 bg-slate-50 p-4">
-            <Bar
-              data={activeUsersChartData}
-              options={{
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                  legend: { display: false },
-                },
-                scales: {
-                  x: { ticks: { color: "#475569" }, grid: { display: false } },
-                  y: { beginAtZero: true, ticks: { color: "#475569" }, grid: { color: "rgba(148,163,184,0.2)" } },
-                },
-              }}
-              height={280}
-            />
+            {activeUsersChartData.labels.length > 0 ? (
+              <Bar
+                data={activeUsersChartData}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: {
+                    legend: { display: false },
+                  },
+                  scales: {
+                    x: { ticks: { color: "#475569" }, grid: { display: false } },
+                    y: { beginAtZero: true, ticks: { color: "#475569" }, grid: { color: "rgba(148,163,184,0.2)" } },
+                  },
+                }}
+                height={280}
+              />
+            ) : (
+              <div className="flex h-[280px] items-center justify-center text-sm text-slate-500">
+                No non-zero active user values in this view.
+              </div>
+            )}
           </div>
         </article>
 
@@ -939,21 +1024,27 @@ export default function DashboardPage() {
           </div>
 
           <div className="mt-6 rounded-2xl border border-slate-100 bg-slate-50 p-4">
-            <Bar
-              data={ordersByStatusData}
-              options={{
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                  legend: { position: "top" as const, labels: { color: "#334155" } },
-                },
-                scales: {
-                  x: { stacked: true, ticks: { color: "#475569" }, grid: { display: false } },
-                  y: { stacked: true, beginAtZero: true, ticks: { color: "#475569" }, grid: { color: "rgba(148,163,184,0.2)" } },
-                },
-              }}
-              height={280}
-            />
+            {ordersByStatusData.labels.length > 0 ? (
+              <Bar
+                data={ordersByStatusData}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: {
+                    legend: { position: "top" as const, labels: { color: "#334155" } },
+                  },
+                  scales: {
+                    x: { stacked: true, ticks: { color: "#475569" }, grid: { display: false } },
+                    y: { stacked: true, beginAtZero: true, ticks: { color: "#475569" }, grid: { color: "rgba(148,163,184,0.2)" } },
+                  },
+                }}
+                height={280}
+              />
+            ) : (
+              <div className="flex h-[280px] items-center justify-center text-sm text-slate-500">
+                No non-zero order status values in this view.
+              </div>
+            )}
           </div>
         </article>
       </section>

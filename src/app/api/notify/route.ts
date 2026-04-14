@@ -239,6 +239,8 @@ function normalizeBaseUrl(value: string | null | undefined) {
 function getWebsiteBaseCandidates() {
   const isDevelopment = process.env.NODE_ENV !== "production";
   const candidates = [
+    process.env.ADMIN_WEBSITE_URL,
+    process.env.USER_WEBSITE_URL,
     process.env.NEXT_PUBLIC_USER_WEBSITE_URL,
     process.env.NEXT_PUBLIC_WEBSITE_URL,
     process.env.WEBSITE_URL,
@@ -248,6 +250,7 @@ function getWebsiteBaseCandidates() {
     process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : null,
     process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null,
     isDevelopment ? "http://localhost:3000" : null,
+    "https://grandlnik-website.vercel.app",
     "https://grandlink-website.vercel.app",
   ]
     .map((value) => normalizeBaseUrl(value))
