@@ -50,7 +50,7 @@ export default function SettingsPage() {
   // Admin theme (persisted to localStorage; applied by dashboard layout)
   const [adminTheme, setAdminTheme] = useState<"light" | "dark" | "midnight">("light");
 
-  // Edit profile modal
+  // Edit profile modal new
   const [editOpen, setEditOpen] = useState(false);
   const [editFullName, setEditFullName] = useState("");
   const [editPosition, setEditPosition] = useState<string>("");

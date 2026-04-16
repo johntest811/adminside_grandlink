@@ -441,6 +441,16 @@ export default function ReportsPage() {
 
       // Keep header background white for print clarity.
       const pageWidth = (pdf as any).internal.pageSize.getWidth();
+      const pageHeight = (pdf as any).internal.pageSize.getHeight();
+      const availableTableWidth = pageWidth - marginX * 2;
+
+      const ensureSectionFits = (targetY: number, minRequiredHeight = 30) => {
+        if (targetY + minRequiredHeight > pageHeight - marginX) {
+          pdf.addPage();
+          return marginX;
+        }
+        return targetY;
+      };
 
       pdf.setFontSize(18);
       pdf.setTextColor(...brandPrimary);
@@ -582,6 +592,7 @@ export default function ReportsPage() {
         : 90;
 
       if (hasReportBlock("products_performance")) {
+        currentY = ensureSectionFits(currentY, 34);
         pdf.setFontSize(14);
         pdf.setTextColor(...brandPrimary);
         pdf.text("Products Inventory and Performance", marginX, currentY);
@@ -613,16 +624,24 @@ export default function ReportsPage() {
           theme: "grid",
           headStyles: { fillColor: brandPrimary, textColor: [255, 255, 255] },
           margin: { left: marginX, right: marginX },
-          styles: { fontSize: 8.7, cellPadding: 1.9, textColor: [31, 41, 55] },
+          tableWidth: availableTableWidth,
+          styles: {
+            fontSize: 8.5,
+            cellPadding: 1.9,
+            overflow: "linebreak",
+            textColor: [31, 41, 55],
+          },
+          bodyStyles: { valign: "top" },
+          rowPageBreak: "avoid",
           alternateRowStyles: { fillColor: [248, 250, 252] },
           columnStyles: {
-            0: { cellWidth: 40 },
-            1: { cellWidth: 25 },
-            2: { cellWidth: 20 },
-            3: { cellWidth: 20 },
-            4: { cellWidth: 25 },
-            5: { cellWidth: 20 },
-            6: { cellWidth: 30 },
+            0: { cellWidth: availableTableWidth * 0.27 },
+            1: { cellWidth: availableTableWidth * 0.15 },
+            2: { cellWidth: availableTableWidth * 0.09 },
+            3: { cellWidth: availableTableWidth * 0.09 },
+            4: { cellWidth: availableTableWidth * 0.12 },
+            5: { cellWidth: availableTableWidth * 0.09 },
+            6: { cellWidth: availableTableWidth * 0.19 },
           },
         });
       }
@@ -633,6 +652,7 @@ export default function ReportsPage() {
         : 90;
 
       if (hasReportBlock("completed_orders")) {
+      currentY = ensureSectionFits(currentY, 34);
       pdf.setFontSize(14);
       pdf.setTextColor(...brandPrimary);
       pdf.text("Completed Orders", marginX, currentY);
@@ -690,18 +710,17 @@ export default function ReportsPage() {
         alternateRowStyles: { fillColor: [248, 250, 252] },
         bodyStyles: { valign: 'top' },
         pageBreak: 'auto',
-        // Ensure the table fits within A4 portrait (210mm) minus 20mm margins on each side => 170mm usable.
-        // The following widths sum to exactly 170 to prevent overflow.
-        tableWidth: 'wrap',
+        rowPageBreak: 'avoid',
+        tableWidth: availableTableWidth,
         columnStyles: {
-          0: { cellWidth: 18 }, // Date
-          1: { cellWidth: 22 }, // Customer
-          2: { cellWidth: 26 }, // Contact
-          3: { cellWidth: 38 }, // Address
-          4: { cellWidth: 16 }, // Branch
-          5: { cellWidth: 28 }, // Product
-          6: { cellWidth: 8 },  // Qty
-          7: { cellWidth: 14 }, // Total Paid
+          0: { cellWidth: availableTableWidth * 0.11 }, // Date
+          1: { cellWidth: availableTableWidth * 0.14 }, // Customer
+          2: { cellWidth: availableTableWidth * 0.16 }, // Contact
+          3: { cellWidth: availableTableWidth * 0.23 }, // Address
+          4: { cellWidth: availableTableWidth * 0.08 }, // Branch
+          5: { cellWidth: availableTableWidth * 0.16 }, // Product
+          6: { cellWidth: availableTableWidth * 0.05 }, // Qty
+          7: { cellWidth: availableTableWidth * 0.07 }, // Total Paid
         },
       });
       }
@@ -712,6 +731,7 @@ export default function ReportsPage() {
         : 90;
 
       if (hasReportBlock("revenue_by_category")) {
+      currentY = ensureSectionFits(currentY, 34);
       pdf.setFontSize(14);
       pdf.setTextColor(...brandPrimary);
       pdf.text("Category Performance", marginX, currentY);
@@ -757,7 +777,6 @@ export default function ReportsPage() {
 
       // --- NEW: Embed charts as images ---
       const pdfPageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
       const margin = marginX;
 
       let y = (pdf as any).lastAutoTable?.finalY
@@ -1701,7 +1720,7 @@ export default function ReportsPage() {
       </section>
       )}
 
-      {/* Completed Orders Section */}
+      {/* Completed Orders Section newest*/}
       {hasReportBlock("completed_orders") && (
       <div className="bg-white rounded-lg shadow-sm border" id="completed-orders-section">
         <div className="px-6 py-4 border-b border-gray-200">
