@@ -64,26 +64,18 @@ type DailySeries = {
 };
 
 type ReportBlockId =
-  | "performance_snapshot"
-  | "order_health"
-  | "revenue_leaders"
-  | "high_demand_low_stock"
-  | "revenue_over_time"
-  | "kpis_overview"
-  | "orders_status_breakdown"
-  | "revenue_by_category"
+  | "overview_kpis"
+  | "executive_insights"
+  | "risk_signals"
+  | "trend_visualization"
   | "completed_orders"
   | "products_performance";
 
 const REPORT_BLOCK_OPTIONS: Array<{ id: ReportBlockId; label: string }> = [
-  { id: "performance_snapshot", label: "Performance Snapshot" },
-  { id: "order_health", label: "Order Health" },
-  { id: "revenue_leaders", label: "Revenue Leaders" },
-  { id: "high_demand_low_stock", label: "High-demand, low-stock products" },
-  { id: "revenue_over_time", label: "Revenue over time" },
-  { id: "kpis_overview", label: "KPIs overview" },
-  { id: "orders_status_breakdown", label: "Orders status breakdown" },
-  { id: "revenue_by_category", label: "Revenue by category" },
+  { id: "overview_kpis", label: "OVERVIEW KPIS" },
+  { id: "executive_insights", label: "EXECUTIVE INSIGHTS" },
+  { id: "risk_signals", label: "RISK SIGNALS" },
+  { id: "trend_visualization", label: "TREND VISUALIZATION" },
   { id: "completed_orders", label: "Completed Orders" },
   { id: "products_performance", label: "Products Performance" },
 ];
@@ -173,7 +165,7 @@ export default function ReportsPage() {
   const normalizeStatus = (value: unknown) => String(value || "").trim().toLowerCase();
   const normalizeCategory = (value: unknown) => String(value || "").trim().toLowerCase();
 
-  const isSelectedStatus = (rawStatus: unknown) => {
+  const isSelectedStatus = useCallback((rawStatus: unknown) => {
     if (selectedStatus === "all") return true;
 
     const normalized = normalizeStatus(rawStatus);
@@ -183,12 +175,12 @@ export default function ReportsPage() {
     if (selectedStatus === "successful") return successfulSet.has(normalized);
     if (selectedStatus === "pending") return pendingSet.has(normalized);
     return normalized === selectedStatus;
-  };
+  }, [selectedStatus]);
 
-  const isSelectedCategory = (rawCategory: unknown) => {
+  const isSelectedCategory = useCallback((rawCategory: unknown) => {
     if (selectedCategory === "all") return true;
     return normalizeCategory(rawCategory) === selectedCategory;
-  };
+  }, [selectedCategory]);
 
   const hasReportBlock = (id: ReportBlockId) => selectedReportBlocks.includes(id);
 
@@ -498,61 +490,58 @@ export default function ReportsPage() {
         margin: { left: marginX, right: marginX },
       });
 
-      // Sales Summary Section
-      pdf.setFontSize(14);
-      pdf.setTextColor(...brandPrimary);
       const sectionStartY = ((pdf as any).lastAutoTable?.finalY || 40) + 10;
-      pdf.text("Executive Sales Summary", marginX, sectionStartY);
+      let currentY = sectionStartY;
 
-      pdf.setFontSize(11);
-      pdf.setTextColor(0, 0, 0);
+      if (hasReportBlock("overview_kpis")) {
+        pdf.setFontSize(14);
+        pdf.setTextColor(...brandPrimary);
+        pdf.text("Executive Sales Summary", marginX, sectionStartY);
 
-      const salesSummaryData = [
-        ["Metric", "Value"],
-        ["Total Revenue", `₱${salesData.totalSales.toLocaleString()}`],
-        ["Total Products Sold", salesData.totalProductsSold.toString()],
-        ["Total Orders", salesData.totalOrders.toString()],
-        ["Successful Orders", salesData.successfulOrders.toString()],
-        ["Cancelled Orders", salesData.cancelledOrders.toString()],
-        ["Pending Orders", salesData.pendingOrders.toString()],
-        [
-          "Average Order Value",
-          `₱${salesData.averageOrderValue.toLocaleString()}`,
-        ],
-        [
-          "Success Rate",
-          `${
-            salesData.totalOrders > 0
-              ? ((salesData.successfulOrders / salesData.totalOrders) * 100).toFixed(
-                  1
-                )
-              : 0
-          }%`,
-        ],
-      ];
+        pdf.setFontSize(11);
+        pdf.setTextColor(0, 0, 0);
 
-      // FIX: use autoTable function instead of pdf.autoTable
-      autoTable(pdf, {
-        startY: sectionStartY + 5,
-        head: [salesSummaryData[0]],
-        body: salesSummaryData.slice(1),
-        theme: "grid",
-        headStyles: { fillColor: brandPrimary, textColor: [255, 255, 255] },
-        styles: { fontSize: 9.5, cellPadding: 2.3, textColor: [31, 41, 55] },
-        alternateRowStyles: { fillColor: [248, 250, 252] },
-        margin: { left: marginX, right: marginX },
-      });
+        const salesSummaryData = [
+          ["Metric", "Value"],
+          ["Total Revenue", `₱${salesData.totalSales.toLocaleString()}`],
+          ["Total Products Sold", salesData.totalProductsSold.toString()],
+          ["Total Orders", salesData.totalOrders.toString()],
+          ["Successful Orders", salesData.successfulOrders.toString()],
+          ["Cancelled Orders", salesData.cancelledOrders.toString()],
+          ["Pending Orders", salesData.pendingOrders.toString()],
+          [
+            "Average Order Value",
+            `₱${salesData.averageOrderValue.toLocaleString()}`,
+          ],
+          [
+            "Success Rate",
+            `${
+              salesData.totalOrders > 0
+                ? ((salesData.successfulOrders / salesData.totalOrders) * 100).toFixed(
+                    1
+                  )
+                : 0
+            }%`,
+          ],
+        ];
 
-      let currentY = (pdf as any).lastAutoTable?.finalY
-        ? (pdf as any).lastAutoTable.finalY + 16
-        : sectionStartY + 70;
+        autoTable(pdf, {
+          startY: sectionStartY + 5,
+          head: [salesSummaryData[0]],
+          body: salesSummaryData.slice(1),
+          theme: "grid",
+          headStyles: { fillColor: brandPrimary, textColor: [255, 255, 255] },
+          styles: { fontSize: 9.5, cellPadding: 2.3, textColor: [31, 41, 55] },
+          alternateRowStyles: { fillColor: [248, 250, 252] },
+          margin: { left: marginX, right: marginX },
+        });
 
-      if (
-        hasReportBlock("performance_snapshot") ||
-        hasReportBlock("order_health") ||
-        hasReportBlock("revenue_leaders") ||
-        hasReportBlock("high_demand_low_stock")
-      ) {
+        currentY = (pdf as any).lastAutoTable?.finalY
+          ? (pdf as any).lastAutoTable.finalY + 16
+          : sectionStartY + 70;
+      }
+
+      if (hasReportBlock("executive_insights")) {
         pdf.setFontSize(14);
         pdf.setTextColor(...brandPrimary);
         pdf.text("Analytics Highlights", marginX, currentY);
@@ -730,7 +719,7 @@ export default function ReportsPage() {
         ? (pdf as any).lastAutoTable.finalY + 20
         : 90;
 
-      if (hasReportBlock("revenue_by_category")) {
+      if (hasReportBlock("trend_visualization")) {
       currentY = ensureSectionFits(currentY, 34);
       pdf.setFontSize(14);
       pdf.setTextColor(...brandPrimary);
@@ -811,32 +800,31 @@ export default function ReportsPage() {
         pdf.addPage();
         y = margin;
       }
-      const hasAnySelectedChart =
-        hasReportBlock("revenue_over_time") ||
-        hasReportBlock("kpis_overview") ||
-        hasReportBlock("orders_status_breakdown") ||
-        hasReportBlock("revenue_by_category");
+      const hasAnySelectedChart = hasReportBlock("trend_visualization");
 
       if (hasAnySelectedChart) {
         pdf.text("Charts and Visual Trends", margin, y);
         y += 8;
 
         const selectedCharts: Array<{ title: string; image: { imgData: string; width: number; height: number } }> = [];
-        if (hasReportBlock("revenue_over_time")) {
-          const image = getChartImage(revenueLineRef);
-          if (image) selectedCharts.push({ title: "Revenue Over Time", image });
+        const revenueOverTimeImage = getChartImage(revenueLineRef);
+        if (revenueOverTimeImage) {
+          selectedCharts.push({ title: "Revenue Over Time", image: revenueOverTimeImage });
         }
-        if (hasReportBlock("kpis_overview")) {
-          const image = getChartImage(kpiDoughnutRef);
-          if (image) selectedCharts.push({ title: "KPIs Overview", image });
+
+        const kpisOverviewImage = getChartImage(kpiDoughnutRef);
+        if (kpisOverviewImage) {
+          selectedCharts.push({ title: "KPIs Overview", image: kpisOverviewImage });
         }
-        if (hasReportBlock("orders_status_breakdown")) {
-          const image = getChartImage(ordersStatusRef);
-          if (image) selectedCharts.push({ title: "Orders Status Breakdown", image });
+
+        const ordersStatusImage = getChartImage(ordersStatusRef);
+        if (ordersStatusImage) {
+          selectedCharts.push({ title: "Orders Status Breakdown", image: ordersStatusImage });
         }
-        if (hasReportBlock("revenue_by_category")) {
-          const image = getChartImage(categoryRevenueRef);
-          if (image) selectedCharts.push({ title: "Revenue by Category", image });
+
+        const revenueByCategoryImage = getChartImage(categoryRevenueRef);
+        if (revenueByCategoryImage) {
+          selectedCharts.push({ title: "Revenue by Category", image: revenueByCategoryImage });
         }
 
         const chartGap = 6;
@@ -1095,72 +1083,135 @@ export default function ReportsPage() {
         return true;
       })
       .slice(0, 100);
-  }, [completedOrders, dateRange.endDate, dateRange.startDate, selectedCategory, selectedStatus]);
+  }, [completedOrders, dateRange.endDate, dateRange.startDate, isSelectedCategory, isSelectedStatus]);
 
   const exportFilteredResults = () => {
     const lines: string[] = [];
+    const selectedReportLabels = REPORT_BLOCK_OPTIONS
+      .filter((block) => selectedReportBlocks.includes(block.id))
+      .map((block) => block.label);
+
     lines.push(`Generated By,${JSON.stringify(currentAdmin?.username || "Unknown Admin")}`);
     lines.push(`Start Date,${dateRange.startDate}`);
     lines.push(`End Date,${dateRange.endDate}`);
     lines.push(`Category Filter,${JSON.stringify(selectedCategory === "all" ? "All" : selectedCategory)}`);
     lines.push(`Status Filter,${JSON.stringify(selectedStatus === "all" ? "All" : selectedStatus)}`);
-    lines.push(`Selected Reports,${JSON.stringify(selectedReportBlocks.join(" | "))}`);
+    lines.push(`Selected Reports,${JSON.stringify(selectedReportLabels.join(" | "))}`);
     lines.push("");
 
-    lines.push("KPI,Value");
-    lines.push(`Total Revenue,${salesData.totalSales}`);
-    lines.push(`Total Products Sold,${salesData.totalProductsSold}`);
-    lines.push(`Total Orders,${salesData.totalOrders}`);
-    lines.push(`Successful Orders,${salesData.successfulOrders}`);
-    lines.push(`Cancelled Orders,${salesData.cancelledOrders}`);
-    lines.push(`Pending Orders,${salesData.pendingOrders}`);
-    lines.push(`Average Order Value,${salesData.averageOrderValue}`);
-    lines.push("");
+    if (hasReportBlock("overview_kpis")) {
+      lines.push("KPI,Value");
+      lines.push(`Total Revenue,${salesData.totalSales}`);
+      lines.push(`Total Products Sold,${salesData.totalProductsSold}`);
+      lines.push(`Total Orders,${salesData.totalOrders}`);
+      lines.push(`Successful Orders,${salesData.successfulOrders}`);
+      lines.push(`Cancelled Orders,${salesData.cancelledOrders}`);
+      lines.push(`Pending Orders,${salesData.pendingOrders}`);
+      lines.push(`Average Order Value,${salesData.averageOrderValue}`);
+      lines.push("");
+    }
 
-    lines.push("Product,Category,Stock,Reserved,Price,Units Sold,Revenue");
-    productsData.forEach((product) => {
-      lines.push(
-        [
-          JSON.stringify(product.name || ""),
-          JSON.stringify(product.category || "Uncategorized"),
-          product.inventory,
-          product.reserved_stock,
-          product.price,
-          product.total_sold,
-          product.revenue,
-        ].join(",")
-      );
-    });
-    lines.push("");
+    if (hasReportBlock("executive_insights")) {
+      lines.push("Insight,Value");
+      lines.push(`Period Length (days),${reportInsights.periodDays}`);
+      lines.push(`Average Revenue Per Day,${Math.round(reportInsights.avgRevenuePerDay)}`);
+      lines.push(`Success Rate (%),${reportInsights.successRate.toFixed(1)}`);
+      lines.push(`Cancelled Rate (%),${reportInsights.cancelRate.toFixed(1)}`);
+      lines.push(`Pending Rate (%),${reportInsights.pendingRate.toFixed(1)}`);
+      lines.push(`Average Units Per Successful Order,${reportInsights.avgUnitsPerOrder.toFixed(2)}`);
+      lines.push(`Top Product By Revenue,${JSON.stringify(reportInsights.topRevenueProduct?.name || "N/A")}`);
+      lines.push(`Top Category By Revenue,${JSON.stringify(reportInsights.topCategoryName)}`);
+      lines.push(`Low-Stock Products (<=5),${reportInsights.lowStockProducts}`);
+      lines.push("");
+    }
 
-    lines.push("Date,Revenue,Products Sold,Successful Orders,AOV");
-    dailySeries.labels.forEach((day, index) => {
-      lines.push(
-        [
-          day,
-          dailySeries.revenue[index] || 0,
-          dailySeries.products[index] || 0,
-          dailySeries.successfulOrders[index] || 0,
-          dailySeries.aov[index] || 0,
-        ].join(",")
-      );
-    });
-    lines.push("");
+    if (hasReportBlock("risk_signals")) {
+      lines.push("Risk Product,Current Stock,Units Sold,Revenue");
+      if (reportInsights.highDemandLowStock.length === 0) {
+        lines.push(`${JSON.stringify("No immediate low-stock demand risk in the selected period")},,,`);
+      } else {
+        reportInsights.highDemandLowStock.forEach((product) => {
+          lines.push(
+            [
+              JSON.stringify(product.name || ""),
+              Number(product.inventory || 0),
+              Number(product.total_sold || 0),
+              Number(product.revenue || 0),
+            ].join(",")
+          );
+        });
+      }
+      lines.push("");
+    }
 
-    lines.push("Completed Date,Customer,Product,Qty,Total Paid");
-    filteredCompletedOrders.forEach((order) => {
-      const customer = order?.address_details?.full_name || order?.customer_name || "";
-      const product = order?.product_details?.name || order?.meta?.product_name || order?.product_id || "";
-      lines.push(
-        [
-          JSON.stringify(String(order?.created_at || "").slice(0, 10)),
-          JSON.stringify(customer),
-          JSON.stringify(product),
-          Number(order?.quantity || 0),
-          Number(order?.total_paid || 0),
-        ].join(",")
-      );
-    });
+    if (hasReportBlock("products_performance")) {
+      lines.push("Product,Category,Stock,Reserved,Price,Units Sold,Revenue");
+      productsData.forEach((product) => {
+        lines.push(
+          [
+            JSON.stringify(product.name || ""),
+            JSON.stringify(product.category || "Uncategorized"),
+            product.inventory,
+            product.reserved_stock,
+            product.price,
+            product.total_sold,
+            product.revenue,
+          ].join(",")
+        );
+      });
+      lines.push("");
+    }
+
+    if (hasReportBlock("trend_visualization")) {
+      lines.push("Date,Revenue,Products Sold,Successful Orders,AOV");
+      dailySeries.labels.forEach((day, index) => {
+        lines.push(
+          [
+            day,
+            dailySeries.revenue[index] || 0,
+            dailySeries.products[index] || 0,
+            dailySeries.successfulOrders[index] || 0,
+            dailySeries.aov[index] || 0,
+          ].join(",")
+        );
+      });
+      lines.push("");
+
+      lines.push("Order Status,Count");
+      lines.push(`Successful,${salesData.successfulOrders}`);
+      lines.push(`Cancelled,${salesData.cancelledOrders}`);
+      lines.push(`Pending,${salesData.pendingOrders}`);
+      lines.push("");
+
+      lines.push("Category,Revenue");
+      const categoryRevenueMap = productsData.reduce((acc, product) => {
+        const key = product.category || "Uncategorized";
+        acc[key] = (acc[key] || 0) + (product.revenue || 0);
+        return acc;
+      }, {} as Record<string, number>);
+
+      Object.entries(categoryRevenueMap).forEach(([category, revenue]) => {
+        lines.push([JSON.stringify(category), revenue].join(","));
+      });
+      lines.push("");
+    }
+
+    if (hasReportBlock("completed_orders")) {
+      lines.push("Completed Date,Customer,Product,Qty,Total Paid");
+      filteredCompletedOrders.forEach((order) => {
+        const customer = order?.address_details?.full_name || order?.customer_name || "";
+        const product = order?.product_details?.name || order?.meta?.product_name || order?.product_id || "";
+        lines.push(
+          [
+            JSON.stringify(String(order?.created_at || "").slice(0, 10)),
+            JSON.stringify(customer),
+            JSON.stringify(product),
+            Number(order?.quantity || 0),
+            Number(order?.total_paid || 0),
+          ].join(",")
+        );
+      });
+    }
 
     const csv = lines.join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -1361,6 +1412,7 @@ export default function ReportsPage() {
       </div>
 
       {/* KPI Cards */}
+      {hasReportBlock("overview_kpis") && (
       <section className="space-y-3">
       <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Overview KPIs</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1475,12 +1527,12 @@ export default function ReportsPage() {
         </div>
       </div>
       </section>
+      )}
 
-      {(hasReportBlock("performance_snapshot") || hasReportBlock("order_health") || hasReportBlock("revenue_leaders")) && (
+      {hasReportBlock("executive_insights") && (
       <section className="space-y-3">
       <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Executive Insights</h2>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {hasReportBlock("performance_snapshot") && (
         <div className="bg-white p-4 rounded-lg shadow-sm border">
           <h3 className="text-sm font-semibold text-gray-700 mb-3">Performance Snapshot</h3>
           <div className="space-y-2 text-sm text-gray-700">
@@ -1498,9 +1550,7 @@ export default function ReportsPage() {
             </div>
           </div>
         </div>
-        )}
 
-        {hasReportBlock("order_health") && (
         <div className="bg-white p-4 rounded-lg shadow-sm border">
           <h3 className="text-sm font-semibold text-gray-700 mb-3">Order Health</h3>
           <div className="space-y-2 text-sm text-gray-700">
@@ -1518,9 +1568,7 @@ export default function ReportsPage() {
             </div>
           </div>
         </div>
-        )}
 
-        {hasReportBlock("revenue_leaders") && (
         <div className="bg-white p-4 rounded-lg shadow-sm border">
           <h3 className="text-sm font-semibold text-gray-700 mb-3">Revenue Leaders</h3>
           <div className="space-y-2 text-sm text-gray-700">
@@ -1543,12 +1591,11 @@ export default function ReportsPage() {
             </div>
           </div>
         </div>
-        )}
       </div>
       </section>
       )}
 
-      {hasReportBlock("high_demand_low_stock") && (
+      {hasReportBlock("risk_signals") && (
       <section className="space-y-3">
       <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Risk Signals</h2>
       <div className="bg-white p-4 rounded-lg shadow-sm border">
@@ -1584,11 +1631,10 @@ export default function ReportsPage() {
       )}
 
       {/* Charts */}
-      {(hasReportBlock("revenue_over_time") || hasReportBlock("kpis_overview")) && (
+      {hasReportBlock("trend_visualization") && (
       <section className="space-y-3">
       <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Trend Visualizations</h2>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {hasReportBlock("revenue_over_time") && (
         <div className="bg-white p-4 rounded-lg shadow-sm border">
           <h3 className="text-sm font-semibold text-gray-700 mb-2">
             Revenue over time
@@ -1610,10 +1656,8 @@ export default function ReportsPage() {
             />
           </div>
         </div>
-        )}
 
         {/* KPIs combo: bars (Products/Orders) + line (AOV) */}
-        {hasReportBlock("kpis_overview") && (
         <div className="bg-white p-4 rounded-lg shadow-sm border">
           <h3 className="text-sm font-semibold text-gray-700 mb-2">
             KPIs overview
@@ -1657,17 +1701,15 @@ export default function ReportsPage() {
             />
           </div>
         </div>
-        )}
       </div>
       </section>
       )}
 
       {/* NEW extra charts row */}
-      {(hasReportBlock("orders_status_breakdown") || hasReportBlock("revenue_by_category")) && (
+      {hasReportBlock("trend_visualization") && (
       <section className="space-y-3">
       <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Breakdowns</h2>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {hasReportBlock("orders_status_breakdown") && (
         <div className="bg-white p-4 rounded-lg shadow-sm border">
           <h3 className="text-sm font-semibold text-gray-700 mb-2">
             Orders status breakdown
@@ -1687,9 +1729,7 @@ export default function ReportsPage() {
             </div>
           </div>
         </div>
-        )}
 
-        {hasReportBlock("revenue_by_category") && (
         <div className="bg-white p-4 rounded-lg shadow-sm border">
           <h3 className="text-sm font-semibold text-gray-700 mb-2">
             Revenue by category
@@ -1715,7 +1755,6 @@ export default function ReportsPage() {
             />
           </div>
         </div>
-        )}
       </div>
       </section>
       )}
@@ -1777,8 +1816,6 @@ export default function ReportsPage() {
                 
                 const phone = addr.phone || order.customer?.phone || order.customer_phone || '—';
                 const email = addr.email || order.customer?.email || order.customer_email || '—';
-                const branch = addr.branch || '—';
-                
                 return (
                   <tr key={order.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
