@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
 
 type SupabaseUser = {
   id: string;
@@ -28,6 +28,8 @@ export default function UsersPage() {
   const [accountView, setAccountView] = useState<"active" | "deactivated">("active");
   const [currentAdmin, setCurrentAdmin] = useState<AdminSession | null>(null);
   const [canDeleteUsers, setCanDeleteUsers] = useState(false);
+  const [isUiPending, startUiTransition] = useTransition();
+  const deferredSearchTerm = useDeferredValue(searchTerm);
 
   const fetchUsers = async (adminId?: string | null) => {
     try {
@@ -175,11 +177,23 @@ export default function UsersPage() {
   const filteredUsers = usersByView.filter((u: any) => {
     const matchesStatus = statusFilter === "All" || u.status === statusFilter;
     const displayName = u.email?.split("@")[0].replace(/\./g, " ") || "";
-    const query = searchTerm.toLowerCase();
+    const query = deferredSearchTerm.toLowerCase();
     const matchesSearch =
       u.email.toLowerCase().includes(query) || displayName.toLowerCase().includes(query);
     return matchesStatus && matchesSearch;
   });
+
+  const dashboardStats = useMemo(() => {
+    const activeCount = users.filter((user: any) => !Boolean((user as any).deactivated_account)).length;
+    const deactivatedCount = users.length - activeCount;
+    const onlineRecentlyCount = users.filter((user: any) => user.status === "Active").length;
+    return {
+      total: users.length,
+      active: activeCount,
+      deactivated: deactivatedCount,
+      onlineRecently: onlineRecentlyCount,
+    };
+  }, [users]);
 
   const handleBulkDeactivate = async (deactivate: boolean) => {
     if (selectedIds.length === 0) return;
@@ -213,56 +227,78 @@ export default function UsersPage() {
   };
 
   return (
-    <div className="min-h-screen p-8 bg-gray-50 text-black">
-      <div className="flex gap-4 mb-4">
-        <input
-          type="text"
-          placeholder="Search users..."
-          className="border px-3 py-2 rounded w-1/3"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-        />
-      </div>
+    <div className="mx-auto min-h-screen max-w-7xl space-y-6 bg-slate-50 px-4 py-6 text-black md:px-6">
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">User Accounts</h1>
+            <p className="mt-1 text-sm text-slate-600">
+              Manage active and deactivated user accounts with controlled bulk actions.
+            </p>
+          </div>
+          <div className="rounded-full border border-slate-200 bg-slate-50 px-4 py-1.5 text-xs font-medium text-slate-600">
+            Admin: {currentAdmin?.username || "Unknown"}
+          </div>
+        </div>
 
-      <div className="bg-white shadow rounded-lg p-6">
-        <div className="mb-4 flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-2">
+        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Users</div>
+            <div className="mt-1 text-2xl font-bold text-slate-900">{dashboardStats.total}</div>
+          </div>
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Active Accounts</div>
+            <div className="mt-1 text-2xl font-bold text-emerald-700">{dashboardStats.active}</div>
+          </div>
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-rose-700">Deactivated</div>
+            <div className="mt-1 text-2xl font-bold text-rose-700">{dashboardStats.deactivated}</div>
+          </div>
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Recently Active</div>
+            <div className="mt-1 text-2xl font-bold text-indigo-700">{dashboardStats.onlineRecently}</div>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => {
-                setAccountView("active");
-                setSelectedIds([]);
+                startUiTransition(() => {
+                  setAccountView("active");
+                  setSelectedIds([]);
+                });
               }}
-              className={`px-3 py-2 rounded font-semibold ${accountView === "active" ? "bg-[#505A89] text-white" : "bg-gray-100 text-gray-700"}`}
+              className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                accountView === "active"
+                  ? "bg-[#505A89] text-white"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              }`}
             >
               Active Accounts
             </button>
             <button
               onClick={() => {
-                setAccountView("deactivated");
-                setSelectedIds([]);
+                startUiTransition(() => {
+                  setAccountView("deactivated");
+                  setSelectedIds([]);
+                });
               }}
-              className={`px-3 py-2 rounded font-semibold ${accountView === "deactivated" ? "bg-[#505A89] text-white" : "bg-gray-100 text-gray-700"}`}
+              className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                accountView === "deactivated"
+                  ? "bg-[#505A89] text-white"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              }`}
             >
               Deactivated Accounts
             </button>
           </div>
 
-          <div>
-            <label className="mr-2 font-semibold text-[#233a5e]">Status:</label>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as any)}
-              className="border border-gray-300 p-2 rounded bg-white text-black"
-            >
-              <option value="All">All</option>
-              <option value="Active">Active</option>
-              <option value="Inactive">Inactive</option>
-            </select>
-          </div>
-
           <div className="flex items-center gap-2">
             <button
-              className="bg-blue-600 text-white px-6 py-2 rounded font-semibold shadow hover:bg-blue-700 transition"
+              className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700 transition"
               onClick={() => {
                 setShowModal(true);
                 setMessage("");
@@ -273,7 +309,7 @@ export default function UsersPage() {
 
             {accountView === "active" ? (
               <button
-                className={`bg-amber-600 text-white px-4 py-2 rounded font-semibold ${selectedIds.length === 0 ? "opacity-50 cursor-not-allowed" : "hover:bg-amber-700"}`}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition ${selectedIds.length === 0 ? "cursor-not-allowed bg-amber-300" : "bg-amber-600 hover:bg-amber-700"}`}
                 disabled={selectedIds.length === 0}
                 onClick={() => handleBulkDeactivate(true)}
               >
@@ -281,7 +317,7 @@ export default function UsersPage() {
               </button>
             ) : (
               <button
-                className={`bg-green-600 text-white px-4 py-2 rounded font-semibold ${selectedIds.length === 0 ? "opacity-50 cursor-not-allowed" : "hover:bg-green-700"}`}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition ${selectedIds.length === 0 ? "cursor-not-allowed bg-green-300" : "bg-green-600 hover:bg-green-700"}`}
                 disabled={selectedIds.length === 0}
                 onClick={() => handleBulkDeactivate(false)}
               >
@@ -291,7 +327,7 @@ export default function UsersPage() {
 
             {canDeleteUsers && (
               <button
-                className={`bg-red-600 text-white px-4 py-2 rounded font-semibold ${selectedIds.length === 0 ? "opacity-50 cursor-not-allowed" : "hover:bg-red-800"}`}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition ${selectedIds.length === 0 ? "cursor-not-allowed bg-red-300" : "bg-red-600 hover:bg-red-800"}`}
                 disabled={selectedIds.length === 0}
                 onClick={handleBulkDelete}
               >
@@ -301,89 +337,126 @@ export default function UsersPage() {
           </div>
         </div>
 
-        <table className="w-full border-collapse">
-          <thead>
-            <tr style={{ background: "#505A89" }}>
-              <th className="text-white px-4 py-2"></th>
-              <th className="text-white px-4 py-2">NAME</th>
-              <th className="text-white px-4 py-2">EMAIL</th>
-              <th className="text-white px-4 py-2">STATUS</th>
-              <th className="text-white px-4 py-2">LAST LOGIN</th>
-              <th className="text-white px-4 py-2">ACTION</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredUsers.map((user: any) => (
-              <tr key={user.id} className="hover:bg-gray-50">
-                <td className="p-2 border text-center">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.includes(user.id)}
-                    onChange={(e) => handleCheckboxChange(user.id, e.target.checked)}
-                  />
-                </td>
-                <td className="p-2 border">
-                  <div className="flex items-center">
-                    <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-sm font-bold text-gray-400 mr-2">
-                      {user.email ? user.email[0].toUpperCase() : "U"}
-                    </div>
-                    <span className="font-medium text-gray-700">
-                      {user.email?.split("@")[0].replace(/\./g, " ")}
-                    </span>
-                  </div>
-                </td>
-                <td className="p-2 border">{user.email}</td>
-                <td className="p-2 border">
-                  <span className={`px-3 py-1 rounded-full text-xs font-semibold ${user.status === "Active" ? "bg-green-100 text-green-600" : "bg-red-100 text-red-600"}`}>
-                    {user.status}
-                  </span>
-                </td>
-                <td className="p-2 border text-[#505A89]">{(user as any).last_login}</td>
-                <td className="p-2 border">
-                  <div className="flex items-center gap-3">
-                    {accountView === "active" ? (
-                      <button
-                        className="text-amber-600 hover:underline"
-                        onClick={() => handleDeactivateToggle(user.id, true)}
-                      >
-                        Deactivate
-                      </button>
-                    ) : (
-                      <button
-                        className="text-green-600 hover:underline"
-                        onClick={() => handleDeactivateToggle(user.id, false)}
-                      >
-                        Reactivate
-                      </button>
-                    )}
+        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr,220px]">
+          <input
+            type="text"
+            placeholder="Search by email or display name..."
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm shadow-sm"
+            value={searchTerm}
+            onChange={(e) => {
+              const value = e.target.value;
+              startUiTransition(() => setSearchTerm(value));
+            }}
+          />
 
-                    {canDeleteUsers && (
-                      <button
-                        className="text-red-600 hover:underline"
-                        onClick={() => handleDeleteUser(user.id)}
-                      >
-                        Delete
-                      </button>
-                    )}
-                  </div>
-                </td>
+          <select
+            value={statusFilter}
+            onChange={(e) => {
+              const value = e.target.value as "All" | "Active" | "Inactive";
+              startUiTransition(() => setStatusFilter(value));
+            }}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
+          >
+            <option value="All">All Statuses</option>
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+          </select>
+        </div>
+
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr style={{ background: "#505A89" }}>
+                <th className="px-4 py-3 text-white"></th>
+                <th className="px-4 py-3 text-left text-white">NAME</th>
+                <th className="px-4 py-3 text-left text-white">EMAIL</th>
+                <th className="px-4 py-3 text-left text-white">STATUS</th>
+                <th className="px-4 py-3 text-left text-white">LAST LOGIN</th>
+                <th className="px-4 py-3 text-left text-white">ACTION</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {filteredUsers.map((user: any) => (
+                <tr key={user.id} className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50">
+                  <td className="p-3 text-center">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(user.id)}
+                      onChange={(e) => handleCheckboxChange(user.id, e.target.checked)}
+                    />
+                  </td>
+                  <td className="p-3">
+                    <div className="flex items-center">
+                      <div className="mr-3 flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-sm font-bold text-slate-500">
+                        {user.email ? user.email[0].toUpperCase() : "U"}
+                      </div>
+                      <span className="font-medium text-slate-700">
+                        {user.email?.split("@")[0].replace(/\./g, " ")}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="p-3 text-slate-700">{user.email}</td>
+                  <td className="p-3">
+                    <span className={`rounded-full px-3 py-1 text-xs font-semibold ${user.status === "Active" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
+                      {user.status}
+                    </span>
+                  </td>
+                  <td className="p-3 text-[#505A89]">{(user as any).last_login}</td>
+                  <td className="p-3">
+                    <div className="flex items-center gap-3">
+                      {accountView === "active" ? (
+                        <button
+                          className="text-amber-600 hover:underline"
+                          onClick={() => handleDeactivateToggle(user.id, true)}
+                        >
+                          Deactivate
+                        </button>
+                      ) : (
+                        <button
+                          className="text-green-600 hover:underline"
+                          onClick={() => handleDeactivateToggle(user.id, false)}
+                        >
+                          Reactivate
+                        </button>
+                      )}
 
-        <div className="flex justify-between items-center mt-4 text-gray-500 text-sm">
+                      {canDeleteUsers && (
+                        <button
+                          className="text-red-600 hover:underline"
+                          onClick={() => handleDeleteUser(user.id)}
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+
+              {filteredUsers.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-10 text-center text-sm text-slate-500">
+                    No users found for the current filters.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-500">
           <span>
             Showing {filteredUsers.length} of {usersByView.length} {accountView} account(s)
           </span>
+          {isUiPending && <span className="text-xs text-slate-400">Updating view...</span>}
         </div>
 
         {!canDeleteUsers && (
-          <div className="mt-3 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+          <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
             Delete is restricted. Only Superadmin or admins with delete permission can permanently remove accounts.
           </div>
         )}
-      </div>
+      </section>
 
       {showModal && (
         <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: "transparent" }}>

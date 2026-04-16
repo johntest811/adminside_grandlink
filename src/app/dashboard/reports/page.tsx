@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createClient } from "@supabase/supabase-js";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -115,6 +115,7 @@ export default function ReportsPage() {
   const [selectedReportBlocks, setSelectedReportBlocks] = useState<ReportBlockId[]>(
     REPORT_BLOCK_OPTIONS.map((block) => block.id)
   );
+  const [isReportBlockPending, startReportBlockTransition] = useTransition();
 
   // Add refs to access the chart instances
   const revenueLineRef = useRef<any>(null);
@@ -190,6 +191,28 @@ export default function ReportsPage() {
   };
 
   const hasReportBlock = (id: ReportBlockId) => selectedReportBlocks.includes(id);
+
+  const selectAllReportBlocks = useCallback(() => {
+    startReportBlockTransition(() => {
+      setSelectedReportBlocks(REPORT_BLOCK_OPTIONS.map((block) => block.id));
+    });
+  }, [startReportBlockTransition]);
+
+  const clearReportBlocks = useCallback(() => {
+    startReportBlockTransition(() => {
+      setSelectedReportBlocks([]);
+    });
+  }, [startReportBlockTransition]);
+
+  const toggleReportBlock = useCallback((blockId: ReportBlockId, checked: boolean) => {
+    startReportBlockTransition(() => {
+      if (checked) {
+        setSelectedReportBlocks((prev) => Array.from(new Set([...prev, blockId])));
+        return;
+      }
+      setSelectedReportBlocks((prev) => prev.filter((item) => item !== blockId));
+    });
+  }, [startReportBlockTransition]);
 
   const fetchReportsData = async () => {
     try {
@@ -382,6 +405,9 @@ export default function ReportsPage() {
 
     setGeneratingPDF(true);
     try {
+      // Let the loading state paint first to avoid blocking the interaction frame.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
       // Optionally ensure charts are fully painted before capture
       // await new Promise((r) => requestAnimationFrame(() => r(null)));
 
@@ -1140,10 +1166,11 @@ export default function ReportsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-[1400px] space-y-7 rounded-3xl bg-rose-50/50 p-4 md:p-6">
+    <div className="mx-auto max-w-[1400px] space-y-7 rounded-3xl bg-slate-50 p-4 md:p-6">
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-rose-900">Sales Reports</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Sales Reports</h1>
           <p className="mt-1 text-sm text-slate-600">
             Build custom analytics views by combining filters, section selection, and export tools.
           </p>
@@ -1154,11 +1181,12 @@ export default function ReportsPage() {
           </div>
         </div>
       </div>
+      </div>
 
       {/* Date Range Filter */}
-      <div className="rounded-2xl border border-rose-200 bg-white p-4 shadow-sm md:p-5">
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5">
         <div className="mb-4 border-b border-slate-200 pb-3">
-          <h2 className="text-lg font-semibold text-rose-900">Report Builder</h2>
+          <h2 className="text-lg font-semibold text-slate-900">Report Builder</h2>
           <p className="mt-1 text-sm text-slate-600">Set filters, choose report sections, then generate PDF or export CSV.</p>
         </div>
         {/* Inputs row */}
@@ -1235,14 +1263,14 @@ export default function ReportsPage() {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setSelectedReportBlocks(REPORT_BLOCK_OPTIONS.map((block) => block.id))}
+                onClick={selectAllReportBlocks}
                 className="text-xs font-medium text-blue-700 hover:text-blue-900"
               >
                 Select All
               </button>
               <button
                 type="button"
-                onClick={() => setSelectedReportBlocks([])}
+                onClick={clearReportBlocks}
                 className="text-xs font-medium text-slate-600 hover:text-slate-900"
               >
                 Clear
@@ -1257,13 +1285,7 @@ export default function ReportsPage() {
                   <input
                     type="checkbox"
                     checked={checked}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSelectedReportBlocks((prev) => Array.from(new Set([...prev, block.id])));
-                        return;
-                      }
-                      setSelectedReportBlocks((prev) => prev.filter((item) => item !== block.id));
-                    }}
+                    onChange={(e) => toggleReportBlock(block.id, e.target.checked)}
                     className="h-4 w-4"
                   />
                   <span>{block.label}</span>
@@ -1271,6 +1293,9 @@ export default function ReportsPage() {
               );
             })}
           </div>
+          {isReportBlockPending && (
+            <div className="mt-2 text-xs text-slate-500">Updating selected sections...</div>
+          )}
         </div>
 
         {/* Action row: place button below date inputs */}
@@ -1542,7 +1567,7 @@ export default function ReportsPage() {
       {/* Charts */}
       {(hasReportBlock("revenue_over_time") || hasReportBlock("kpis_overview")) && (
       <section className="space-y-3">
-      <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-rose-700">Trend Visualizations</h2>
+      <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Trend Visualizations</h2>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {hasReportBlock("revenue_over_time") && (
         <div className="bg-white p-4 rounded-lg shadow-sm border">
@@ -1621,7 +1646,7 @@ export default function ReportsPage() {
       {/* NEW extra charts row */}
       {(hasReportBlock("orders_status_breakdown") || hasReportBlock("revenue_by_category")) && (
       <section className="space-y-3">
-      <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-rose-700">Breakdowns</h2>
+      <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Breakdowns</h2>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {hasReportBlock("orders_status_breakdown") && (
         <div className="bg-white p-4 rounded-lg shadow-sm border">

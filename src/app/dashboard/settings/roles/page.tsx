@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
 
 type AdminSession = {
   id: string;
@@ -54,6 +54,8 @@ export default function RolesAndPermissionsPage() {
   const [adminHasWildcardAccess, setAdminHasWildcardAccess] = useState(false);
   const [savingAdminOverrides, setSavingAdminOverrides] = useState(false);
   const [pageSearch, setPageSearch] = useState("");
+  const [isUiTransitionPending, startUiTransition] = useTransition();
+  const deferredPageSearch = useDeferredValue(pageSearch);
 
   const hashToMode = (hash: string): typeof mode => {
     const h = (hash || "").replace(/^#/, "").trim().toLowerCase();
@@ -283,7 +285,7 @@ export default function RolesAndPermissionsPage() {
   }, [pages]);
 
   const filteredPagesByGroup = useMemo(() => {
-    const q = pageSearch.trim().toLowerCase();
+    const q = deferredPageSearch.trim().toLowerCase();
     if (!q) return pagesByGroup;
     return pagesByGroup
       .map(([group, groupPages]) => {
@@ -294,7 +296,7 @@ export default function RolesAndPermissionsPage() {
         return [group, filtered] as const;
       })
       .filter(([, groupPages]) => groupPages.length > 0);
-  }, [pageSearch, pagesByGroup]);
+  }, [deferredPageSearch, pagesByGroup]);
 
   const adminEffectiveComputedKeys = useMemo(() => {
     if (mode !== "admins") return new Set<string>();
@@ -305,23 +307,27 @@ export default function RolesAndPermissionsPage() {
     return merged;
   }, [adminHasWildcardAccess, adminOverrideKeys, adminPositionKeys, mode, pages]);
 
-  const toggle = (pageKey: string) => {
-    setSelectedPageKeys((prev) => {
-      const next = new Set(prev);
-      if (next.has(pageKey)) next.delete(pageKey);
-      else next.add(pageKey);
-      return next;
+  const toggle = useCallback((pageKey: string) => {
+    startUiTransition(() => {
+      setSelectedPageKeys((prev) => {
+        const next = new Set(prev);
+        if (next.has(pageKey)) next.delete(pageKey);
+        else next.add(pageKey);
+        return next;
+      });
     });
-  };
+  }, [startUiTransition]);
 
-  const toggleAdminOverride = (pageKey: string) => {
-    setAdminOverrideKeys((prev) => {
-      const next = new Set(prev);
-      if (next.has(pageKey)) next.delete(pageKey);
-      else next.add(pageKey);
-      return next;
+  const toggleAdminOverride = useCallback((pageKey: string) => {
+    startUiTransition(() => {
+      setAdminOverrideKeys((prev) => {
+        const next = new Set(prev);
+        if (next.has(pageKey)) next.delete(pageKey);
+        else next.add(pageKey);
+        return next;
+      });
     });
-  };
+  }, [startUiTransition]);
 
   const saveAdminOverrides = async () => {
     if (!currentAdmin?.id) return;
@@ -503,7 +509,11 @@ export default function RolesAndPermissionsPage() {
 
         <div className="mt-4 flex flex-wrap gap-2">
           <button
-            onClick={() => setMode("positions")}
+            onClick={() =>
+              startUiTransition(() => {
+                setMode("positions");
+              })
+            }
             className={`px-3 py-2 rounded border ${
               mode === "positions"
                 ? "bg-black text-white border-black"
@@ -513,7 +523,11 @@ export default function RolesAndPermissionsPage() {
             Position Permissions
           </button>
           <button
-            onClick={() => setMode("admins")}
+            onClick={() =>
+              startUiTransition(() => {
+                setMode("admins");
+              })
+            }
             className={`px-3 py-2 rounded border ${
               mode === "admins"
                 ? "bg-black text-white border-black"
@@ -618,8 +632,16 @@ export default function RolesAndPermissionsPage() {
                 className="w-full p-2 border rounded text-black"
                 placeholder="Search pages (name/path)"
                 value={pageSearch}
-                onChange={(e) => setPageSearch(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  startUiTransition(() => {
+                    setPageSearch(value);
+                  });
+                }}
               />
+              {isUiTransitionPending && (
+                <div className="mt-1 text-xs text-gray-500">Updating filtered pages...</div>
+              )}
               <div className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
                 Hint: <span className="font-semibold">User Accounts Delete</span> (key: <span className="font-mono">user_accounts_delete</span>) controls permanent user deletion.
               </div>
@@ -732,8 +754,16 @@ export default function RolesAndPermissionsPage() {
                 className="w-full p-2 border rounded text-black"
                 placeholder="Search pages (name/path)"
                 value={pageSearch}
-                onChange={(e) => setPageSearch(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  startUiTransition(() => {
+                    setPageSearch(value);
+                  });
+                }}
               />
+              {isUiTransitionPending && (
+                <div className="mt-1 text-xs text-gray-500">Updating filtered pages...</div>
+              )}
               <div className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
                 Hint: <span className="font-semibold">User Accounts Delete</span> (key: <span className="font-mono">user_accounts_delete</span>) controls permanent user deletion.
               </div>

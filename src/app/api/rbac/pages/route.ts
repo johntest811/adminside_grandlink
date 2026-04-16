@@ -29,6 +29,12 @@ export async function GET() {
             group_name: "Content Management",
           },
           {
+            key: "product_reviews",
+            name: "Product Reviews",
+            path: "/dashboard/product-reviews",
+            group_name: "Orders",
+          },
+          {
             key: "user_accounts_delete",
             name: "User Accounts Delete",
             path: "/dashboard/user-accounts/delete",
